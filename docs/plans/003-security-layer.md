@@ -45,6 +45,14 @@ and audit logging. This is the **policy enforcement point**.
 - Encryption (can this principal read this data?)
 - Audit queries (what did this principal do?)
 
+**Requirement: Multi-user concurrent editing.** Multiple users MUST be able to edit the
+same artifact simultaneously. The security layer supports this by design — ACLs grant
+per-artifact roles to multiple principals, and the audit log tracks interleaved operations
+from different users. The security layer is stateless with respect to editing sessions:
+each operation is independently authenticated and authorized. This means concurrent
+operations from different users don't conflict at the security level — conflicts are
+handled by the CRDT sync layer in the database (see `002-database-layer.md` Appendix B).
+
 **V1 security scope:** Authentication + authorization + audit. No encryption in V1 —
 encryption requires key management infrastructure that's premature for a demo. But
 the interfaces are designed so encryption slots in without rearchitecting.
@@ -554,6 +562,11 @@ class SecureGraphDB:
 
 **Session** — frozen dataclass containing `principal: Principal` and `token: str`.
 Created by `authenticate()`, required by all other methods.
+
+**Convenience methods:**
+- `system_session() -> Session` — returns a session for the `SYSTEM` principal. Used
+  by internal operations (format import/export, tests, migrations) that bypass all
+  permission checks. See `004-application-layer.md` §9.
 
 **Query filtering:** Methods like `find_by_type()` delegate to `GraphDB`, then filter
 results to only include nodes the principal has READ access to. This means the db layer

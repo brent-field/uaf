@@ -32,6 +32,14 @@ attribute Y" (AEVT), "nodes where attr=val" (AVET), "all references to node X" (
 a spreadsheet, a CAD model, and a text document are all Artifacts — root nodes that a Lens
 renders.
 
+**Requirement: Multi-user concurrent editing.** The architecture MUST support multiple
+people editing the same artifact simultaneously. This is an explicit design goal, not a
+nice-to-have. The event-sourced operation DAG makes this possible — operations from
+different users are independent DAG entries that merge naturally (same foundation as git,
+Figma, and CRDTs). V1 builds the single-user foundation; the CRDT sync phase (Appendix B)
+adds the merge protocol; the application layer adds WebSocket push for real-time updates.
+Every architectural decision in this plan is evaluated against this requirement.
+
 **V1 scope:** Purely in-memory. No persistence, no CRDT sync, no network. The goal is a
 correct, well-tested, well-typed foundation that everything else builds on.
 
@@ -405,8 +413,8 @@ layout: LayoutHint | None = None
 | `Paragraph` | `text: str, style: str` | DocLens |
 | `Heading` | `text: str, level: int` | DocLens |
 | `TextBlock` | `text: str, format: str` | DocLens, WikiLens |
-| `Cell` | `value: str \| int \| float \| bool \| None` | GridLens |
-| `FormulaCell` | `formula: str, cached_value: ...` | GridLens |
+| `Cell` | `value: str \| int \| float \| bool \| None, row: int, col: int` | GridLens |
+| `FormulaCell` | `formula: str, cached_value: ..., row: int, col: int` | GridLens |
 | `Sheet` | `title: str, rows: int, cols: int` | GridLens |
 | `CodeBlock` | `source: str, language: str` | CodeLens |
 | `Task` | `title: str, completed: bool, due_date: ...` | FlowLens |
@@ -619,6 +627,15 @@ Convenience methods: `create_node`, `update_node`, `delete_node`, `create_edge`,
 **Query:** Delegates to QueryEngine.
 
 **History:** `get_history(node_id) -> list[LogEntry]`
+
+**Tree traversal:**
+- `descendants(node_id) -> set[NodeId]` — recursively walk CONTAINS edges to get all
+  nodes within a subtree. Used by Lenses for rendering, by security layer for
+  per-artifact permission scoping (see `004-application-layer.md` §8).
+
+**Blob storage:**
+- `store_blob(data: bytes) -> BlobId` — hash and store binary data
+- `get_blob(blob_id: BlobId) -> bytes | None` — retrieve by content hash
 
 **Internal:** `_node_to_datoms(node, op_id) -> list[Datom]` extracts datoms from a node's
 typed fields for EAVT indexing. On update, deindexes old datoms and indexes new ones.
@@ -848,7 +865,7 @@ tests/fixtures/                        (sample files per format)
 | Datom values are strings | Total ordering for SortedList; type recovery via schema |
 | No delete cascade | Preserves transclusion (node can have multiple parents) |
 | No persistence in V1 | In-memory only; OperationLog interface makes persistence a future swap-in |
-| No thread safety in V1 | Single-writer assumption; add lock in `apply()` later |
+| No thread safety in V1 | Single-writer assumption; concurrent multi-user editing requires CRDT sync (Appendix B), not thread locks |
 | Optional `owner` on NodeMetadata | Simple ownership; richer models via OWNED_BY edges |
 | "Artifact" not "Document" | Top-level container is format-agnostic |
 
@@ -1147,7 +1164,7 @@ Each format maps to specific node types and edge patterns.
 |-------|-------------|------------|
 | MCP Server | Expose GraphDB as MCP tools for AI agents | Phase 11 (GraphDB API) |
 | Persistence | SQLite-backed OperationLog + snapshot/restore | Phase 7 (OperationLog interface) |
-| CRDT Sync | Eg-walker merge for concurrent branches | Phase 7 (DAG structure) |
+| CRDT Sync | Eg-walker merge for concurrent branches — **required** for multi-user editing | Phase 7 (DAG structure) |
 | Fractional Indexing | `fractional-indexing` lib for concurrent reordering | Phase 8 (children_order) |
 | JSON-LD Export | Serialize graph to W3C JSON-LD format | Phase 4 (serialization) |
 | Type-Specialized Storage | DuckDB for sheets, rope for text | Phase 9 (EAVT as routing layer) |
