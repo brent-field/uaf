@@ -154,6 +154,7 @@ FOLLOWS        any → any (sequencing, e.g., chess moves)
 LINKED_TO      any → any (user-defined links)
 OWNED_BY       any → any (ownership relationships)
 COMPLIES_WITH  any → any (regulatory/schema compliance)
+GRANTS_ROLE    ArtifactACL → any (permission grants, see 003-security-layer.md)
 ```
 
 **Enforcement:** `create_edge()` validates against this table before appending the
@@ -347,20 +348,37 @@ Rename the Python package from `udf` to `uaf`:
 
 **Verification:** `make check` passes (no source code yet, just structure + config).
 
-### Phase 1: Core Identifiers — `src/uaf/core/node_id.py`
+### Phase 1: Core Identifiers + Errors — `src/uaf/core/node_id.py`, `src/uaf/core/errors.py`
 
 | Type | Description |
 |------|-------------|
 | `NodeId` | Frozen dataclass wrapping `uuid.UUID`, with `generate()` classmethod |
 | `EdgeId` | Same pattern as NodeId |
 | `OperationId` | Frozen dataclass wrapping a 64-char hex string (SHA-256 digest) |
+| `BlobId` | Frozen dataclass wrapping a 64-char hex string (SHA-256 of raw bytes) |
 | `utc_now()` | Returns timezone-aware UTC datetime |
 
-**Design:** Wrapping UUID in a dataclass gives type safety — you cannot pass a `NodeId`
-where an `EdgeId` is expected. `OperationId` is a content hash, NOT a UUID.
+**Error hierarchy** (`src/uaf/core/errors.py`):
+```
+UAFError (base)
+├── NodeNotFoundError
+├── EdgeNotFoundError
+├── InvalidEdgeError
+├── DuplicateOperationError
+├── InvalidParentError
+├── SerializationError
+├── PermissionDeniedError    ← used by security layer
+└── AuthenticationError      ← used by security layer
+```
 
-**Tests:** `tests/uaf/core/test_node_id.py` (~10 tests: uniqueness, hashability, immutability,
-validation of hex strings, utc_now timezone awareness)
+**Design:** Wrapping UUID in a dataclass gives type safety — you cannot pass a `NodeId`
+where an `EdgeId` is expected. `OperationId` is a content hash, NOT a UUID. `BlobId`
+follows the same pattern as `OperationId` (SHA-256 hex digest of raw binary data).
+Errors are defined in core so both the db and security layers can use them without
+circular dependencies.
+
+**Tests:** `tests/uaf/core/test_node_id.py` (~12 tests: uniqueness, hashability, immutability,
+validation of hex strings, BlobId construction, utc_now timezone awareness)
 
 ---
 
@@ -369,7 +387,7 @@ validation of hex strings, utc_now timezone awareness)
 **NodeType enum:**
 ```
 ARTIFACT, PARAGRAPH, HEADING, TEXT_BLOCK, CELL, FORMULA_CELL, SHEET,
-CODE_BLOCK, TASK, SLIDE, SHAPE, IMAGE
+CODE_BLOCK, TASK, SLIDE, SHAPE, IMAGE, ARTIFACT_ACL, RAW
 ```
 
 **NodeMetadata** — frozen dataclass shared by all nodes:
@@ -395,6 +413,8 @@ layout: LayoutHint | None = None
 | `Slide` | `title: str, order: int` | SlideLens |
 | `Shape` | `shape_type: str, x, y, width, height` | DrawLens |
 | `Image` | `uri: str, alt_text: str, width, height` | All visual Lenses |
+| `ArtifactACL` | `default_role: str \| None, public_read: bool` | Security layer (see `003-security-layer.md`) |
+| `RawNode` | `raw: dict, original_type: str` | Schema evolution fallback (see Phase 4) |
 
 **Union type:** `type NodeData = Artifact | Paragraph | Heading | ...` (Python 3.12+ syntax)
 
@@ -413,7 +433,7 @@ checking, match exhaustiveness, owner field)
 
 **EdgeType enum:**
 ```
-CONTAINS, REFERENCES, DEPENDS_ON, COMPLIES_WITH, FOLLOWS, LINKED_TO, OWNED_BY
+CONTAINS, REFERENCES, DEPENDS_ON, COMPLIES_WITH, FOLLOWS, LINKED_TO, OWNED_BY, GRANTS_ROLE
 ```
 
 **Edge** — frozen dataclass:
@@ -470,7 +490,10 @@ deterministic hashing, hash uniqueness, unknown type → RawNode, schema version
 | `MoveNode` | `node_id, new_parent_id` | Re-parent in containment tree |
 | `ReorderChildren` | `parent_id, new_order: tuple[NodeId, ...]` | Reorder children |
 
-All operations share: `parent_ops: tuple[OperationId, ...]` (DAG parents), `timestamp`.
+All operations share: `parent_ops: tuple[OperationId, ...]` (DAG parents), `timestamp`,
+`principal_id: str | None` (who performed this operation — populated by security layer,
+`None` for pre-security or SYSTEM operations). Using `str` instead of `PrincipalId` avoids
+a core → security layer dependency.
 
 **Union type:** `type Operation = CreateNode | UpdateNode | DeleteNode | ...`
 
@@ -771,11 +794,12 @@ what didn't survive the round-trip.
 
 ## 5. File Summary
 
-### Source Files (13 core/db + 4 format handlers)
+### Source Files (14 core/db + 4 format handlers)
 
 | File | Purpose |
 |------|---------|
-| `src/uaf/core/node_id.py` | NodeId, EdgeId, OperationId, utc_now |
+| `src/uaf/core/node_id.py` | NodeId, EdgeId, OperationId, BlobId, utc_now |
+| `src/uaf/core/errors.py` | UAFError hierarchy (shared by db + security layers) |
 | `src/uaf/core/nodes.py` | Node types, NodeData union, NodeMetadata |
 | `src/uaf/core/edges.py` | Edge, EdgeType |
 | `src/uaf/core/serialization.py` | Deterministic serialization + content hashing |
@@ -795,10 +819,10 @@ what didn't survive the round-trip.
 ### Test Files (12 + fixtures)
 
 ```
-tests/uaf/core/test_node_id.py        (~10 tests)
+tests/uaf/core/test_node_id.py        (~12 tests)
 tests/uaf/core/test_nodes.py          (~20 tests)
 tests/uaf/core/test_edges.py          (~8 tests)
-tests/uaf/core/test_serialization.py  (~15 tests)
+tests/uaf/core/test_serialization.py  (~18 tests)
 tests/uaf/core/test_operations.py     (~12 tests)
 tests/uaf/db/test_operation_log.py    (~12 tests)
 tests/uaf/db/test_materializer.py     (~14 tests)
@@ -810,7 +834,7 @@ tests/uaf/app/test_roundtrip.py       (~25 round-trip tests)
 tests/fixtures/                        (sample files per format)
 ```
 
-**Total: ~163 tests**
+**Total: ~168 tests**
 
 ---
 
@@ -913,7 +937,7 @@ Insert 10K/100K/1M nodes, measure query latency. Regression thresholds.
 
 ### After all phases
 ```bash
-make check   # ~163 tests passing, zero mypy errors, zero ruff violations
+make check   # ~168 tests passing, zero mypy errors, zero ruff violations
 ```
 
 ---
@@ -1128,7 +1152,7 @@ Each format maps to specific node types and edge patterns.
 | JSON-LD Export | Serialize graph to W3C JSON-LD format | Phase 4 (serialization) |
 | Type-Specialized Storage | DuckDB for sheets, rope for text | Phase 9 (EAVT as routing layer) |
 | Ghost Ingestion Pipeline | Import parsers for all Appendix A formats | Phase 11 (GraphDB API) |
-| Access Control | Node/edge-level permissions via security layer | Phase 11 + security layer |
+| Access Control | Node/edge-level permissions via security layer — see `003-security-layer.md` | Phase 11 + security layer (Phases S1-S6) |
 | Vector Embeddings | AI/Graph-RAG metadata on nodes | Phase 2 (NodeMetadata extension) |
 | Rust Core (PyO3) | Rewrite hot paths (hashing, indexes, CRDT) in Rust | Profiling data from V1 |
 
@@ -1185,32 +1209,18 @@ layer.
 without changing any interfaces. Good candidate for a quick addition after Phase 12 if
 demo reliability is a concern.
 
-### C3. Transclusion + Permissions Interaction
+### C3. Transclusion + Permissions Interaction — *Resolved in `003-security-layer.md`*
 
 **The problem:** If node X is transcluded into artifacts A and B, and user 1 owns A but
 not B, can user 1 edit X? Can user 1 even *see* X when viewing artifact B?
 
-**The tension:**
-- Transclusion means "same node, multiple locations." Editing X via A should update X
-  everywhere — that's the point.
-- But permissions are per-artifact (or per-node). If user 2 owns B and made it private,
-  user 1 shouldn't see B's content — but X is shared.
-
-**Options:**
-
-| Approach | How It Works | Tradeoff |
-|----------|-------------|----------|
-| **Node-level permissions** | Each node has its own ACL. Transclusion doesn't grant access — you need permission on the node itself | Simple model, but transcluding into a private artifact doesn't automatically protect the transcluded content |
-| **Context-dependent visibility** | Permissions evaluated relative to the access path (via artifact A vs. via artifact B) | Matches user expectations but complex to implement — the same node has different permissions depending on how you reach it |
-| **Copy-on-write for private** | Transcluding into a private artifact creates a copy, not a reference. Updates don't propagate | Sidesteps the problem but undermines transclusion's value |
-
-**Current leaning:** Node-level permissions as the base, with an "inherit from parent"
-default. Most nodes inherit permissions from their containing artifact. Transcluded nodes
-explicitly set their own ACL when the transclusion crosses a permission boundary. The
-security layer enforces this — the database layer just stores the permission metadata.
+**Resolution:** Artifact-level ACLs with "inherit from parent" default. Transclusion
+does NOT grant access — viewing a transcluded node requires READ permission on both the
+source and destination artifacts. Node-level permission overrides handle exceptions.
+See `003-security-layer.md` §2 "Transclusion and Permissions" for full details.
 
 **V1 impact:** None. V1 has no security layer. The `owner` field on `NodeMetadata` is
-informational only. This becomes critical when the security layer is built.
+informational only.
 
 ### C4. Memory Growth / Garbage Collection
 
