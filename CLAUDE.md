@@ -62,6 +62,7 @@ docs/         # Architecture and design documents
 
 ## Key Files
 
-- `gemini_plan_1.md` — Full vision document and strategic blueprint
+- `docs/plans/` — Planning documents (numbered sequentially)
+- `docs/plans/001-initial-vision.md` — Full vision document and strategic blueprint
 - `docs/architecture.md` — V1 three-layer architecture
 - `pyproject.toml` — Project config, dependencies, tool settings

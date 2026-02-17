@@ -11,7 +11,7 @@ UDF is structured in three layers:
 - **Security** (`src/udf/security/`) — Authentication, encryption, access control
 - **Application** (`src/udf/app/`) — API endpoints, Lens interfaces
 
-See [docs/architecture.md](docs/architecture.md) for details and [gemini_plan_1.md](gemini_plan_1.md) for the full vision document.
+See [docs/architecture.md](docs/architecture.md) for details and [docs/plans/001-initial-vision.md](docs/plans/001-initial-vision.md) for the full vision document.
 
 ## Getting Started
 
