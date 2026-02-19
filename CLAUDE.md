@@ -62,7 +62,8 @@ docs/         # Architecture and design documents
 
 ## Key Files
 
+- `agents.md` — Document index and table of contents for all project docs
+- `docs/architecture.md` — System architecture and design principles
 - `docs/plans/` — Planning documents (numbered sequentially)
-- `docs/plans/001-initial-vision.md` — Full vision document and strategic blueprint
-- `docs/architecture.md` — V1 three-layer architecture
+- `docs/plans/001-initial-vision.md` — Original vision document and strategic blueprint
 - `pyproject.toml` — Project config, dependencies, tool settings

@@ -1171,7 +1171,44 @@ Each format maps to specific node types and edge patterns.
 | Ghost Ingestion Pipeline | Import parsers for all Appendix A formats | Phase 11 (GraphDB API) |
 | Access Control | Node/edge-level permissions via security layer — see `003-security-layer.md` | Phase 11 + security layer (Phases S1-S6) |
 | Vector Embeddings | AI/Graph-RAG metadata on nodes | Phase 2 (NodeMetadata extension) |
-| Rust Core (PyO3) | Rewrite hot paths (hashing, indexes, CRDT) in Rust | Profiling data from V1 |
+| Rust Core (PyO3) | Rewrite hot paths (hashing, indexes, CRDT) in Rust — see below | Profiling data from V1 |
+| Native Rust Database | Purpose-built database engine with wire protocol — see below | Rust Core + Persistence |
+
+### Path to a Native Rust Database
+
+The architecture is deliberately designed so that every component maps to well-understood
+database primitives that Rust excels at:
+
+| UAF Component | Database Primitive | Rust Ecosystem |
+|---------------|-------------------|----------------|
+| Operation log (append-only) | Write-ahead log (WAL) | `sled`, custom B-tree |
+| EAVT indexes (SortedList) | Covering B-tree indexes | `sled`, `rocksdb`, `redb` |
+| State materializer | Materialized view / event projection | Standard pattern |
+| Content hashing (SHA-256) | Merkle tree (git's object store) | `sha2` crate, zero-copy |
+| CRDT merge (eg-walker) | Conflict-free replication | `automerge-rs` (already Rust) |
+| Blob store | Content-addressed object store | Filesystem or S3, trivial in Rust |
+
+**Migration path (incremental, not a rewrite):**
+
+1. **V1:** Pure Python — current plan. Correct, well-tested, well-typed.
+2. **V2 (PyO3 hot paths):** Replace `content_hash`, `EAVTIndex.add/retract`, and CRDT
+   merge with Rust modules exposed via PyO3. Same Python API, 10-50x speedup on hot
+   paths. This is exactly how Polars, DuckDB, Loro, and Automerge work.
+3. **V3 (Rust database engine):** Full Rust implementation of OperationLog + EAVT +
+   Materializer + QueryEngine. Exposes a wire protocol (gRPC or custom). The Python
+   app layer becomes a thin client — same `GraphDB` interface, backed by a Rust server.
+4. **V4 (Language-agnostic clients):** With a wire protocol, any language can be a client:
+   JS/WASM (browser), Swift (iOS/macOS), Kotlin (Android), Go (infrastructure). The
+   database becomes a standalone product.
+
+**Why this works without rearchitecting:** The clean interfaces between components
+(OperationLog, StateMaterializer, EAVTIndex, QueryEngine, GraphDB) are exactly the
+module boundaries where Rust rewrites slot in. Each component is independently testable
+and has a clear contract. Replacing one component's internals doesn't affect the others.
+
+**When to start:** After V1 is working and profiled. Rewriting before we have usage
+data means optimizing the wrong things. The Python V1 tells us *what* is slow; Rust
+fixes *how* to make it fast.
 
 ---
 
@@ -1266,3 +1303,481 @@ journal (C2), we get "persistent but not compacted," which is fine for months of
 
 **V1 impact:** None. Add a `node_count` / `operation_count` method to GraphDB so we can
 monitor growth. Actual GC is a post-V1 concern.
+
+---
+
+## Appendix D: UAF as AI Training Data — Structural Advantages Over Flat Text
+
+> **Note:** This appendix explores how the UAF graph structure could improve AI training
+> beyond current approaches. This is a long-term strategic opportunity, not a V1 concern,
+> but the data model decisions in V1 directly enable it.
+
+### The Problem with Current Training Data
+
+Current LLM training feeds models flat text — tokenized sequences where all structure,
+relationships, and provenance are destroyed. The model learns statistical co-occurrence
+patterns and must *reconstruct* structure from context. This is the root cause of
+hallucination: the model is pattern-matching on surface text, not reasoning over explicit
+relationships.
+
+```
+Current pipeline:
+  Structured knowledge → flatten to text → tokenize → train on next-token prediction
+  (structure destroyed)           (relationships lost)    (statistical patterns only)
+
+UAF pipeline (potential):
+  Structured knowledge → graph with typed nodes + edges → train on graph objectives
+  (structure preserved)   (relationships explicit)         (relational reasoning)
+```
+
+### What UAF Data Provides That Flat Text Does Not
+
+**1. Typed semantic relationships.**
+Instead of learning that "revenue" and "Q1 report" co-occur in text, a model trained on
+UAF data sees `Revenue_Cell --CONTAINED_IN--> Q1_Sheet --CONTAINED_IN--> Q1_Report`.
+The relationship is typed (`CONTAINS`), directional, and unambiguous. This is the
+difference between correlation (co-occurrence) and causation (explicit links).
+
+**2. Edit history as a learning signal.**
+The operation log captures *how artifacts evolve* — every creation, edit, deletion, and
+reordering. A model trained on edit sequences learns revision patterns: how humans improve
+writing, fix code bugs, restructure arguments, iterate on spreadsheet formulas. This is a
+strictly richer signal than static snapshots. Current training data is overwhelmingly
+point-in-time; UAF data is inherently temporal.
+
+**3. Multi-modal unified representation.**
+UAF stores text, code, spreadsheets, images, music, and CAD models in the same typed
+graph. A single artifact can contain `Paragraph` → `Image` → `FormulaCell` → `CodeBlock`
+nodes, all connected by typed edges. Training on this unified representation could improve
+cross-modal reasoning — the model sees that a chart is `LINKED_TO` a data table which
+`DEPENDS_ON` a formula, as explicit graph structure rather than adjacent tokens.
+
+**4. Provenance and attribution.**
+Every node has `owner`, `created_at`, `updated_at`, and a full operation history linking
+it to the principal who created/modified it. Training data with provenance enables models
+that can cite sources, track confidence by source reliability, and avoid hallucination by
+distinguishing "this fact comes from node X in artifact Y" from "this is a statistical
+pattern across the training set."
+
+**5. Transclusion as a knowledge graph signal.**
+When the same node is referenced from multiple artifacts via `REFERENCES` edges, the graph
+encodes that these artifacts share a common concept. This is explicit cross-document
+linking — something that hyperlinks approximate but that UAF makes first-class. A model
+trained on transclusion patterns learns how knowledge connects across contexts.
+
+### Novel Training Objectives Enabled by Graph Structure
+
+Beyond next-token prediction, UAF enables training objectives that are closer to reasoning:
+
+| Objective | Description | What It Teaches |
+|-----------|-------------|-----------------|
+| **Edge prediction** | Given two nodes, predict the edge type between them | Relational reasoning — "what is the relationship between X and Y?" |
+| **Node completion** | Given a partial artifact graph, predict the next node type and content | Document structure understanding — "what comes after a heading?" |
+| **Graph navigation** | Given a question and a starting node, predict which edges to follow | Retrieval reasoning — "how do I find the answer in this graph?" |
+| **Operation prediction** | Given an edit history, predict the next operation | User intent modeling — "what will the user do next?" |
+| **Cross-artifact linking** | Given a node, predict which other artifacts it should be transcluded into | Knowledge organization — "where else is this concept relevant?" |
+| **Permission-aware retrieval** | Navigate the graph while respecting ACL boundaries | Secure reasoning — "what can I access and what can I not?" |
+
+### How This Improves on Graph-RAG (Vision Document §5)
+
+The vision document describes Graph-RAG as AI agents *navigating* the graph at inference
+time. The training data opportunity goes further: instead of just navigating a graph at
+inference, **train the model on graph-structured data so it learns to reason relationally.**
+
+```
+Graph-RAG (inference-time):
+  Model receives question → follows edges in UAF graph → returns answer
+  (model's internal knowledge doesn't change; graph is external memory)
+
+Graph-trained model:
+  Model trained on UAF graphs → internalizes relational patterns → reasons structurally
+  (model learns graph reasoning as a native capability, not just retrieval)
+```
+
+The two approaches are complementary: a graph-trained model is better at navigating graphs
+at inference time because it has learned relational reasoning patterns during training.
+
+### Data Sovereignty as a Training Advantage
+
+UAF's security layer (ACLs, audit trails, encryption) creates a framework for **consented
+training data**:
+
+- **Opt-in training pools:** Artifact owners explicitly grant `TRAINING` permission
+  (a future Role) to allow their data to be used for model training
+- **Per-artifact granularity:** Users can consent to training on their public documents
+  but not their private spreadsheets
+- **Audit trail for training data:** The audit log records which artifacts were used for
+  training, when, and by whom — full provenance for the training dataset itself
+- **Crypto-shredding for training data removal:** If a user revokes consent, destroying
+  their encryption key makes their data unrecoverable from the training set (assuming
+  encrypted data was used for training, not decrypted copies)
+- **GDPR compliance:** This framework satisfies GDPR Article 6 (lawful basis for
+  processing) and Article 7 (conditions for consent) for training data
+
+This is a significant commercial advantage in the EU market: organizations can use UAF
+for internal AI training with full regulatory compliance and user consent tracking.
+
+### Practical Implementation Path
+
+1. **V1:** Build the graph with typed nodes, edges, and full operation history — this
+   is already the plan. No training-specific work needed.
+2. **Vector embeddings (Appendix B):** Add embedding metadata to nodes. This enables
+   hybrid retrieval (graph navigation + semantic similarity).
+3. **Graph export for training:** Export subgraphs as training samples in formats
+   consumable by ML frameworks (PyG, DGL, or custom JSONL with graph structure).
+4. **Fine-tuning experiments:** Fine-tune an open model (Llama, Mistral) on UAF graph
+   data using graph-aware training objectives. Compare against same model fine-tuned
+   on the equivalent flat text.
+5. **Benchmark:** Measure hallucination rate, citation accuracy, and cross-modal reasoning
+   on graph-trained vs. text-trained models using the same underlying knowledge.
+
+### Key Insight
+
+**The data model decisions we make in V1 — typed nodes, typed edges, operation history,
+content addressing, transclusion — are exactly what makes the training data valuable.**
+We don't need to add anything for AI training; we need to build the graph correctly. The
+training value is an emergent property of structured, relational, provenanced data.
+
+---
+
+## Appendix E: Business Continuity, Backup, and Data Recovery
+
+> **Scope:** End-state system (not V1). This appendix addresses the concern that will
+> kill adoption faster than any security flaw: "Will I lose my data?" People tolerate
+> imperfect security; they do not tolerate data loss or lockout.
+
+### What the Architecture Naturally Provides
+
+Before discussing what we need to *add*, the architecture already has several strong
+durability properties by construction:
+
+**1. Local-first means data lives on the user's device.**
+The cloud server is a sync relay, not the primary store. If the server goes down — or
+the company goes bankrupt — the user still has their complete local copy. This is the
+single most important business continuity property. Compare to Google Docs, where a
+Google outage means zero access to your documents.
+
+**2. Append-only operation log is naturally durable.**
+Data is never overwritten. A "delete" is a new operation appended to the log — the
+original creation operation still exists. This means accidental deletion is always
+recoverable by replaying the log up to the point before the delete.
+
+**3. CRDT sync creates automatic replicas.**
+Every device that syncs an artifact has a full copy of its operation log. If the user
+has a laptop and a phone, the data exists in at least three places (laptop, phone,
+server). Losing one device doesn't lose data.
+
+**4. Content addressing detects corruption.**
+Every operation is SHA-256 hashed. If a disk bit-flips or a storage system silently
+corrupts data, the hash check fails on the next read. Corruption is *detected*, not
+silently propagated. This is something most systems (including Notion, Google Docs,
+and Microsoft 365) do NOT provide.
+
+**5. Format export provides an escape hatch.**
+The round-trip format handlers (db plan Phase 13) can export any artifact to standard
+file formats (docx, xlsx, csv, markdown). Even if the UAF software itself becomes
+unavailable, the user can export their data to formats that every other tool reads.
+
+**6. Open source prevents vendor lock-in.**
+The protocol, the schema, and the code are open source. If the company disappears,
+anyone can run the software. The data is not trapped in a proprietary format that only
+one company's software can read.
+
+### Data Loss Scenarios and Mitigations
+
+#### L1. Device Failure (Disk Crash, Theft, Fire)
+
+**Risk:** User's primary device is destroyed. Local data lost.
+
+**Mitigation:**
+- **CRDT sync to cloud** — if sync was active, the server has a full copy of the
+  operation log. Data loss is limited to operations since the last sync.
+- **Multi-device sync** — if the user has multiple devices, each is an independent
+  replica. Device loss is survivable.
+- **Server-side backups** — the hosting provider runs automated backups of the
+  operation log store (see "Backup Strategy" below).
+
+**Residual risk:** If the user was working offline and hadn't synced, unsynced
+operations are lost. Mitigation: configurable auto-sync interval (default: every
+30 seconds when online). Clear UI indicator showing "last synced: X minutes ago."
+
+#### L2. Server / Cloud Provider Failure
+
+**Risk:** Cloud hosting goes down (outage, bankruptcy, data center fire).
+
+**Mitigation:**
+- **Local-first** — users keep working. No interruption to active use.
+- **Multi-region replication** — operation logs replicated across geographically
+  separated data centers (standard cloud practice, configured in deployment).
+- **Cross-provider backup** — automated daily snapshots to a *different* cloud
+  provider (e.g., primary on Hetzner, backup to AWS S3 or Backblaze B2). Encrypted
+  before upload.
+- **User-initiated export** — users can export their complete graph at any time to
+  local files. Encourage periodic "take-home" exports for critical data.
+
+**Residual risk:** If all cloud providers fail simultaneously AND the user's local
+device is also gone, data is lost. This is the "asteroid hits both data centers"
+scenario — mitigated by geographic distribution but not eliminated.
+
+#### L3. Accidental Deletion
+
+**Risk:** User deletes an artifact or critical nodes by mistake.
+
+**Mitigation:**
+- **Append-only log** — "deleted" nodes are not physically removed. The delete
+  operation is appended, and the materialized state removes the node from active
+  view, but the creation operation and all prior data still exist in the log.
+- **Undo** — the application layer's undo mechanism (Appendix C1) reverses delete
+  operations by appending inverse operations.
+- **Soft-delete with retention period** — deleted artifacts move to a "Trash" state
+  for N days (configurable, default: 30 days) before permanent removal from the
+  materialized view. Similar to Google Drive's trash.
+- **Point-in-time recovery** — because the operation log is ordered and timestamped,
+  we can materialize the state at any historical point: "show me my graph as it was
+  at 3pm yesterday." This is a natural capability of the event-sourced architecture
+  — just stop replaying operations at the desired timestamp.
+
+**Residual risk:** None for data loss. The append-only log means accidental deletion
+is always 100% recoverable (unless log compaction has run — see L6).
+
+#### L4. Ransomware / Malicious Deletion
+
+**Risk:** Attacker gains access and deletes or encrypts data.
+
+**Mitigation:**
+- **Append-only log with content addressing** — the attacker can append "delete"
+  operations, but cannot erase the original operations from the log. Recovery is
+  possible by replaying up to the point before the attack.
+- **Server-side backup immutability** — backups stored with object-lock or WORM
+  (Write Once Read Many) policies. Even a compromised server cannot delete backups
+  within the retention window.
+- **Audit trail detection** — mass deletion operations trigger anomaly alerts
+  (unusual volume of `DeleteNode` operations from a single session).
+- **Multi-device resilience** — if the attacker compromises the server but not the
+  user's local device, the local copy is unaffected (and vice versa).
+
+**Residual risk:** If the attacker compromises all replicas simultaneously (server
++ all user devices + all backups), data is lost. Mitigated by immutable backups on
+separate infrastructure.
+
+#### L5. Encryption Key Loss — The Hard Problem
+
+**Risk:** User loses their encryption key. With zero-knowledge hosting, the data
+is permanently unrecoverable. This is the direct tension between security (T4/T5 in
+the threat model) and business continuity.
+
+**This is the most important scenario to get right.** Every other data loss scenario
+has a straightforward technical mitigation. Key loss is fundamentally a *tradeoff*
+between security and recoverability — you cannot maximize both.
+
+**Mitigation by security tier:**
+
+| Tier | Key Loss Mitigation | Recovery Possible? | Security Tradeoff |
+|------|--------------------|--------------------|-------------------|
+| **Standard** (server-managed keys) | Provider holds keys. "Forgot password" flow resets access | Yes — provider can always recover | Provider can be compelled to decrypt (T4) |
+| **Sovereign** (client-held + threshold backup) | Key split across N parties (e.g., 3-of-5 threshold). Any 3 can reconstruct | Yes — if M-of-N parties cooperate | Threshold parties are a trust/compulsion surface |
+| **Air-gapped** (HSM/hardware token) | HSM backup to second hardware token stored in a safe | Yes — if backup token exists | Physical security of backup token |
+| **Maximum security** (single client key, no backup) | None. Key loss = data loss | **No** | Maximum security, minimum recoverability |
+
+**Recommended default:** Sovereign tier with threshold backup. When a user creates
+an account, the system generates their key and immediately performs a key-splitting
+ceremony:
+1. Key is split into 5 shares (Shamir's Secret Sharing)
+2. User keeps 1 share locally
+3. 1 share encrypted to the user's recovery email
+4. 1 share held by the hosting provider (in escrow)
+5. 1 share held by a designated recovery contact (chosen by user)
+6. 1 share held by an independent escrow service
+
+Any 3 of 5 shares reconstruct the key. The user can recover even if they lose their
+device AND forget their password — as long as 2 of the other 4 parties cooperate.
+The hosting provider alone cannot decrypt (they have only 1 of 5 shares).
+
+**Key rotation after recovery:** When a key is recovered via threshold reconstruction,
+the system immediately rotates to a new key (re-encrypts all data) and performs a
+new splitting ceremony. This limits the exposure window.
+
+**User education:** The system MUST clearly communicate the recovery model during
+onboarding. "Maximum security" users must explicitly acknowledge: "I understand that
+if I lose my key, my data is permanently unrecoverable, and the provider cannot help."
+A checkbox is not enough — require typing a confirmation sentence.
+
+#### L6. Operation Log Growth and Compaction
+
+**Risk:** The append-only log grows without bound. Eventually, compaction is needed
+(creating a snapshot and discarding old operations). If compaction discards the wrong
+operations, historical data is lost.
+
+**Mitigation:**
+- **Compaction creates a snapshot, not a deletion.** The snapshot captures the full
+  materialized state at a point in time. Old operations are archived (moved to cold
+  storage), not deleted. This means the full history is still *available* on request,
+  just not in hot storage.
+- **Compaction is verifiable.** The snapshot's content hash must match the hash of
+  replaying all operations from genesis. If they don't match, compaction failed and
+  the original operations are preserved.
+- **Configurable retention.** Users choose how long to keep full operation history
+  before compaction. Default: 1 year of full history, then snapshot + archive.
+  Compliance-sensitive users can set "never compact" (full history forever, pay for
+  storage).
+
+**Residual risk:** If archived operations are lost (storage failure on cold tier),
+point-in-time recovery before the snapshot is impossible. The snapshot preserves the
+*state* but not the *history* of how it was reached. Mitigated by redundant cold
+storage.
+
+#### L7. CRDT Merge Corruption
+
+**Risk:** A bug in the CRDT merge algorithm produces incorrect state after merging
+concurrent operations from multiple users. Because CRDT sync propagates to all
+replicas, the corruption spreads.
+
+**This is subtle and dangerous** — content addressing verifies individual operations
+are intact, but it doesn't verify that the *merge result* is correct. Two valid
+operations can produce an invalid merged state if the merge algorithm is buggy.
+
+**Mitigation:**
+- **Extensive merge testing** — the CRDT sync phase must include property-based
+  tests (Hypothesis/QuickCheck) that verify merge commutativity, associativity,
+  and idempotency across thousands of random operation sequences.
+- **Merge verification checksums** — after merge, both parties compute a checksum
+  of the resulting materialized state. If checksums differ, the merge produced
+  divergent results and must be investigated (not silently accepted).
+- **Merge rollback** — every merge operation is itself logged. If a merge is
+  determined to be incorrect, it can be rolled back by replaying from the pre-merge
+  state.
+- **Canary nodes** — include known-good reference data in the graph (e.g., a
+  "system health" artifact with predetermined content). After merge, verify the
+  canary is intact. If not, the merge corrupted data.
+
+**Residual risk:** A merge bug that passes all tests and doesn't trigger checksums
+but produces subtly wrong data (e.g., reorders children incorrectly). Mitigated by
+user-visible verification (the Lens shows the rendered result — users notice if their
+document is garbled).
+
+#### L8. Permission Misconfiguration (Self-Lockout)
+
+**Risk:** User accidentally removes their own OWNER role from an artifact, or a
+permission change cascades in a way that locks out all users.
+
+**Mitigation:**
+- **OWNER role is irremovable by self.** The system prevents the last OWNER of an
+  artifact from revoking their own OWNER role. At least one OWNER must exist at all
+  times.
+- **SYSTEM principal as emergency backdoor.** An administrator using the SYSTEM
+  principal can restore permissions on any artifact. This is the "break glass"
+  mechanism.
+- **Permission change audit trail.** All role grants and revocations are logged.
+  Restoring previous permissions is a matter of replaying the audit log to find
+  what was changed and reversing it.
+- **Permission change confirmation for destructive actions.** Revoking OWNER,
+  changing from private to public, or removing the last EDITOR all require explicit
+  confirmation (not just a single API call).
+
+### Backup Strategy (End-State)
+
+#### Backup Tiers
+
+```
+Tier 1: Real-time replication
+  - CRDT sync to cloud server (every 30 seconds)
+  - Multi-device sync (each device is a replica)
+  → Protects against: single device failure, brief outages
+
+Tier 2: Server-side snapshots
+  - Automated daily snapshots of the operation log store
+  - Stored on same provider, different availability zone
+  - Retention: 30 daily + 12 monthly + unlimited yearly
+  → Protects against: accidental deletion, data corruption
+
+Tier 3: Cross-provider backup
+  - Automated daily (or weekly) encrypted export to a different cloud provider
+  - Object-locked / WORM storage (immutable for retention period)
+  → Protects against: primary provider failure, ransomware, insider threat
+
+Tier 4: User-held export
+  - User-initiated full export to local files (standard formats)
+  - Encouraged via periodic reminders: "You haven't exported in 30 days"
+  → Protects against: complete provider loss, vendor lock-in, all-cloud failure
+```
+
+#### Recovery Time Objectives (RTO) and Recovery Point Objectives (RPO)
+
+| Scenario | RPO (max data loss) | RTO (max downtime) | Recovery Method |
+|----------|--------------------|--------------------|-----------------|
+| Single device failure | 30 seconds (last sync) | 0 (use another device or cloud) | CRDT sync from cloud |
+| Server outage | 0 (local-first) | 0 (continue offline) | Sync when server returns |
+| Server data loss | 24 hours (last snapshot) | Hours (restore snapshot) | Tier 2 snapshot restore |
+| Provider failure | 24 hours (last cross-provider backup) | Hours-days (migrate to new provider) | Tier 3 backup restore |
+| Accidental deletion | 0 (append-only log) | Minutes (undo or point-in-time recovery) | Operation log replay |
+| Ransomware | 0 (immutable backups) | Hours (restore from WORM backup) | Tier 3 restore |
+| Key loss (standard tier) | 0 | Minutes (password reset) | Provider key recovery |
+| Key loss (sovereign tier) | 0 | Hours (threshold reconstruction) | M-of-N key shares |
+| Key loss (maximum security) | **Total** | **Never** | **Unrecoverable** |
+
+#### Point-in-Time Recovery
+
+The event-sourced architecture provides a capability that most systems don't offer:
+**recover to any point in time**, not just the last backup.
+
+```python
+# Recover artifact state as of a specific timestamp
+state_at_3pm = db.materialize_at(artifact_id, timestamp="2026-02-17T15:00:00Z")
+
+# Or recover to just before a specific operation (e.g., the accidental delete)
+state_before_delete = db.materialize_before(artifact_id, operation_id=delete_op_id)
+```
+
+This is possible because the operation log is ordered and timestamped. The materializer
+can stop replaying at any point. This is analogous to PostgreSQL's Point-in-Time Recovery
+(PITR) or git's `checkout` — but built into the core architecture, not bolted on.
+
+### Vendor Independence Guarantees
+
+For customers who worry about the company disappearing:
+
+**1. Open source = no lock-in.**
+The entire stack (protocol, schema, database, API, Lenses) is open source. If the
+company disappears tomorrow, anyone can:
+- Run the server software on their own infrastructure
+- Continue developing the software (fork it)
+- Read the data format (it's documented and self-describing via JSON-LD)
+
+**2. Standard format export.**
+Every artifact can be exported to standard file formats (docx, xlsx, csv, md) at
+any time. Even without UAF software, the data is readable.
+
+**3. Operation log is self-contained.**
+The operation log is a self-describing, content-addressed data structure. A minimal
+replay tool (which is ~200 lines of Python) can rebuild the full graph state from
+the raw log. No external service or proprietary runtime required.
+
+**4. No proprietary cloud dependencies.**
+The sync protocol (CRDT over WebSocket) runs on any cloud provider or self-hosted
+infrastructure. No AWS-specific services, no Google-specific APIs, no Azure lock-in.
+The server is a standard Python application that runs anywhere.
+
+**5. Data portability as a legal right.**
+Under GDPR Article 20 (right to data portability), EU users have a legal right to
+receive their data in a "structured, commonly used and machine-readable format."
+UAF's export pipeline satisfies this by design.
+
+### The Trust Equation
+
+Ultimately, business continuity trust comes from the combination of:
+
+```
+Trust = Local copies (you have the data)
+      + Open source (you can read the format)
+      + Standard exports (you can leave anytime)
+      + Append-only log (deletion is recoverable)
+      + Content addressing (corruption is detectable)
+      + CRDT replicas (redundancy is automatic)
+      + Immutable backups (ransomware is survivable)
+      + Key recovery (lockout is recoverable — with chosen tradeoffs)
+```
+
+No single property is sufficient. The combination is what makes the system trustworthy.
+The weakest link is key management (L5) — which is why the default should be the
+sovereign tier with threshold backup, not the maximum-security tier where key loss is
+fatal.

@@ -589,7 +589,7 @@ tests/uaf/app/test_integration.py       (~6 scenario tests)
 Note: `tests/uaf/app/test_roundtrip.py` (~25 tests) is in db plan Phase 13.
 
 **App layer total: ~90 tests**
-**Combined project total: ~168 (db) + ~80 (security) + ~90 (app) + ~25 (roundtrip) = ~363 tests**
+**Combined project total: ~168 (db plan, includes core + round-trip) + ~80 (security) + ~90 (app) = ~338 tests**
 
 ---
 
@@ -635,7 +635,7 @@ User registers → logs in → creates content → views via Lens → exports �
 
 ### After all phases
 ```bash
-make check   # ~363 total tests passing, zero mypy errors, zero ruff violations
+make check   # ~338 total tests passing, zero mypy errors, zero ruff violations
 ```
 
 ---
@@ -706,6 +706,10 @@ make check   # ~363 total tests passing, zero mypy errors, zero ruff violations
 | **DrawLens** | Diagram/whiteboard editor | Shape + LINKED_TO edges | Canvas rendering |
 | **ChessLens** | Chess game viewer | MoveNode + FOLLOWS edges | python-chess integration |
 | **DataLens** | Data visualization (charts) | Sheet, Cell | Chart rendering library |
+| **SupplyLens** | Procurement / inventory | PurchaseOrder, Vendor, Product | ERP node types (see `005` Appendix B) |
+| **SalesLens** | CRM / pipeline management | Customer, Opportunity, SalesOrder | ERP node types (see `005` Appendix B) |
+| **ManufacturingLens** | Production / quality | ProductionOrder, Batch, WorkCenter | ERP node types (see `005` Appendix B) |
+| **HRLens** | Org chart / payroll | Employee, Position, Department | ERP node types (see `005` Appendix B) |
 
 Each future Lens follows the same pattern: implement the `Lens` protocol, register in
 `LensRegistry`, add API routes automatically via the existing `/lens/{type}` endpoint

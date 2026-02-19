@@ -775,3 +775,279 @@ must prevent cross-tenant data access even in the EAVT indexes. Options:
 
 Current leaning: Separate GraphDB per tenant for V1 (simplest). Shared infrastructure
 when persistence layer supports it.
+
+---
+
+## Appendix B: Threat Model — State-Sponsored Adversaries
+
+> **Audience:** Customers in defense, intelligence, finance, critical infrastructure,
+> and government who face advanced persistent threats (APT) from nation-state actors.
+> This appendix is an honest assessment — we claim what the architecture genuinely
+> provides and acknowledge where gaps remain.
+
+### Threat Categories and UAF's Posture
+
+#### T1. Data at Rest — Compromised Server / Storage
+
+**Threat:** Attacker gains access to server filesystem or cloud storage (via breach,
+insider, or legal compulsion).
+
+**UAF defense (with encryption enabled):**
+- **Object-level encryption.** Every artifact has its own symmetric key. Nodes are
+  encrypted individually before storage. An attacker who compromises the server sees
+  encrypted blobs — not readable data. This is fundamentally stronger than full-disk
+  encryption (FDE), which protects against physical theft but not against a compromised
+  OS or application layer.
+- **Content addressing.** Every operation is SHA-256 hashed. Tampering with any stored
+  operation invalidates the hash chain. A state actor who modifies stored data to plant
+  false evidence or alter records is detectable — the Merkle DAG integrity check fails.
+- **Append-only log.** The operation log is structurally append-only. You cannot silently
+  delete or rewrite history. Combined with content addressing, this makes the audit trail
+  forensically reliable.
+
+**Honest gap:** Object-level encryption is a **future phase**, not V1. V1 stores data
+in plaintext. The architecture *supports* encryption without rearchitecting, but the
+encryption itself must be implemented and the key management system must be built. Until
+then, data at rest is unprotected.
+
+**Mitigation timeline:** Encryption interfaces are defined now (§2, `EncryptionProvider`
+protocol). Implementation depends on key management decisions (see T5 below).
+
+#### T2. Data in Transit — Network Interception
+
+**Threat:** Attacker intercepts network traffic between client and server (via MITM,
+compromised ISP, or cable tapping — all documented capabilities of state actors).
+
+**UAF defense:**
+- **TLS 1.3** for all HTTP/WebSocket traffic (standard, provided by deployment
+  infrastructure — uvicorn/nginx/cloud provider).
+- **End-to-end encryption (future).** Because UAF encrypts at the object level, data
+  is encrypted *before* it leaves the client. Even if TLS is compromised (via stolen
+  CA certificates or protocol vulnerabilities), the attacker sees encrypted nodes, not
+  content. The server is a blind relay.
+- **Content addressing for integrity.** Even if an attacker modifies data in transit
+  (active MITM), the content hash won't match. The client detects tampering on receipt.
+
+**Honest gap:** End-to-end encryption requires client-side key management — the browser
+or native app must hold the encryption keys, and the server must never see them. This is
+architecturally possible (the `EncryptionProvider` protocol runs client-side) but adds
+significant complexity to the client. V1 relies on TLS only.
+
+#### T3. Metadata / Traffic Analysis
+
+**Threat:** Even with encrypted content, traffic patterns reveal information: who
+accesses which artifacts, when, how often, and how much data flows. State actors
+routinely analyze metadata ("we kill people based on metadata" — former NSA director).
+
+**UAF posture — this is the weakest area:**
+- **EAVT query patterns leak structure.** Even with encrypted node content, the query
+  patterns (which entity, which attribute, which index) reveal the graph's shape. An
+  attacker observing queries can infer relationships without reading content.
+- **Operation frequency reveals activity.** The append rate to the operation log reveals
+  editing intensity. Sudden spikes correlate with deadlines, crises, or sensitive events.
+- **Artifact access patterns reveal relationships.** Which principals access which
+  artifacts, and when, reveals organizational structure and collaboration patterns.
+
+**Possible mitigations (all future, all with significant tradeoffs):**
+
+| Mitigation | How | Tradeoff |
+|-----------|-----|----------|
+| **Padding / dummy operations** | Insert fake operations at random intervals to obscure real activity patterns | Storage overhead, doesn't fully hide bursts |
+| **Oblivious RAM (ORAM)** | Access patterns are cryptographically hidden — server can't tell which data was accessed | 10-100x performance overhead. Research-grade, not production-ready |
+| **Onion routing for sync** | CRDT sync messages routed through multiple relays (Tor-like) | Latency, complexity, still vulnerable to global observers |
+| **Local-first with minimal sync** | Minimize what goes to the server. Sync only encrypted operation bundles, not individual queries | Reduces metadata exposure but limits real-time collaboration |
+
+**Honest assessment:** Metadata protection against state-level adversaries is an unsolved
+problem in the industry. Signal, ProtonMail, and other high-security systems all struggle
+with this. UAF's local-first architecture is a natural advantage — if data primarily lives
+on the user's device and the server is just a sync relay for encrypted operation bundles,
+the metadata exposure is significantly reduced compared to a traditional cloud application
+where every keystroke is a server request.
+
+#### T4. Lawful Compulsion / Forced Disclosure
+
+**Threat:** Government orders the hosting provider to hand over data (subpoena, national
+security letter, court order). In some jurisdictions, gag orders prevent the provider
+from notifying the customer.
+
+**UAF defense — this is architecturally strong:**
+- **Zero-knowledge hosting.** With object-level encryption and client-held keys, the
+  hosting provider **genuinely cannot comply** with a data disclosure order. They can
+  hand over encrypted blobs, but without the user's key, the data is unreadable. This
+  is not a policy claim — it's a mathematical guarantee. The provider cannot decrypt
+  what they never had the key to.
+- **EU jurisdiction.** Hosting within the EU means EU data protection law applies.
+  The CJEU (Court of Justice of the EU) has repeatedly struck down data-sharing
+  agreements with the US (Schrems I, Schrems II). EU law prohibits disclosure to
+  non-EU governments without a mutual legal assistance treaty (MLAT).
+- **Crypto-shredding.** If a user anticipates compulsion, they can destroy their
+  encryption key. The data becomes permanently unrecoverable, even under legal order.
+  (Note: this may itself be illegal in some jurisdictions — "destruction of evidence."
+  The legality depends on jurisdiction and timing relative to the legal order.)
+- **Federated hosting.** Future: data sharded across multiple EU jurisdictions. No
+  single provider holds the complete dataset. A legal order in Germany doesn't reach
+  the shard in Finland.
+
+**Honest gap:** Zero-knowledge hosting depends on keys being held client-side (see T5).
+If the hosting provider also manages keys (a common "easy mode" deployment), they *can*
+decrypt under compulsion. The architecture supports both models, but the zero-knowledge
+guarantee only holds with client-managed keys.
+
+**Also:** The operation log's metadata (who edited what, when) may not be encrypted even
+when content is. A legal order could compel disclosure of the audit trail, revealing
+activity patterns even without content access. Encrypting audit metadata is possible but
+makes compliance reporting (which *requires* audit trails) impossible.
+
+#### T5. Key Management — The Critical Vulnerability
+
+**Threat:** Whoever holds the encryption keys can read the data. Key management is where
+most "encrypted" systems actually fail against state adversaries.
+
+**The fundamental tradeoff:**
+
+| Model | Security | Usability | Recovery |
+|-------|----------|-----------|----------|
+| **Client-held keys only** | Strongest — server is truly zero-knowledge | Users must manage keys. Lost key = lost data. No "forgot password" recovery | None without key backup (which reintroduces trust) |
+| **Key escrow with trusted party** | Strong if escrow party is trustworthy | Transparent to users | Recoverable, but escrow party is a compulsion target |
+| **Hardware Security Module (HSM)** | Strong — keys never leave tamper-resistant hardware | Requires physical HSM deployment | Depends on HSM backup procedures |
+| **Threshold cryptography** | Strong — key split across N parties, M required to decrypt | Complex setup, coordination overhead | Recoverable if M parties cooperate |
+| **Server-managed keys** | Weakest — server can be compelled to disclose | Best UX — users don't think about keys | Full recovery via "forgot password" |
+
+**Current leaning:** Offer multiple tiers:
+- **Standard tier:** Server-managed keys. Protects against breaches, not compulsion.
+  Suitable for most business users.
+- **Sovereign tier:** Client-held keys with optional threshold backup (split across
+  N trusted parties in different jurisdictions). Protects against compulsion. Suitable
+  for defense, intelligence, critical infrastructure.
+- **Air-gapped tier:** Client-held keys on hardware tokens (YubiKey/HSM). No key ever
+  touches a network-connected device. Maximum security. Suitable for classified
+  environments.
+
+The architecture supports all three tiers because encryption is at the object level, not
+the transport or disk level. The `EncryptionProvider` protocol doesn't care where the key
+comes from — it just needs a key.
+
+**Critical cross-reference:** Key loss is the most dangerous business continuity
+scenario. See `002-database-layer.md` Appendix E, section L5 for the full key recovery
+strategy including Shamir's Secret Sharing (3-of-5 threshold) as the recommended
+default for the sovereign tier.
+
+#### T6. Supply Chain Attacks
+
+**Threat:** Attacker compromises a dependency (PyJWT, argon2-cffi, sortedcontainers)
+to introduce a backdoor. This is a documented state-actor technique (SolarWinds,
+codecov, event-stream).
+
+**UAF posture:**
+- **Minimal dependency surface.** The entire V1 stack uses ~6 runtime dependencies, all
+  widely audited FOSS packages. Compare to a typical enterprise app with hundreds of
+  transitive dependencies.
+- **All dependencies are FOSS.** Source code is auditable. No proprietary black boxes.
+- **Content addressing as detection.** If a compromised dependency modifies data in
+  the operation log, content hashing detects it — the hash won't match. This doesn't
+  prevent exfiltration, but it prevents silent data tampering.
+- **Python's reproducible builds.** UV supports lockfiles with hash verification.
+  Dependencies are pinned to exact versions with known hashes.
+
+**Honest gap:** Supply chain attacks that exfiltrate data (rather than modify it) are
+not detected by content addressing. A compromised PyJWT could silently send tokens to
+an attacker. Mitigations: dependency auditing, network egress monitoring, sandboxing
+(future).
+
+#### T7. Client Endpoint Compromise
+
+**Threat:** Attacker compromises the user's device (malware, RAT, browser exploit).
+
+**Honest assessment:** If the endpoint is compromised, encryption doesn't help — the
+attacker sees decrypted data in memory. This is true for *every* system, not just UAF.
+No amount of server-side or transport-level security compensates for a compromised client.
+
+**UAF-specific mitigations:**
+- **Audit trail anomaly detection.** If a compromised client starts exfiltrating data
+  (bulk `READ` operations on many artifacts), the audit log pattern is anomalous.
+  Automated detection can flag or revoke sessions.
+- **Session expiry.** JWT tokens expire (1 hour default). A stolen token has limited
+  lifetime.
+- **Per-artifact key scope.** Even with a compromised client, the attacker only gets
+  keys for artifacts the user has accessed. Unaccessed artifacts remain encrypted with
+  keys the client never received.
+
+#### T8. Insider Threat (Hosting Provider)
+
+**Threat:** Malicious or coerced employee of the hosting provider accesses the server.
+
+**UAF defense (with zero-knowledge hosting):**
+- The insider sees encrypted blobs. They can access the storage layer, the network
+  infrastructure, and the deployment configuration — but not the data content.
+- The audit log (on the server side) records all operations, so even administrative
+  access is logged.
+- **Separation of duties:** The hosting provider runs the infrastructure; they don't
+  hold encryption keys (in the sovereign tier). There's no single role that has both
+  infrastructure access and key access.
+
+**Honest gap:** The insider can observe metadata (T3), perform denial-of-service
+(delete encrypted blobs), or attempt to compromise the application code (T6). Zero-
+knowledge hosting prevents data *disclosure* but not data *destruction* or service
+*disruption*.
+
+### Summary: Strength by Threat Category
+
+| Threat | UAF Posture | Requires | Available |
+|--------|-------------|----------|-----------|
+| T1. Data at rest | **Strong** — object-level encryption, content addressing, append-only log | Encryption phase | Future |
+| T2. Data in transit | **Strong** — E2E encryption + TLS + content addressing | Encryption phase + client-side keys | Future |
+| T3. Metadata analysis | **Weak** — query patterns and access patterns leak structure | ORAM or local-first-minimal-sync | Research-grade |
+| T4. Lawful compulsion | **Strong** — zero-knowledge hosting, EU jurisdiction, crypto-shredding | Client-held keys | Architecture ready, keys future |
+| T5. Key management | **Tiered** — from server-managed (convenient) to HSM (maximum security) | Key management infrastructure | Future |
+| T6. Supply chain | **Moderate** — minimal deps, FOSS, content addressing detects tampering | Dependency auditing, egress monitoring | Partially now |
+| T7. Endpoint compromise | **Weak** — inherent to all systems; audit anomaly detection helps | Client hardening (out of scope) | Partially now |
+| T8. Insider threat | **Strong** — zero-knowledge hosting means insider can't read data | Encryption + client-held keys | Future |
+
+### What We Can Honestly Tell State-Concerned Customers
+
+**Strong claims (architecturally guaranteed):**
+1. "Your data is encrypted at the object level. Our servers store encrypted blobs. We
+   cannot read your data, and we cannot be compelled to disclose it, because we don't
+   have the keys." *(Requires sovereign tier with client-held keys.)*
+2. "Every operation is content-addressed (SHA-256 Merkle DAG). Any tampering — by us,
+   by an attacker, by anyone — is cryptographically detectable."
+3. "Your data never leaves EU jurisdiction. EU data protection law applies. We cannot
+   comply with non-EU legal orders."
+4. "You can destroy your encryption key at any time. When you do, your data becomes
+   permanently unrecoverable — even by us, even under legal order."
+5. "The entire stack is open-source. You can audit every line. There are no proprietary
+   black boxes."
+
+**Honest caveats:**
+1. "Metadata protection against a global passive adversary is an unsolved industry
+   problem. We minimize metadata exposure through local-first architecture, but we
+   cannot guarantee zero leakage."
+2. "If your endpoint is compromised, no server-side security helps. You need client
+   hardening (which is your responsibility, not ours)."
+3. "The zero-knowledge guarantee depends on you managing your own keys. If you choose
+   the convenience tier (server-managed keys), we *can* be compelled to decrypt."
+4. "V1 does not yet include encryption. The architecture supports it, and interfaces
+   are defined, but the implementation is a future phase."
+
+### Competitive Position
+
+| Competitor | Encryption | Metadata | Key Mgmt | Jurisdiction | Open Source |
+|-----------|-----------|----------|----------|-------------|-------------|
+| Google Workspace | Server-managed | Full access | Google holds keys | US (CLOUD Act) | No |
+| Microsoft 365 | Server-managed + BYOK | Full access | MS or customer | US (CLOUD Act) | No |
+| Notion | None (plaintext) | Full access | N/A | US | No |
+| Proton Drive | E2E, zero-knowledge | Minimal | Client-held | Switzerland | Partial |
+| Tresorit | E2E, zero-knowledge | Minimal | Client-held | Switzerland/EU | No |
+| **UAF (with encryption)** | E2E, object-level, zero-knowledge | Minimal (local-first) | Tiered (client/HSM/threshold) | EU (Gaia-X) | **Yes — fully** |
+
+UAF's differentiators for state-concerned customers:
+1. **Object-level granularity** — encryption per artifact, not per-disk or per-account.
+   Enables selective sharing without decrypting everything.
+2. **Content-addressed integrity** — Merkle DAG provides tamper detection that competitors
+   lack (most offer encryption but not integrity verification).
+3. **Fully open source** — auditable by the customer's own security team. Proton and
+   Tresorit are only partially open source.
+4. **Append-only audit trail** — forensically reliable history. Combined with content
+   addressing, the audit trail is tamper-evident.
+5. **Local-first by design** — data lives on the user's device. Cloud is optional sync,
+   not the primary store. Reduces attack surface and metadata exposure.
