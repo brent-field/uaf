@@ -116,11 +116,13 @@ class TestComputeOperationId:
         now = utc_now()
         op1 = CreateNode(
             node=Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="A"),
-            parent_ops=(), timestamp=now,
+            parent_ops=(),
+            timestamp=now,
         )
         op2 = CreateNode(
             node=Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="B"),
-            parent_ops=(), timestamp=now,
+            parent_ops=(),
+            timestamp=now,
         )
         assert compute_operation_id(op1) != compute_operation_id(op2)
 
