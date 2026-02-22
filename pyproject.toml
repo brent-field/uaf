@@ -4,7 +4,16 @@ version = "0.1.0"
 description = "A graph-based, AI-native knowledge protocol replacing file-based legacy software"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["sortedcontainers>=2.4", "mistune>=3.0", "PyJWT>=2.8", "argon2-cffi>=23.1"]
+dependencies = [
+    "sortedcontainers>=2.4",
+    "mistune>=3.0",
+    "PyJWT>=2.8",
+    "argon2-cffi>=23.1",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "python-multipart>=0.0.9",
+    "mcp>=1.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -20,6 +29,7 @@ dev = [
     "mypy>=1.14",
     "pre-commit>=4.0",
     "sortedcontainers-stubs>=2.4",
+    "httpx>=0.28",
 ]
 
 [tool.ruff]
@@ -40,6 +50,9 @@ select = [
     "TCH",  # flake8-type-checking
     "RUF",  # ruff-specific rules
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"src/uaf/app/api/*.py" = ["B008", "TCH001", "TCH003"]  # FastAPI Depends() pattern
 
 [tool.mypy]
 python_version = "3.13"

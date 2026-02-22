@@ -1,0 +1,34 @@
+"""FastAPI app factory and route registration."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from fastapi import FastAPI
+
+from uaf.app.api.routes_artifacts import router as artifacts_router
+from uaf.app.api.routes_auth import router as auth_router
+from uaf.app.api.routes_import_export import router as import_export_router
+from uaf.app.api.routes_lens import router as lens_router
+from uaf.app.api.routes_nodes import router as nodes_router
+from uaf.app.api.routes_nodes import search_router
+
+if TYPE_CHECKING:
+    from uaf.app.lenses import LensRegistry
+    from uaf.security.secure_graph_db import SecureGraphDB
+
+
+def create_app(db: SecureGraphDB, registry: LensRegistry) -> FastAPI:
+    """Create and configure the FastAPI application."""
+    app = FastAPI(title="UAF API", version="1.0")
+    app.state.db = db
+    app.state.registry = registry
+
+    app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+    app.include_router(artifacts_router, prefix="/api/artifacts", tags=["artifacts"])
+    app.include_router(nodes_router, prefix="/api/nodes", tags=["nodes"])
+    app.include_router(lens_router, prefix="/api/artifacts", tags=["lens"])
+    app.include_router(search_router, prefix="/api/search", tags=["search"])
+    app.include_router(import_export_router, prefix="/api", tags=["import/export"])
+
+    return app

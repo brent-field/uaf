@@ -1,0 +1,115 @@
+"""File import/export endpoints."""
+
+from __future__ import annotations
+
+import tempfile
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+
+from uaf.app.api.dependencies import get_db, get_session
+from uaf.app.api.schemas import ArtifactResponse
+from uaf.app.formats.csv_format import CsvHandler
+from uaf.app.formats.markdown import MarkdownHandler
+from uaf.app.formats.plaintext import PlainTextHandler
+from uaf.core.node_id import NodeId
+from uaf.core.nodes import Artifact
+from uaf.security.secure_graph_db import SecureGraphDB, Session
+
+router = APIRouter()
+
+_HANDLERS: dict[str, MarkdownHandler | CsvHandler | PlainTextHandler] = {
+    "markdown": MarkdownHandler(),
+    "csv": CsvHandler(),
+    "plaintext": PlainTextHandler(),
+}
+
+_EXTENSIONS: dict[str, str] = {
+    "markdown": ".md",
+    "csv": ".csv",
+    "plaintext": ".txt",
+}
+
+
+@router.post("/artifacts/import", response_model=ArtifactResponse, status_code=201)
+def import_file(
+    file: UploadFile,
+    format: str = "markdown",
+    db: SecureGraphDB = Depends(get_db),
+    session: Session = Depends(get_session),
+) -> ArtifactResponse:
+    """Import a file into the graph."""
+    handler = _HANDLERS.get(format)
+    if handler is None:
+        raise HTTPException(status_code=400, detail=f"Unknown format: {format}")
+
+    # Write upload to temp file using original filename for title extraction
+    suffix = _EXTENSIONS.get(format, ".txt")
+    original_name = file.filename or f"upload{suffix}"
+    stem = Path(original_name).stem
+    with tempfile.NamedTemporaryFile(
+        prefix=f"{stem}_", suffix=suffix, delete=False,
+    ) as tmp:
+        content = file.file.read()
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+
+    # Rename to preserve original filename stem (used by handlers for title)
+    final_path = tmp_path.parent / f"{stem}{suffix}"
+    tmp_path.rename(final_path)
+    tmp_path = final_path
+
+    try:
+        # Import uses raw GraphDB (format handlers expect GraphDB, not SecureGraphDB)
+        art_id = handler.import_file(tmp_path, db._db)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    art = db._db.get_node(art_id)
+    if art is None or not isinstance(art, Artifact):
+        raise HTTPException(status_code=500, detail="Import failed")
+
+    return ArtifactResponse(
+        id=str(art_id),
+        title=art.title,
+        created_at=art.meta.created_at,
+        updated_at=art.meta.updated_at,
+    )
+
+
+@router.get("/artifacts/{artifact_id}/export")
+def export_file(
+    artifact_id: str,
+    format: str = "markdown",
+    db: SecureGraphDB = Depends(get_db),
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    """Export an artifact as a file."""
+    handler = _HANDLERS.get(format)
+    if handler is None:
+        raise HTTPException(status_code=400, detail=f"Unknown format: {format}")
+
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    art = db.get_node(session, aid)
+    if art is None or not isinstance(art, Artifact):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    suffix = _EXTENSIONS.get(format, ".txt")
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+
+    handler.export_file(db._db, aid, tmp_path)
+
+    media_types = {
+        "markdown": "text/markdown",
+        "csv": "text/csv",
+        "plaintext": "text/plain",
+    }
+
+    return FileResponse(
+        path=str(tmp_path),
+        media_type=media_types.get(format, "application/octet-stream"),
+        filename=f"{art.title}{suffix}",
+    )
