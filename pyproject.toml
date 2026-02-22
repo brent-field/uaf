@@ -1,17 +1,17 @@
 [project]
-name = "universal-data-format"
+name = "universal-artifact-format"
 version = "0.1.0"
 description = "A graph-based, AI-native knowledge protocol replacing file-based legacy software"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = ["sortedcontainers>=2.4"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/udf"]
+packages = ["src/uaf"]
 
 [dependency-groups]
 dev = [
@@ -19,6 +19,7 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.14",
     "pre-commit>=4.0",
+    "sortedcontainers-stubs>=2.4",
 ]
 
 [tool.ruff]
