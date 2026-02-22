@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A graph-based, AI-native knowledge protocol replacing file-based legacy software"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = ["sortedcontainers>=2.4"]
+dependencies = ["sortedcontainers>=2.4", "mistune>=3.0"]
 
 [build-system]
 requires = ["hatchling"]

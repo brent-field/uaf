@@ -1,0 +1,4 @@
+Item,Quantity,Price,InStock
+Widget,100,9.99,true
+Gadget,,19.99,false
+Doohickey,50,,true
