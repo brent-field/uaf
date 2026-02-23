@@ -43,23 +43,27 @@ _EXTENSIONS: dict[str, str] = {
     "pdf": ".pdf",
     "gdoc": ".json",
 }
+_EXT_TO_FORMAT: dict[str, str] = {v: k for k, v in _EXTENSIONS.items()}
+_EXT_TO_FORMAT[".gdoc"] = "gdoc"
 
 
 @router.post("/artifacts/import", response_model=ArtifactResponse, status_code=201)
 def import_file(
     file: UploadFile,
-    format: str = "markdown",
+    format: str | None = None,
     db: SecureGraphDB = Depends(get_db),
     session: Session = Depends(get_session),
 ) -> ArtifactResponse:
-    """Import a file into the graph."""
-    handler = _HANDLERS.get(format)
-    if handler is None:
-        raise HTTPException(status_code=400, detail=f"Unknown format: {format}")
+    """Import a file into the graph. Format is auto-detected from the file extension."""
+    original_name = file.filename or "upload.txt"
+    suffix = Path(original_name).suffix.lower()
 
-    # Write upload to temp file using original filename for title extraction
-    suffix = _EXTENSIONS.get(format, ".txt")
-    original_name = file.filename or f"upload{suffix}"
+    # Auto-detect format from extension, allow explicit override
+    fmt = format if format is not None else _EXT_TO_FORMAT.get(suffix)
+    handler = _HANDLERS.get(fmt) if fmt else None
+    if handler is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix}")
+
     stem = Path(original_name).stem
     with tempfile.NamedTemporaryFile(
         prefix=f"{stem}_", suffix=suffix, delete=False,

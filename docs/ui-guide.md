@@ -114,15 +114,16 @@ The spreadsheet view (`/artifacts/{id}/grid`) displays GridLens-rendered HTML ta
 
 From the Dashboard:
 
-1. Click **Choose File** and select a file (`.md`, `.csv`, `.txt`, `.docx`, `.pdf`, or `.json`)
-2. Select the **Format** from the dropdown:
-   - **Markdown** (`.md`) — headings, paragraphs, code blocks, lists
-   - **CSV** (`.csv`) — spreadsheet data
-   - **Plain Text** (`.txt`) — paragraphs split on blank lines
-   - **Word** (`.docx`) — paragraphs, headings, and tables
-   - **PDF** (`.pdf`) — extracted text blocks as paragraphs
-   - **Google Docs** (`.json`) — Google Docs JSON export format
-3. Click **Import**
+1. Click **Choose File** and select a file
+2. Click **Import** — the format is auto-detected from the file extension
+
+Supported formats:
+- **Markdown** (`.md`) — headings, paragraphs, code blocks, lists
+- **CSV** (`.csv`) — spreadsheet data
+- **Plain Text** (`.txt`) — paragraphs split on blank lines
+- **Word** (`.docx`) — paragraphs, headings, and tables
+- **PDF** (`.pdf`) — extracted text blocks as paragraphs
+- **Google Docs** (`.json` / `.gdoc`) — Google Docs JSON export format
 4. You are redirected to the appropriate editor (document editor for most formats, spreadsheet viewer for CSV)
 
 ---

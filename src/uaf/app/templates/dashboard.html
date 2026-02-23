@@ -44,18 +44,7 @@
     <form method="post" action="/artifacts/import" enctype="multipart/form-data" class="import-form">
         <div class="field">
             <label for="file">File</label>
-            <input type="file" id="file" name="file" accept=".md,.csv,.txt,.docx,.pdf,.json,.gdoc" required />
-        </div>
-        <div class="field">
-            <label for="format">Format</label>
-            <select id="format" name="format">
-                <option value="markdown">Markdown (.md)</option>
-                <option value="csv">CSV (.csv)</option>
-                <option value="plaintext">Plain Text (.txt)</option>
-                <option value="docx">Word (.docx)</option>
-                <option value="pdf">PDF (.pdf)</option>
-                <option value="gdoc">Google Docs (.json)</option>
-            </select>
+            <input type="file" id="file" name="file" accept=".md,.csv,.txt,.docx,.pdf,.json" required />
         </div>
         <button type="submit" class="btn btn-primary">Import</button>
     </form>

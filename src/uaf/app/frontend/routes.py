@@ -58,6 +58,8 @@ _EXTENSIONS: dict[str, str] = {
     "pdf": ".pdf",
     "gdoc": ".json",
 }
+_EXT_TO_FORMAT: dict[str, str] = {v: k for k, v in _EXTENSIONS.items()}
+_EXT_TO_FORMAT[".gdoc"] = "gdoc"
 
 
 # ---------------------------------------------------------------------------
@@ -325,17 +327,18 @@ def delete_artifact(
 def import_artifact(
     request: Request,
     file: UploadFile,
-    format: str = Form("markdown"),
     db: SecureGraphDB = Depends(get_db),
 ) -> RedirectResponse:
     """Import a file and redirect to the editor."""
     _require_session(request, db)
-    handler = _FORMAT_HANDLERS.get(format)
-    if handler is None:
-        raise HTTPException(status_code=400, detail=f"Unknown format: {format}")
 
-    suffix = _EXTENSIONS.get(format, ".txt")
-    original_name = file.filename or f"upload{suffix}"
+    original_name = file.filename or "upload.txt"
+    suffix = Path(original_name).suffix.lower()
+    fmt = _EXT_TO_FORMAT.get(suffix)
+    if fmt is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix}")
+
+    handler = _FORMAT_HANDLERS[fmt]
     stem = Path(original_name).stem
 
     with tempfile.NamedTemporaryFile(
@@ -355,7 +358,7 @@ def import_artifact(
         tmp_path.unlink(missing_ok=True)
 
     # Route to appropriate editor based on format
-    if format == "csv":
+    if fmt == "csv":
         return RedirectResponse(url=f"/artifacts/{art_id}/grid", status_code=303)
     return RedirectResponse(url=f"/artifacts/{art_id}/edit", status_code=303)
 
