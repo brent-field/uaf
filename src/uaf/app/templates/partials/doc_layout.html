@@ -1,0 +1,9 @@
+{% if layout_html %}
+<div class="layout-view">
+    {{ layout_html | safe }}
+</div>
+{% else %}
+<div class="empty-state">
+    <p>No layout data available. Import a PDF or DOCX to see layout view.</p>
+</div>
+{% endif %}

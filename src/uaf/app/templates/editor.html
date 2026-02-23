@@ -21,6 +21,23 @@
     </div>
 
     <div class="toolbar">
+        <div class="view-toggle">
+            <button class="btn btn-sm view-mode-btn active"
+                    id="btn-semantic"
+                    hx-get="/artifacts/{{ artifact_id }}/blocks?mode=semantic"
+                    hx-target="#doc-content"
+                    hx-swap="innerHTML"
+                    onclick="document.getElementById('btn-semantic').classList.add('active');document.getElementById('btn-layout').classList.remove('active');">
+                Semantic</button>
+            <button class="btn btn-sm view-mode-btn"
+                    id="btn-layout"
+                    hx-get="/artifacts/{{ artifact_id }}/blocks?mode=layout"
+                    hx-target="#doc-content"
+                    hx-swap="innerHTML"
+                    onclick="document.getElementById('btn-layout').classList.add('active');document.getElementById('btn-semantic').classList.remove('active');">
+                Layout</button>
+        </div>
+        <span class="toolbar-sep"></span>
         <button class="btn btn-sm"
                 hx-post="/artifacts/{{ artifact_id }}/action/insert"
                 hx-vals='{"style": "paragraph", "text": "New paragraph"}'

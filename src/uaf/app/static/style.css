@@ -196,6 +196,82 @@ input:focus, select:focus {
     flex-wrap: wrap;
 }
 
+/* View mode toggle */
+.view-toggle {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.view-mode-btn {
+    border: none;
+    border-radius: 0;
+    border-right: 1px solid var(--border);
+}
+.view-mode-btn:last-child { border-right: none; }
+.view-mode-btn.active {
+    background: var(--primary);
+    color: #fff;
+}
+.toolbar-sep {
+    width: 1px;
+    height: 1.5rem;
+    background: var(--border);
+    margin: 0 0.25rem;
+    align-self: center;
+}
+
+/* Layout view */
+.layout-view {
+    overflow: auto;
+    padding: 1.5rem;
+    background: #e5e5e5;
+    border-radius: var(--radius);
+    min-height: 400px;
+}
+.layout-page {
+    position: relative;
+    background: #fff;
+    border: 1px solid #bbb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    margin: 0 auto 1.5rem;
+    overflow: hidden;
+}
+.layout-block {
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-wrap: break-word;
+    padding: 1px 0;
+}
+.layout-header-footer {
+    color: var(--text-muted);
+    border: 1px dashed #aaa;
+    border-radius: 2px;
+    background: rgba(0, 0, 0, 0.02);
+}
+.layout-flow {
+    margin: 0 auto;
+    padding: 1rem;
+    background: #fff;
+    border: 1px solid #bbb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    border-radius: var(--radius);
+}
+.layout-flow .layout-block {
+    margin-bottom: 0.5rem;
+    padding: 0.25rem;
+}
+.layout-view .empty-state {
+    background: #fff;
+    border-radius: var(--radius);
+    padding: 3rem;
+    margin: 2rem auto;
+    max-width: 500px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
 /* Document content blocks */
 .doc-content { min-height: 200px; }
 .doc-block {
@@ -375,4 +451,13 @@ input:focus, select:focus {
     .grid-content td { cursor: default; }
     .grid-content td:hover { background: transparent; }
     .grid-content table { font-size: 0.8rem; }
+
+    .layout-view { padding: 0; background: #fff; }
+    .layout-page {
+        border: none;
+        box-shadow: none;
+        page-break-after: always;
+    }
+    .view-toggle { display: none !important; }
+    .toolbar-sep { display: none !important; }
 }

@@ -327,8 +327,14 @@ back to graph nodes.
 
 | Lens | Renders | Node Types |
 |------|---------|------------|
-| **DocLens** | Documents as semantic HTML | Artifact, Paragraph, Heading, TextBlock, CodeBlock, Image |
+| **DocLens** | Documents as semantic HTML (default) or layout-positioned HTML | Artifact, Paragraph, Heading, TextBlock, CodeBlock, Image |
 | **GridLens** | Spreadsheets as HTML tables / JSON | Artifact, Sheet, Cell, FormulaCell |
+
+**DocLens view modes:**
+- **Semantic** (default) — flowing document with headings, paragraphs, and code blocks
+- **Layout** — spatial positioning that approximates the original document appearance,
+  using `LayoutHint` metadata populated during PDF/DOCX import. Headers and footers are
+  auto-detected and visually tagged. Layout view is read-only.
 
 ### Future Lenses
 
@@ -374,6 +380,13 @@ Import/export between the graph and file formats:
 | Markdown | Heading/paragraph parsing | Semantic markdown output |
 | CSV | Row/column → Cell nodes | Cell values → CSV |
 | Plain text | Single TextBlock | Concatenated text |
+| PDF | Text blocks with layout metadata (bounding boxes, fonts) | Plain text |
+| DOCX | Paragraphs, headings, tables with font metadata | DOCX with headings/paragraphs/tables |
+| Google Docs | Headings and paragraphs from JSON export | JSON structure |
+
+PDF and DOCX import populates `LayoutHint` on each node with spatial coordinates,
+font properties, and page numbers. PDF import also detects repeating headers/footers
+via heuristic analysis and tags them with `layout.header_footer = True`.
 
 Tested via round-trip fidelity: `import → export → compare` must preserve content.
 

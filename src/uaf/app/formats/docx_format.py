@@ -1,4 +1,4 @@
-"""DOCX import/export using python-docx."""
+"""DOCX import/export using python-docx — with layout metadata extraction."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from uaf.core.nodes import (
     Artifact,
     Cell,
     Heading,
+    LayoutHint,
     NodeType,
     Paragraph,
     Sheet,
@@ -25,6 +26,9 @@ if TYPE_CHECKING:
 
     from uaf.db.graph_db import GraphDB
 
+# Conversion factor: EMU (English Metric Units) to points.
+_EMU_TO_PT = 1.0 / 12700.0
+
 
 class DocxHandler:
     """Import/export DOCX files via the UAF graph."""
@@ -33,14 +37,25 @@ class DocxHandler:
         """Parse a DOCX file into UAF nodes (paragraphs, headings, tables)."""
         doc = Document(str(path))
 
-        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title=path.stem)
+        # Extract page geometry from the first section.
+        art_layout = _extract_page_layout(doc)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title=path.stem,
+        )
         art_id = db.create_node(art)
 
-        for item in doc.iter_inner_content():
+        content_width = _content_width_pt(doc)
+
+        for reading_order, item in enumerate(doc.iter_inner_content()):
             if isinstance(item, DocxTable):
                 self._import_table(item, art_id, db)
             else:
-                self._import_paragraph(item, art_id, db)
+                self._import_paragraph(
+                    item, art_id, db,
+                    reading_order=reading_order,
+                    content_width=content_width,
+                )
 
         return art_id
 
@@ -65,23 +80,39 @@ class DocxHandler:
         doc.save(str(path))
 
     def _import_paragraph(
-        self, para: Any, parent_id: NodeId, db: GraphDB,
+        self,
+        para: Any,
+        parent_id: NodeId,
+        db: GraphDB,
+        *,
+        reading_order: int = 0,
+        content_width: float | None = None,
     ) -> None:
-        """Convert a python-docx paragraph into a UAF node."""
+        """Convert a python-docx paragraph into a UAF node with layout metadata."""
         text = para.text.strip()
         if not text:
             return
 
         style_name = (para.style.name if para.style else "").lower()
+        layout = _extract_paragraph_layout(
+            para,
+            reading_order=reading_order,
+            content_width=content_width,
+        )
 
         node: Heading | Paragraph
         if style_name.startswith("heading"):
             level = _parse_heading_level(style_name)
             node = Heading(
-                meta=make_node_metadata(NodeType.HEADING), text=text, level=level,
+                meta=make_node_metadata(NodeType.HEADING, layout=layout),
+                text=text,
+                level=level,
             )
         else:
-            node = Paragraph(meta=make_node_metadata(NodeType.PARAGRAPH), text=text)
+            node = Paragraph(
+                meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+                text=text,
+            )
 
         nid = db.create_node(node)
         db.create_edge(_contains(parent_id, nid))
@@ -121,7 +152,9 @@ class DocxHandler:
 
         for cell in cells:
             if isinstance(cell, Cell) and cell.row < sheet.rows and cell.col < sheet.cols:
-                grid[cell.row][cell.col] = str(cell.value) if cell.value is not None else ""
+                grid[cell.row][cell.col] = (
+                    str(cell.value) if cell.value is not None else ""
+                )
 
         table = doc.add_table(rows=sheet.rows, cols=sheet.cols)
         for r, row_data in enumerate(grid):
@@ -193,3 +226,71 @@ def _extract_texts(path: Path) -> list[str]:
         if text:
             texts.append(text)
     return texts
+
+
+def _extract_page_layout(doc: Any) -> LayoutHint | None:
+    """Extract page dimensions from the first DOCX section."""
+    try:
+        section = doc.sections[0]
+    except (IndexError, AttributeError):
+        return None
+
+    pw = section.page_width
+    ph = section.page_height
+    if pw is None or ph is None:
+        return None
+
+    return LayoutHint(
+        width=float(pw) * _EMU_TO_PT,
+        height=float(ph) * _EMU_TO_PT,
+    )
+
+
+def _content_width_pt(doc: Any) -> float | None:
+    """Calculate content width (page width minus margins) in points."""
+    try:
+        section = doc.sections[0]
+    except (IndexError, AttributeError):
+        return None
+
+    pw = section.page_width
+    lm = section.left_margin
+    rm = section.right_margin
+    if pw is None or lm is None or rm is None:
+        return None
+
+    return float(pw - lm - rm) * _EMU_TO_PT
+
+
+def _extract_paragraph_layout(
+    para: Any,
+    *,
+    reading_order: int = 0,
+    content_width: float | None = None,
+) -> LayoutHint | None:
+    """Extract font and layout metadata from a python-docx paragraph."""
+    font_family: str | None = None
+    font_size: float | None = None
+    font_weight: str | None = None
+    font_style: str | None = None
+
+    # Extract font info from the first run that has data.
+    for run in getattr(para, "runs", []):
+        font = run.font
+        if font_family is None and font.name:
+            font_family = font.name
+        if font_size is None and font.size is not None:
+            font_size = round(float(font.size) * _EMU_TO_PT, 1)
+        if font_weight is None and font.bold:
+            font_weight = "bold"
+        if font_style is None and font.italic:
+            font_style = "italic"
+
+    return LayoutHint(
+        reading_order=reading_order,
+        width=content_width,
+        font_family=font_family,
+        font_size=font_size,
+        font_weight=font_weight,
+        font_style=font_style,
+    )

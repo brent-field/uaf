@@ -433,8 +433,53 @@ def editor_page(
         "artifact_id": artifact_id,
         "title": art.title,
         "blocks": blocks,
+        "view_mode": "semantic",
     }
     return templates.TemplateResponse("editor.html", ctx)
+
+
+@router.get("/artifacts/{artifact_id}/blocks", response_class=HTMLResponse)
+def get_blocks(
+    request: Request,
+    artifact_id: str,
+    mode: str = "semantic",
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Return doc blocks partial in the requested view mode."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    if mode == "layout":
+        return _render_layout_blocks(request, db, session, aid, artifact_id)
+
+    blocks = _parse_doc_blocks("", db, session, aid)
+    ctx: dict[str, Any] = {
+        "request": request,
+        "artifact_id": artifact_id,
+        "blocks": blocks,
+    }
+    return templates.TemplateResponse("partials/doc_blocks.html", ctx)
+
+
+def _render_layout_blocks(
+    request: Request,
+    db: SecureGraphDB,
+    session: Session,
+    aid: NodeId,
+    artifact_id: str,
+) -> HTMLResponse:
+    """Render layout-view HTML partial."""
+    from uaf.app.lenses.doc_lens import DocLens
+
+    lens = DocLens()
+    view = lens.render_layout(db, session, aid)
+    ctx: dict[str, Any] = {
+        "request": request,
+        "artifact_id": artifact_id,
+        "layout_html": view.content,
+    }
+    return templates.TemplateResponse("partials/doc_layout.html", ctx)
 
 
 @router.post("/artifacts/{artifact_id}/rename", response_class=HTMLResponse)

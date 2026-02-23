@@ -58,6 +58,12 @@ The editor (`/artifacts/{id}/edit`) provides a Word-like block editing experienc
 - The title field at the top is editable. Change it and press **Tab** or click away to save.
 
 ### Toolbar
+
+#### View Mode Toggle
+- **Semantic** (default) — clean flowing document with headings, paragraphs, and code blocks. This is the native UAF editing view.
+- **Layout** — spatial "desktop publishing" view that preserves the original document layout (text positioning, font properties, page geometry). Available for imported PDFs and DOCX files. Headers and footers are auto-detected and shown with a distinct dashed-border style. Layout view is **read-only** — switch to Semantic to edit.
+
+#### Insert Buttons
 - **+ Paragraph** — appends a new paragraph block
 - **+ Heading** — appends a new heading block
 - **+ Code Block** — appends a new code block
@@ -121,8 +127,8 @@ Supported formats:
 - **Markdown** (`.md`) — headings, paragraphs, code blocks, lists
 - **CSV** (`.csv`) — spreadsheet data
 - **Plain Text** (`.txt`) — paragraphs split on blank lines
-- **Word** (`.docx`) — paragraphs, headings, and tables
-- **PDF** (`.pdf`) — extracted text blocks as paragraphs
+- **Word** (`.docx`) — paragraphs, headings, and tables; preserves font metadata for Layout view
+- **PDF** (`.pdf`) — extracted text blocks with bounding boxes, font properties, and page geometry for Layout view; auto-detects headers/footers
 - **Google Docs** (`.json` / `.gdoc`) — Google Docs JSON export format
 4. You are redirected to the appropriate editor (document editor for most formats, spreadsheet viewer for CSV)
 

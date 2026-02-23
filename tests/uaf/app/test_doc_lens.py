@@ -19,6 +19,7 @@ from uaf.core.nodes import (
     CodeBlock,
     Heading,
     Image,
+    LayoutHint,
     NodeType,
     Paragraph,
     RawNode,
@@ -381,3 +382,167 @@ class TestDocLensActions:
             raise AssertionError("Expected ValueError")
         except ValueError as e:
             assert "SetCellValue" in str(e)
+
+
+class TestDocLensLayoutRender:
+    def test_render_layout_empty_artifact(self) -> None:
+        """Layout render of empty artifact returns a fallback message."""
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Empty")
+        art_id = sdb.create_node(session, art)
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert view.lens_type == "doc"
+        assert view.artifact_id == art_id
+        assert view.title == "Empty"
+        assert "No layout data" in view.content
+
+    def test_render_layout_not_found(self) -> None:
+        """Layout render with nonexistent artifact returns empty."""
+        sdb, session, lens = _setup()
+        fake_id = NodeId.generate()
+        view = lens.render_layout(sdb, session, fake_id)
+        assert view.title == "(not found)"
+        assert view.node_count == 0
+
+    def test_render_layout_with_positioned_nodes(self) -> None:
+        """Nodes with LayoutHint render at their coordinates."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Layout Doc",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0, width=468.0, height=14.0, font_size=12.0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Positioned text",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "left: 72.0pt" in view.content
+        assert "top: 100.0pt" in view.content
+        assert "Positioned text" in view.content
+        assert "layout-block" in view.content
+        assert "layout-page" in view.content
+
+    def test_render_layout_fallback_no_layout(self) -> None:
+        """Nodes without LayoutHint render in flow section."""
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="No Layout")
+        art_id = sdb.create_node(session, art)
+
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH), text="No position data",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "No position data" in view.content
+        assert "layout-flow" in view.content
+
+    def test_render_layout_multipage(self) -> None:
+        """Nodes on different pages render in separate page containers."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Multi-page",
+        )
+        art_id = sdb.create_node(session, art)
+
+        for pg in range(2):
+            layout = LayoutHint(page=pg, x=72.0, y=72.0, width=468.0, height=14.0)
+            p = Paragraph(
+                meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+                text=f"Page {pg} text",
+            )
+            p_id = sdb.create_node(session, p)
+            sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert view.content.count("layout-page") >= 2
+        assert "Page 0 text" in view.content
+        assert "Page 1 text" in view.content
+
+    def test_render_layout_html_escaping(self) -> None:
+        """Layout render escapes HTML to prevent XSS."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="XSS Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(page=0, x=72.0, y=72.0, width=400.0, height=14.0)
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="<script>alert(1)</script>",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "<script>" not in view.content
+        assert "&lt;script&gt;" in view.content
+
+    def test_render_layout_font_styles(self) -> None:
+        """Font properties from LayoutHint are applied as inline styles."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Font Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=72.0, width=400.0, height=14.0,
+            font_family="Helvetica", font_size=14.0, font_weight="bold",
+            color="#336699",
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Styled text",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "font-family: Helvetica" in view.content
+        assert "font-size: 14.0pt" in view.content
+        assert "font-weight: bold" in view.content
+        assert "color: #336699" in view.content
+
+    def test_render_layout_header_footer_tagged(self) -> None:
+        """Blocks tagged as header/footer get the distinct CSS class."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="HF Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=10.0, width=400.0, height=12.0,
+            header_footer=True,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Page Header",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "layout-header-footer" in view.content
+        assert "Page Header" in view.content
