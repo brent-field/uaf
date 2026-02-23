@@ -12,7 +12,10 @@ from fastapi.responses import FileResponse
 from uaf.app.api.dependencies import get_db, get_session
 from uaf.app.api.schemas import ArtifactResponse
 from uaf.app.formats.csv_format import CsvHandler
+from uaf.app.formats.docx_format import DocxHandler
+from uaf.app.formats.gdoc_format import GdocHandler
 from uaf.app.formats.markdown import MarkdownHandler
+from uaf.app.formats.pdf_format import PdfHandler
 from uaf.app.formats.plaintext import PlainTextHandler
 from uaf.core.node_id import NodeId
 from uaf.core.nodes import Artifact
@@ -20,16 +23,25 @@ from uaf.security.secure_graph_db import SecureGraphDB, Session
 
 router = APIRouter()
 
-_HANDLERS: dict[str, MarkdownHandler | CsvHandler | PlainTextHandler] = {
+_HANDLERS: dict[
+    str,
+    MarkdownHandler | CsvHandler | PlainTextHandler | DocxHandler | PdfHandler | GdocHandler,
+] = {
     "markdown": MarkdownHandler(),
     "csv": CsvHandler(),
     "plaintext": PlainTextHandler(),
+    "docx": DocxHandler(),
+    "pdf": PdfHandler(),
+    "gdoc": GdocHandler(),
 }
 
 _EXTENSIONS: dict[str, str] = {
     "markdown": ".md",
     "csv": ".csv",
     "plaintext": ".txt",
+    "docx": ".docx",
+    "pdf": ".pdf",
+    "gdoc": ".json",
 }
 
 
@@ -106,6 +118,9 @@ def export_file(
         "markdown": "text/markdown",
         "csv": "text/csv",
         "plaintext": "text/plain",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pdf": "text/plain",
+        "gdoc": "application/json",
     }
 
     return FileResponse(

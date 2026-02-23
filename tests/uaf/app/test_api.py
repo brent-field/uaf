@@ -356,8 +356,8 @@ class TestImportExport:
     def test_import_unknown_format(self) -> None:
         client, _, token = _setup()
         resp = client.post(
-            "/api/artifacts/import?format=docx",
-            files={"file": ("test.docx", b"data", "application/octet-stream")},
+            "/api/artifacts/import?format=rtf",
+            files={"file": ("test.rtf", b"data", "application/octet-stream")},
             headers=_auth(token),
         )
         assert resp.status_code == 400

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — UAF{% endblock %}
+{% block content %}
+<div class="dashboard-header">
+    <h1>Artifacts</h1>
+    <div style="display:flex;gap:0.5rem;">
+        <form method="post" action="/artifacts/create" style="display:inline;">
+            <button type="submit" class="btn btn-primary">+ New Document</button>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    {% if artifacts %}
+    <ul class="artifact-list" id="artifact-list">
+        {% for art in artifacts %}
+        <li class="artifact-item">
+            <div>
+                <a href="/artifacts/{{ art.id }}/edit">{{ art.title }}</a>
+                <div class="meta">{{ art.child_count }} blocks &middot; {{ art.updated_at.strftime('%b %d, %H:%M') }}</div>
+            </div>
+            <div class="artifact-actions">
+                <a href="/artifacts/{{ art.id }}/edit" class="btn btn-sm">Edit Doc</a>
+                <a href="/artifacts/{{ art.id }}/grid" class="btn btn-sm">Grid View</a>
+                <a href="/api/artifacts/{{ art.id }}/export?format=markdown" class="btn btn-sm">Export</a>
+                <button class="btn btn-sm btn-danger"
+                        hx-delete="/artifacts/{{ art.id }}"
+                        hx-target="#artifact-list"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete '{{ art.title }}'?">Delete</button>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="empty-state">
+        <p>No artifacts yet. Create one to get started.</p>
+    </div>
+    {% endif %}
+</div>
+
+<div class="import-export">
+    <h3>Import File</h3>
+    <form method="post" action="/artifacts/import" enctype="multipart/form-data" class="import-form">
+        <div class="field">
+            <label for="file">File</label>
+            <input type="file" id="file" name="file" accept=".md,.csv,.txt,.docx,.pdf,.json,.gdoc" required />
+        </div>
+        <div class="field">
+            <label for="format">Format</label>
+            <select id="format" name="format">
+                <option value="markdown">Markdown (.md)</option>
+                <option value="csv">CSV (.csv)</option>
+                <option value="plaintext">Plain Text (.txt)</option>
+                <option value="docx">Word (.docx)</option>
+                <option value="pdf">PDF (.pdf)</option>
+                <option value="gdoc">Google Docs (.json)</option>
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Import</button>
+    </form>
+</div>
+{% endblock %}
