@@ -101,6 +101,39 @@ def _user_ctx(session: Session) -> dict[str, Any]:
     }
 
 
+def _register_imported_artifact(
+    db: SecureGraphDB, session: Session, art_id: NodeId,
+) -> None:
+    """Register an artifact (and its children) imported via raw GraphDB in the security layer."""
+    from uaf.core.node_id import utc_now
+    from uaf.security.acl import ACL, ACLEntry
+    from uaf.security.primitives import Role
+
+    resolver = db._resolver
+    resolver.register_artifact(art_id)
+    acl = ACL(
+        artifact_id=art_id,
+        entries=(
+            ACLEntry(
+                principal_id=session.principal.id,
+                role=Role.OWNER,
+                granted_at=utc_now(),
+                granted_by=session.principal.id,
+            ),
+        ),
+    )
+    resolver.set_acl(acl)
+
+    # Register parent mappings for all child nodes
+    children = db._db.get_children(art_id)
+    for child in children:
+        resolver.register_parent(child.meta.id, art_id)
+        # Also register grandchildren (e.g. Sheet -> Cell)
+        grandchildren = db._db.get_children(child.meta.id)
+        for gc in grandchildren:
+            resolver.register_parent(gc.meta.id, child.meta.id)
+
+
 def _parse_doc_blocks(
     content: str, db: SecureGraphDB, session: Session, artifact_id: NodeId,
 ) -> list[dict[str, str]]:
@@ -330,7 +363,7 @@ def import_artifact(
     db: SecureGraphDB = Depends(get_db),
 ) -> RedirectResponse:
     """Import a file and redirect to the editor."""
-    _require_session(request, db)
+    session = _require_session(request, db)
 
     original_name = file.filename or "upload.txt"
     suffix = Path(original_name).suffix.lower()
@@ -348,14 +381,21 @@ def import_artifact(
         tmp.write(content)
         tmp_path = Path(tmp.name)
 
-    final_path = tmp_path.parent / f"{stem}{suffix}"
+    # Rename to preserve original stem (handlers use path.stem as artifact title).
+    # Use a unique subdir to avoid collisions from repeated imports.
+    import_dir = tmp_path.parent / f"uaf_import_{uuid.uuid4().hex[:8]}"
+    import_dir.mkdir()
+    final_path = import_dir / f"{stem}{suffix}"
     tmp_path.rename(final_path)
-    tmp_path = final_path
 
     try:
-        art_id = handler.import_file(tmp_path, db._db)
+        art_id = handler.import_file(final_path, db._db)
     finally:
-        tmp_path.unlink(missing_ok=True)
+        final_path.unlink(missing_ok=True)
+        import_dir.rmdir()
+
+    # Register the imported artifact and its children in the security layer
+    _register_imported_artifact(db, session, art_id)
 
     # Route to appropriate editor based on format
     if fmt == "csv":

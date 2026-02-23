@@ -312,6 +312,138 @@ class TestMultiUserAPI:
         assert audit.count() > 0
 
 
+class TestPdfImportRoute:
+    """Import a PDF via the API route and verify the artifact is created."""
+
+    def test_import_pdf_via_api(self) -> None:
+        import fitz
+
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        registry.register(GridLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        # Register and get token
+        resp = client.post(
+            "/api/auth/register", json={"display_name": "PdfUser", "password": "pw"},
+        )
+        token = resp.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Create a small PDF in memory
+        pdf_doc = fitz.open()
+        page = pdf_doc.new_page()
+        page.insert_text((72, 72), "Hello from PDF import test")
+        pdf_bytes = pdf_doc.tobytes()
+        pdf_doc.close()
+
+        # Import via API (auto-detect from .pdf extension)
+        resp = client.post(
+            "/api/artifacts/import",
+            files={"file": ("sample.pdf", pdf_bytes, "application/pdf")},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["title"] == "sample"
+
+        # Verify children were created
+        aid = data["id"]
+        resp = client.get(f"/api/nodes/{aid}/children", headers=headers)
+        assert resp.status_code == 200
+        children = resp.json()["children"]
+        assert len(children) >= 1
+        texts = [c.get("fields", {}).get("text", "") for c in children]
+        assert any("Hello from PDF" in t for t in texts)
+
+    def test_import_docx_via_api(self) -> None:
+        from io import BytesIO
+
+        from docx import Document
+
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        registry.register(GridLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        # Register and get token
+        resp = client.post(
+            "/api/auth/register", json={"display_name": "DocxUser", "password": "pw"},
+        )
+        token = resp.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Create a DOCX in memory
+        doc = Document()
+        doc.add_heading("Test Heading", level=1)
+        doc.add_paragraph("Test paragraph content")
+        buf = BytesIO()
+        doc.save(buf)
+        docx_bytes = buf.getvalue()
+
+        # Import via API
+        resp = client.post(
+            "/api/artifacts/import",
+            files={"file": (
+                "report.docx", docx_bytes,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["title"] == "report"
+
+    def test_import_gdoc_via_api(self) -> None:
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        registry.register(GridLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        # Register and get token
+        resp = client.post(
+            "/api/auth/register", json={"display_name": "GdocUser", "password": "pw"},
+        )
+        token = resp.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Create Google Docs JSON
+        gdoc_data = json.dumps({
+            "title": "My Google Doc",
+            "body": {
+                "content": [
+                    {
+                        "paragraph": {
+                            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                            "elements": [{"textRun": {"content": "Hello from GDoc\n"}}],
+                        },
+                    },
+                ],
+            },
+        })
+
+        resp = client.post(
+            "/api/artifacts/import",
+            files={"file": ("notes.json", gdoc_data.encode(), "application/json")},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["title"] == "My Google Doc"
+
+
 class TestCrossLensConsistency:
     """Create document via DocLens -> same artifact rendered via API JSON endpoint
     -> both views show same content."""

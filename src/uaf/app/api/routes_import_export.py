@@ -72,20 +72,26 @@ def import_file(
         tmp.write(content)
         tmp_path = Path(tmp.name)
 
-    # Rename to preserve original filename stem (used by handlers for title)
-    final_path = tmp_path.parent / f"{stem}{suffix}"
+    # Rename to preserve original stem (handlers use path.stem as artifact title).
+    # Use a unique subdir to avoid collisions from repeated imports.
+    import_dir = tmp_path.parent / f"uaf_import_{uuid.uuid4().hex[:8]}"
+    import_dir.mkdir()
+    final_path = import_dir / f"{stem}{suffix}"
     tmp_path.rename(final_path)
-    tmp_path = final_path
 
     try:
         # Import uses raw GraphDB (format handlers expect GraphDB, not SecureGraphDB)
-        art_id = handler.import_file(tmp_path, db._db)
+        art_id = handler.import_file(final_path, db._db)
     finally:
-        tmp_path.unlink(missing_ok=True)
+        final_path.unlink(missing_ok=True)
+        import_dir.rmdir()
 
     art = db._db.get_node(art_id)
     if art is None or not isinstance(art, Artifact):
         raise HTTPException(status_code=500, detail="Import failed")
+
+    # Register the imported artifact and its children in the security layer
+    _register_imported_artifact(db, session, art_id)
 
     return ArtifactResponse(
         id=str(art_id),
@@ -132,3 +138,36 @@ def export_file(
         media_type=media_types.get(format, "application/octet-stream"),
         filename=f"{art.title}{suffix}",
     )
+
+
+def _register_imported_artifact(
+    db: SecureGraphDB, session: Session, art_id: NodeId,
+) -> None:
+    """Register an artifact (and its children) imported via raw GraphDB in the security layer."""
+    from uaf.core.node_id import utc_now
+    from uaf.security.acl import ACL, ACLEntry
+    from uaf.security.primitives import Role
+
+    resolver = db._resolver
+    resolver.register_artifact(art_id)
+    acl = ACL(
+        artifact_id=art_id,
+        entries=(
+            ACLEntry(
+                principal_id=session.principal.id,
+                role=Role.OWNER,
+                granted_at=utc_now(),
+                granted_by=session.principal.id,
+            ),
+        ),
+    )
+    resolver.set_acl(acl)
+
+    # Register parent mappings for all child nodes
+    children = db._db.get_children(art_id)
+    for child in children:
+        resolver.register_parent(child.meta.id, art_id)
+        # Also register grandchildren (e.g. Sheet -> Cell)
+        grandchildren = db._db.get_children(child.meta.id)
+        for gc in grandchildren:
+            resolver.register_parent(gc.meta.id, child.meta.id)
