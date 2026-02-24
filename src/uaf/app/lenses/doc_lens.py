@@ -230,6 +230,9 @@ class DocLens:
         # clipping when HTML font metrics differ from the PDF engine.
         if layout.reading_order is not None:
             style_parts.append(f"z-index: {1000 - layout.reading_order}")
+        if layout.rotation is not None:
+            style_parts.append(f"transform: rotate({layout.rotation}deg)")
+            style_parts.append("transform-origin: top left")
         style_parts.extend(_font_style_parts(layout))
 
         css_class = "layout-block"

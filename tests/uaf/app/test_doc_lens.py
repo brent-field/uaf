@@ -627,3 +627,51 @@ class TestDocLensLayoutRender:
 
         view = lens.render_layout(sdb, session, art_id)
         assert "Line 1<br>Line 2" in view.content
+
+    def test_layout_node_rotation(self) -> None:
+        """Rotated nodes get CSS transform style."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Rotation Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=10.0, y=100.0, width=12.0, height=400.0,
+            rotation=-90.0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Rotated sidebar",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "transform: rotate(-90.0deg)" in view.content
+        assert "transform-origin: top left" in view.content
+
+    def test_layout_node_no_rotation_for_horizontal(self) -> None:
+        """Horizontal text (rotation=None) has no CSS transform."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="No Rotation",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0, width=468.0, height=14.0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Normal text",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "transform:" not in view.content

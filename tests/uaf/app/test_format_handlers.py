@@ -260,6 +260,93 @@ class TestPdfHandler:
         assert "First line" in all_text
         assert "Second line" in all_text
 
+    def test_dehyphenation(self, tmp_path: Path) -> None:
+        """End-of-line hyphens splitting words are removed during import."""
+        from uaf.app.formats.pdf_format import _extract_block_text
+
+        # Simulate a block with two lines: "capa-" and "bilities"
+        block: dict[str, object] = {
+            "lines": [
+                {
+                    "spans": [{"text": "remarkable capa-"}],
+                    "dir": (1, 0),
+                },
+                {
+                    "spans": [{"text": "bilities in various"}],
+                    "dir": (1, 0),
+                },
+            ],
+        }
+        text = _extract_block_text(block)
+        assert "capabilities" in text
+        assert "capa-" not in text
+
+    def test_dehyphenation_preserves_real_hyphens(self, tmp_path: Path) -> None:
+        """Hyphens that are not line-end word splits are preserved."""
+        from uaf.app.formats.pdf_format import _extract_block_text
+
+        block: dict[str, object] = {
+            "lines": [
+                {
+                    "spans": [{"text": "well-known method"}],
+                    "dir": (1, 0),
+                },
+            ],
+        }
+        text = _extract_block_text(block)
+        assert "well-known" in text
+
+    def test_bold_detection_first_line(self, tmp_path: Path) -> None:
+        """Bold from the first line is preserved even if later lines are normal."""
+        from uaf.app.formats.pdf_format import _extract_dominant_font
+
+        # First line bold (flags bit 4 = 16), second line normal
+        block: dict[str, object] = {
+            "lines": [
+                {
+                    "spans": [
+                        {"text": "Author Name", "font": "Helvetica-Bold",
+                         "size": 10.0, "flags": 16, "color": 0},
+                    ],
+                },
+                {
+                    "spans": [
+                        {"text": "University of Something and more text here",
+                         "font": "Helvetica", "size": 10.0, "flags": 0,
+                         "color": 0},
+                    ],
+                },
+            ],
+        }
+        font = _extract_dominant_font(block)
+        assert font.get("weight") == "bold"
+
+    def test_rotation_extraction(self, tmp_path: Path) -> None:
+        """Rotated text blocks have rotation stored in LayoutHint."""
+        from uaf.app.formats.pdf_format import _extract_rotation
+
+        # dir = (0, -1) → text reads bottom-to-top → -90°
+        block: dict[str, object] = {
+            "lines": [
+                {"dir": (0.0, -1.0), "spans": [{"text": "Sidebar"}]},
+            ],
+        }
+        angle = _extract_rotation(block)
+        assert angle is not None
+        assert abs(angle - (-90.0)) < 0.5
+
+    def test_horizontal_text_no_rotation(self, tmp_path: Path) -> None:
+        """Horizontal text (dir=(1,0)) yields None rotation."""
+        from uaf.app.formats.pdf_format import _extract_rotation
+
+        block: dict[str, object] = {
+            "lines": [
+                {"dir": (1.0, 0.0), "spans": [{"text": "Normal"}]},
+            ],
+        }
+        angle = _extract_rotation(block)
+        assert angle is None
+
 
 # ---------------------------------------------------------------------------
 # Google Docs JSON tests

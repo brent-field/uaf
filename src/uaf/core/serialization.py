@@ -85,6 +85,8 @@ def _layout_to_dict(layout: LayoutHint) -> dict[str, Any]:
         d["color"] = layout.color
     if layout.reading_order is not None:
         d["reading_order"] = layout.reading_order
+    if layout.rotation is not None:
+        d["rotation"] = layout.rotation
     if layout.header_footer:
         d["header_footer"] = True
     return d
@@ -103,6 +105,7 @@ def _layout_from_dict(d: dict[str, Any]) -> LayoutHint:
         font_style=d.get("font_style"),
         color=d.get("color"),
         reading_order=d.get("reading_order"),
+        rotation=d.get("rotation"),
         header_footer=bool(d.get("header_footer", False)),
     )
 

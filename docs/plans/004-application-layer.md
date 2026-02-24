@@ -236,11 +236,17 @@ round-trip fidelity tests (proving the data model works). The API wrapper is thi
 concern.
 
 **Layout metadata:** PDF and DOCX format handlers populate `LayoutHint` on each imported
-node with spatial coordinates, font properties, and page numbers. The PDF handler uses
-PyMuPDF's `get_text("dict")` for rich block-level metadata (bounding boxes, font family,
-size, weight, style, color). The DOCX handler extracts section geometry and per-paragraph
-font info from `python-docx`. PDF import also detects repeating headers/footers across
-pages and tags them via `LayoutHint.header_footer`.
+node with spatial coordinates, font properties, page numbers, and text rotation. The PDF
+handler uses PyMuPDF's `get_text("dict")` for rich block-level metadata (bounding boxes,
+font family, size, weight, style, color, direction vector). The DOCX handler extracts
+section geometry and per-paragraph font info from `python-docx`. PDF import also detects
+repeating headers/footers across pages and tags them via `LayoutHint.header_footer`.
+
+**Text storage:** All imported text is stored in *semantic form* — end-of-line hyphenation
+is dehyphenated (e.g., `"capa-" + "bility"` → `"capability"`), and display-level line
+breaks are captured via `LayoutHint` coordinates rather than embedded in the text. Bold
+and italic styling are detected from the first line of each block to avoid dilution by
+later lines with different formatting.
 
 ---
 

@@ -385,8 +385,31 @@ Import/export between the graph and file formats:
 | Google Docs | Headings and paragraphs from JSON export | JSON structure |
 
 PDF and DOCX import populates `LayoutHint` on each node with spatial coordinates,
-font properties, and page numbers. PDF import also detects repeating headers/footers
-via heuristic analysis and tags them with `layout.header_footer = True`.
+font properties, page numbers, and text rotation. PDF import also detects repeating
+headers/footers via heuristic analysis and tags them with `layout.header_footer = True`.
+
+### Text Storage: Semantic Form Requirement
+
+Nodes store text in **semantic/logical form**, not display form. When a source format
+splits a word across visual lines (e.g., end-of-line hyphenation in PDFs), the import
+handler must reconstruct the complete word:
+
+- **Correct:** `"capability"` (semantic form — the actual word)
+- **Incorrect:** `"capa-\nbility"` (display form — how the PDF engine happened to wrap it)
+
+Layout rendering uses `LayoutHint` metadata (bounding box, font, rotation) to
+approximate the original visual appearance. The text itself remains clean and semantic,
+suitable for search, AI processing, and re-rendering through any Lens.
+
+This principle applies broadly:
+
+| Concern | Stored In | Example |
+|---------|-----------|---------|
+| Word content | `node.text` | `"capability"` |
+| Line breaks | `LayoutHint` coordinates | Bounding box determines visual wrap point |
+| Bold/italic | `LayoutHint.font_weight/style` | `"bold"` on the first line's dominant style |
+| Rotation | `LayoutHint.rotation` | `-90.0` for 90° CCW text |
+| Headers/footers | `LayoutHint.header_footer` | `True` for repeating page-edge text |
 
 Tested via round-trip fidelity: `import → export → compare` must preserve content.
 
