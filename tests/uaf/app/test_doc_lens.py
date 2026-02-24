@@ -546,3 +546,84 @@ class TestDocLensLayoutRender:
         view = lens.render_layout(sdb, session, art_id)
         assert "layout-header-footer" in view.content
         assert "Page Header" in view.content
+
+    def test_layout_node_has_no_explicit_height(self) -> None:
+        """Layout blocks must not set explicit height (avoids text clipping)."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="No Height",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0,
+            width=468.0, height=50.0, reading_order=0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Should not have height",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        # The layout-page itself has a height, but individual blocks must not.
+        assert "width: 468.0pt" in view.content
+        # Extract just the block div (not the page container).
+        import re
+
+        block_match = re.search(
+            r'class="layout-block"[^>]*style="([^"]*)"', view.content,
+        )
+        assert block_match is not None
+        block_style = block_match.group(1)
+        assert "height:" not in block_style
+
+    def test_layout_node_has_z_index(self) -> None:
+        """Layout blocks include z-index derived from reading_order."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Z-Index Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0,
+            width=468.0, height=14.0, reading_order=5,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Z-indexed block",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "z-index: 995" in view.content
+
+    def test_layout_node_preserves_line_breaks(self) -> None:
+        """Newlines in node text render as <br> in layout view."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Line Break Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0, width=468.0, height=30.0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Line 1\nLine 2",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "Line 1<br>Line 2" in view.content

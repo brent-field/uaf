@@ -226,8 +226,10 @@ class DocLens:
             style_parts.append(f"top: {layout.y}pt")
         if layout.width is not None:
             style_parts.append(f"width: {layout.width}pt")
-        if layout.height is not None:
-            style_parts.append(f"height: {layout.height}pt")
+        # No explicit height — let content flow naturally to avoid
+        # clipping when HTML font metrics differ from the PDF engine.
+        if layout.reading_order is not None:
+            style_parts.append(f"z-index: {1000 - layout.reading_order}")
         style_parts.extend(_font_style_parts(layout))
 
         css_class = "layout-block"
@@ -235,9 +237,11 @@ class DocLens:
             css_class += " layout-header-footer"
 
         style = "; ".join(style_parts)
+        # Preserve line breaks from PDF extraction.
+        escaped = escape(text).replace("\n", "<br>")
         return (
             f'  <div data-node-id="{nid}" class="{css_class}"'
-            f' style="{style}">{escape(text)}</div>'
+            f' style="{style}">{escaped}</div>'
         )
 
     def _render_layout_flow_node(self, node: object) -> str:

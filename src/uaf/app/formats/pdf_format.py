@@ -159,12 +159,23 @@ def _contains(source: NodeId, target: NodeId) -> Edge:
 
 
 def _extract_block_text(block: dict[str, Any]) -> str:
-    """Aggregate text from all lines/spans in a dict-format block."""
-    parts: list[str] = []
+    """Aggregate text from all lines/spans, preserving line breaks.
+
+    Spans within a line are concatenated directly (PyMuPDF already
+    includes leading spaces where needed).  Lines are joined with
+    newlines.  Multiple consecutive spaces — common with small-caps
+    or split-span fonts — are collapsed to a single space.
+    """
+    line_texts: list[str] = []
     for line in block.get("lines", []):
+        parts: list[str] = []
         for span in line.get("spans", []):
             parts.append(span.get("text", ""))
-    return " ".join(parts).strip()
+        line_texts.append("".join(parts))
+    text = "\n".join(line_texts)
+    # Collapse runs of multiple spaces (but not newlines).
+    text = re.sub(r"  +", " ", text)
+    return text.strip()
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:

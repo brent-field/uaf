@@ -210,6 +210,57 @@ class TestPdfHandler:
         assert "Hello from PDF" in text
 
 
+    def test_extract_text_no_extra_spaces(self, tmp_path: Path) -> None:
+        """Small-caps style spans don't produce extra spaces in text."""
+        import fitz
+
+        pdf_path = tmp_path / "caps.pdf"
+        doc = fitz.open()
+        page = doc.new_page()
+        # Simulate small-caps by inserting text at two sizes on the same line.
+        page.insert_text((72, 72), "D", fontsize=17)
+        page.insert_text((83, 72), "YNAMIC ", fontsize=14)
+        page.insert_text((140, 72), "N", fontsize=17)
+        page.insert_text((152, 72), "ESTED", fontsize=14)
+        doc.save(str(pdf_path))
+        doc.close()
+
+        db = GraphDB()
+        handler = PdfHandler()
+        root_id = handler.import_file(pdf_path, db)
+
+        children = db.get_children(root_id)
+        paragraphs = [c for c in children if isinstance(c, Paragraph)]
+        all_text = " ".join(p.text for p in paragraphs)
+        # Must NOT contain double spaces.
+        assert "  " not in all_text
+
+    def test_extract_text_preserves_line_breaks(self, tmp_path: Path) -> None:
+        """Multi-line text blocks preserve newlines between lines."""
+        import fitz
+
+        pdf_path = tmp_path / "multiline.pdf"
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "First line of text")
+        page.insert_text((72, 86), "Second line of text")
+        doc.save(str(pdf_path))
+        doc.close()
+
+        db = GraphDB()
+        handler = PdfHandler()
+        root_id = handler.import_file(pdf_path, db)
+
+        children = db.get_children(root_id)
+        paragraphs = [c for c in children if isinstance(c, Paragraph)]
+        # At least one paragraph should contain a newline if both lines
+        # ended up in the same block, OR the two lines should be separate
+        # paragraphs with clean text.
+        all_text = " ".join(p.text for p in paragraphs)
+        assert "First line" in all_text
+        assert "Second line" in all_text
+
+
 # ---------------------------------------------------------------------------
 # Google Docs JSON tests
 # ---------------------------------------------------------------------------

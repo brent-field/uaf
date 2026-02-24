@@ -240,9 +240,6 @@ input:focus, select:focus {
 }
 .layout-block {
     line-height: 1.2;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    word-wrap: break-word;
     padding: 1px 0;
 }
 .layout-header-footer {
