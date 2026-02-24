@@ -240,8 +240,9 @@ class DocLens:
             css_class += " layout-header-footer"
 
         style = "; ".join(style_parts)
-        # Preserve line breaks from PDF extraction.
-        escaped = escape(text).replace("\n", "<br>")
+        # Preserve line breaks from PDF extraction, with per-line bold
+        # when the first line has a different weight from the block.
+        escaped = _format_layout_text(text, layout)
         return (
             f'  <div data-node-id="{nid}" class="{css_class}"'
             f' style="{style}">{escaped}</div>'
@@ -533,7 +534,8 @@ def _font_style_parts(layout: LayoutHint) -> list[str]:
     """Build CSS style parts from LayoutHint font properties."""
     parts: list[str] = []
     if layout.font_family:
-        parts.append(f"font-family: {escape(layout.font_family)}")
+        # Font family may contain commas (CSS font stack) — don't escape.
+        parts.append(f"font-family: {layout.font_family}")
     if layout.font_size is not None:
         parts.append(f"font-size: {layout.font_size}pt")
     if layout.font_weight:
@@ -543,3 +545,32 @@ def _font_style_parts(layout: LayoutHint) -> list[str]:
     if layout.color:
         parts.append(f"color: {escape(layout.color)}")
     return parts
+
+
+def _format_layout_text(text: str, layout: LayoutHint) -> str:
+    """Format node text as HTML for layout view.
+
+    Handles two concerns:
+    - ``\\n`` → ``<br>`` for line breaks
+    - First-line bold: if ``layout.first_line_weight`` differs from the
+      block's ``font_weight``, the first line is wrapped in a ``<span>``
+      with the first-line weight (e.g. bold author name above normal-weight
+      affiliation text).
+    """
+    flw = layout.first_line_weight
+    block_w = layout.font_weight or "normal"
+    if flw and flw != block_w:
+        # Mixed-weight block — bold just the first line.
+        if "\n" in text:
+            idx = text.index("\n")
+            first = escape(text[:idx])
+            rest = escape(text[idx + 1:]).replace("\n", "<br>")
+            return (
+                f'<span style="font-weight: {escape(flw)}">'
+                f"{first}</span><br>{rest}"
+            )
+        return (
+            f'<span style="font-weight: {escape(flw)}">'
+            f"{escape(text)}</span>"
+        )
+    return escape(text).replace("\n", "<br>")

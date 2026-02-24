@@ -77,6 +77,7 @@ class PdfHandler:
                     continue
 
                 font = _extract_dominant_font(block)
+                first_line_font = _extract_first_line_font(block)
                 rotation = _extract_rotation(block)
                 bbox = block.get("bbox", (0.0, 0.0, 0.0, 0.0))
                 x0, y0, x1, y1 = (
@@ -86,11 +87,27 @@ class PdfHandler:
                     float(bbox[3]),
                 )
 
+                # For ≈90° rotated blocks the bbox width is the line
+                # thickness and height is the text run length.  CSS needs
+                # the run length as width (text is laid out then rotated).
+                if rotation is not None and abs(abs(rotation) - 90.0) < 5.0:
+                    layout_w = y1 - y0  # text run length
+                else:
+                    layout_w = x1 - x0
+
+                # first_line_weight is stored only when it differs from
+                # the block-level dominant weight.
+                fl_weight = first_line_font.get("weight")
+                block_weight = font.get("weight")
+                first_lw: str | None = None
+                if fl_weight and fl_weight != (block_weight or "normal"):
+                    first_lw = fl_weight
+
                 layout = LayoutHint(
                     page=page_num,
                     x=x0,
                     y=y0,
-                    width=x1 - x0,
+                    width=layout_w,
                     height=y1 - y0,
                     font_family=font.get("family"),
                     font_size=font.get("size"),
@@ -99,6 +116,7 @@ class PdfHandler:
                     color=font.get("color"),
                     reading_order=block_index,
                     rotation=rotation,
+                    first_line_weight=first_lw,
                 )
 
                 # Detect heading heuristic: large font or bold
@@ -192,21 +210,17 @@ def _extract_block_text(block: dict[str, Any]) -> str:
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:
-    """Pick font properties from a block.
+    """Pick the most common font properties across all spans in a block.
 
-    Family, size, and color use character-weighted voting across all spans.
-    Weight and style use the **first line's** dominant value — this prevents
-    short bold spans (e.g. author names) from being outvoted by longer
-    normal-weight continuation lines in the same block.
+    All properties (family, size, weight, style, color) use character-weighted
+    voting across every span.  The winning font family is mapped to a
+    web-safe CSS font stack via :func:`_map_font_family`.
     """
     families: Counter[str] = Counter()
     sizes: Counter[float] = Counter()
+    weights: Counter[str] = Counter()
+    styles: Counter[str] = Counter()
     colors: Counter[str] = Counter()
-
-    # First-line weight/style tracking.
-    first_line_weights: Counter[str] = Counter()
-    first_line_styles: Counter[str] = Counter()
-    first_line_done = False
 
     for line in block.get("lines", []):
         for span in line.get("spans", []):
@@ -223,37 +237,27 @@ def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:
                 sizes[round(float(size), 1)] += text_len
 
             flags = span.get("flags", 0)
+            weight = "bold" if flags & (1 << 4) else "normal"
+            weights[weight] += text_len
 
-            if not first_line_done:
-                weight = "bold" if flags & (1 << 4) else "normal"
-                first_line_weights[weight] += text_len
-
-                style = "italic" if flags & (1 << 1) else "normal"
-                first_line_styles[style] += text_len
+            style = "italic" if flags & (1 << 1) else "normal"
+            styles[style] += text_len
 
             color_int = span.get("color", 0)
             hex_color = f"#{color_int:06x}"
             colors[hex_color] += text_len
 
-        # Mark first line as processed after iterating its spans.
-        if not first_line_done and line.get("spans"):
-            first_line_done = True
-
     result: dict[str, Any] = {}
     if families:
-        result["family"] = families.most_common(1)[0][0]
+        result["family"] = _map_font_family(families.most_common(1)[0][0])
     if sizes:
         result["size"] = sizes.most_common(1)[0][0]
 
-    top_weight = (
-        first_line_weights.most_common(1)[0][0] if first_line_weights else "normal"
-    )
+    top_weight = weights.most_common(1)[0][0] if weights else "normal"
     if top_weight != "normal":
         result["weight"] = top_weight
 
-    top_style = (
-        first_line_styles.most_common(1)[0][0] if first_line_styles else "normal"
-    )
+    top_style = styles.most_common(1)[0][0] if styles else "normal"
     if top_style != "normal":
         result["style"] = top_style
 
@@ -263,6 +267,83 @@ def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:
             result["color"] = top_color
 
     return result
+
+
+def _extract_first_line_font(block: dict[str, Any]) -> dict[str, Any]:
+    """Extract the dominant weight/style from the first text line only."""
+    lines = block.get("lines", [])
+    if not lines:
+        return {}
+
+    weights: Counter[str] = Counter()
+    styles: Counter[str] = Counter()
+
+    for span in lines[0].get("spans", []):
+        text_len = len(span.get("text", ""))
+        if text_len == 0:
+            continue
+        flags = span.get("flags", 0)
+        weights["bold" if flags & (1 << 4) else "normal"] += text_len
+        styles["italic" if flags & (1 << 1) else "normal"] += text_len
+
+    result: dict[str, Any] = {}
+    if weights:
+        w = weights.most_common(1)[0][0]
+        if w != "normal":
+            result["weight"] = w
+    if styles:
+        s = styles.most_common(1)[0][0]
+        if s != "normal":
+            result["style"] = s
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Font mapping — PDF font names → web-safe CSS font stacks
+# ---------------------------------------------------------------------------
+
+_FONT_MAP: list[tuple[str, str]] = [
+    # Nimbus Roman (URW clone of Times New Roman, common in TeX PDFs)
+    ("NimbusRomNo9L", '"Times New Roman", Times, serif'),
+    ("NimbusRomNo9", '"Times New Roman", Times, serif'),
+    # Nimbus Sans (URW clone of Helvetica)
+    ("NimbusSanL", "Helvetica, Arial, sans-serif"),
+    ("NimbusSan", "Helvetica, Arial, sans-serif"),
+    # Standard PostScript core fonts
+    ("Times", '"Times New Roman", Times, serif'),
+    ("Helvetica", "Helvetica, Arial, sans-serif"),
+    ("Courier", '"Courier New", Courier, monospace'),
+    ("Arial", "Arial, Helvetica, sans-serif"),
+    # Computer Modern (TeX) families
+    ("SFTT", '"Courier New", Courier, monospace'),  # CM Typewriter
+    ("CMTT", '"Courier New", Courier, monospace'),
+    ("CMSS", "Helvetica, Arial, sans-serif"),  # CM Sans-Serif
+    ("CMR", '"Times New Roman", Times, serif'),  # CM Roman
+    ("CMSY", "Symbol, serif"),  # CM Symbols
+    ("CMMI", '"Times New Roman", Times, serif'),  # CM Math Italic
+    ("CMB", '"Times New Roman", Times, serif'),  # CM Bold
+    # Liberation (metric-compatible with MS core fonts)
+    ("LiberationSerif", '"Times New Roman", Times, serif'),
+    ("LiberationSans", "Arial, Helvetica, sans-serif"),
+    ("LiberationMono", '"Courier New", Courier, monospace'),
+    # DejaVu
+    ("DejaVuSerif", "Georgia, serif"),
+    ("DejaVuSans", "Verdana, sans-serif"),
+    ("DejaVuSansMono", '"Courier New", monospace'),
+]
+
+
+def _map_font_family(pdf_font: str) -> str:
+    """Map a PDF font name to a web-safe CSS font-family value.
+
+    Uses prefix matching against a table of common PDF fonts.
+    Unrecognised fonts are returned as-is with a generic fallback.
+    """
+    for prefix, css_stack in _FONT_MAP:
+        if pdf_font.startswith(prefix):
+            return css_stack
+    # Unknown — keep original and append a generic fallback.
+    return f"{pdf_font}, serif"
 
 
 def _heading_level_from_size(font_size: float) -> int:

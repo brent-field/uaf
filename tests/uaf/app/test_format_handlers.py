@@ -296,11 +296,11 @@ class TestPdfHandler:
         text = _extract_block_text(block)
         assert "well-known" in text
 
-    def test_bold_detection_first_line(self, tmp_path: Path) -> None:
-        """Bold from the first line is preserved even if later lines are normal."""
+    def test_bold_detection_full_block_voting(self, tmp_path: Path) -> None:
+        """Full-block character-weighted voting: majority normal → no bold."""
         from uaf.app.formats.pdf_format import _extract_dominant_font
 
-        # First line bold (flags bit 4 = 16), second line normal
+        # First line bold (11 chars), second line normal (42 chars) → normal wins
         block: dict[str, object] = {
             "lines": [
                 {
@@ -319,7 +319,149 @@ class TestPdfHandler:
             ],
         }
         font = _extract_dominant_font(block)
+        # Full-block voting: normal chars outnumber bold → no weight key.
+        assert font.get("weight") is None
+
+    def test_bold_detection_all_bold(self, tmp_path: Path) -> None:
+        """Block where all text is bold → weight='bold'."""
+        from uaf.app.formats.pdf_format import _extract_dominant_font
+
+        block: dict[str, object] = {
+            "lines": [
+                {
+                    "spans": [
+                        {"text": "Bold Title", "font": "Helvetica-Bold",
+                         "size": 12.0, "flags": 16, "color": 0},
+                    ],
+                },
+            ],
+        }
+        font = _extract_dominant_font(block)
         assert font.get("weight") == "bold"
+
+    def test_first_line_font_bold(self, tmp_path: Path) -> None:
+        """_extract_first_line_font detects bold on the first line."""
+        from uaf.app.formats.pdf_format import _extract_first_line_font
+
+        block: dict[str, object] = {
+            "lines": [
+                {
+                    "spans": [
+                        {"text": "Author Name", "font": "Helvetica-Bold",
+                         "size": 10.0, "flags": 16, "color": 0},
+                    ],
+                },
+                {
+                    "spans": [
+                        {"text": "University affiliation",
+                         "font": "Helvetica", "size": 10.0, "flags": 0,
+                         "color": 0},
+                    ],
+                },
+            ],
+        }
+        first = _extract_first_line_font(block)
+        assert first.get("weight") == "bold"
+
+    def test_first_line_font_normal(self, tmp_path: Path) -> None:
+        """_extract_first_line_font returns empty when first line is normal."""
+        from uaf.app.formats.pdf_format import _extract_first_line_font
+
+        block: dict[str, object] = {
+            "lines": [
+                {
+                    "spans": [
+                        {"text": "Regular text", "font": "Helvetica",
+                         "size": 10.0, "flags": 0, "color": 0},
+                    ],
+                },
+            ],
+        }
+        first = _extract_first_line_font(block)
+        assert first.get("weight") is None
+
+    def test_font_mapping_nimbus_roman(self, tmp_path: Path) -> None:
+        """NimbusRomNo9L fonts map to Times New Roman CSS stack."""
+        from uaf.app.formats.pdf_format import _map_font_family
+
+        result = _map_font_family("NimbusRomNo9L-Regu")
+        assert "Times New Roman" in result
+        assert "serif" in result
+
+    def test_font_mapping_nimbus_sans(self, tmp_path: Path) -> None:
+        """NimbusSanL fonts map to Helvetica/Arial CSS stack."""
+        from uaf.app.formats.pdf_format import _map_font_family
+
+        result = _map_font_family("NimbusSanL-Bold")
+        assert "Helvetica" in result
+        assert "sans-serif" in result
+
+    def test_font_mapping_cm_typewriter(self, tmp_path: Path) -> None:
+        """TeX typewriter fonts map to Courier New CSS stack."""
+        from uaf.app.formats.pdf_format import _map_font_family
+
+        result = _map_font_family("SFTT1000")
+        assert "Courier New" in result
+        assert "monospace" in result
+
+    def test_font_mapping_unknown(self, tmp_path: Path) -> None:
+        """Unknown fonts pass through with a generic fallback."""
+        from uaf.app.formats.pdf_format import _map_font_family
+
+        result = _map_font_family("ExoticFont-Regular")
+        assert "ExoticFont-Regular" in result
+        assert "serif" in result
+
+    def test_font_mapping_in_dominant_font(self, tmp_path: Path) -> None:
+        """_extract_dominant_font applies font mapping to family."""
+        from uaf.app.formats.pdf_format import _extract_dominant_font
+
+        block: dict[str, object] = {
+            "lines": [
+                {
+                    "spans": [
+                        {"text": "Hello world", "font": "NimbusRomNo9L-Regu",
+                         "size": 10.0, "flags": 0, "color": 0},
+                    ],
+                },
+            ],
+        }
+        font = _extract_dominant_font(block)
+        assert font.get("family") is not None
+        assert "Times New Roman" in font["family"]
+
+    def test_rotation_width_swap(self, tmp_path: Path) -> None:
+        """Rotated blocks (±90°) swap width/height so CSS gets the run length."""
+        import fitz
+
+        pdf_path = tmp_path / "rotated.pdf"
+        doc = fitz.open()
+        page = doc.new_page()
+        # Insert rotated text — we'll check the LayoutHint on the imported node.
+        # PyMuPDF insert_text with rotate=90 writes text bottom-to-top.
+        page.insert_text((20, 400), "Sidebar text here", fontsize=10, rotate=90)
+        doc.save(str(pdf_path))
+        doc.close()
+
+        db = GraphDB()
+        handler = PdfHandler()
+        root_id = handler.import_file(pdf_path, db)
+
+        children = db.get_children(root_id)
+        paragraphs = [c for c in children if isinstance(c, (Paragraph, Heading))]
+        # Find the rotated block.
+        rotated = [p for p in paragraphs
+                   if p.meta.layout and p.meta.layout.rotation is not None]
+        assert len(rotated) >= 1
+        layout = rotated[0].meta.layout
+        assert layout is not None
+        # For a ≈90° rotated block, the width should be the text run length
+        # (the bbox height), not the narrow bbox width.
+        assert layout.width is not None
+        # The text run of "Sidebar text here" at 10pt should be much wider
+        # than a single character width. The bbox height (run length) is
+        # typically >> 50pt while bbox width (thickness) is ~12pt.
+        assert layout.width > 50.0
 
     def test_rotation_extraction(self, tmp_path: Path) -> None:
         """Rotated text blocks have rotation stored in LayoutHint."""

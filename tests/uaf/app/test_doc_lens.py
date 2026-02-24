@@ -653,6 +653,111 @@ class TestDocLensLayoutRender:
         assert "transform: rotate(-90.0deg)" in view.content
         assert "transform-origin: top left" in view.content
 
+    def test_render_layout_first_line_bold(self) -> None:
+        """Blocks with first_line_weight render first line in a bold span."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Bold Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0, width=400.0, height=40.0,
+            font_size=10.0, first_line_weight="bold",
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Author Name\nUniversity of Something",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        # First line should be in a bold span.
+        assert '<span style="font-weight: bold">Author Name</span>' in view.content
+        # Second line should NOT be in a bold span.
+        assert "University of Something" in view.content
+        # The rest text should follow a <br> tag.
+        assert "<br>University of Something" in view.content
+
+    def test_render_layout_first_line_bold_single_line(self) -> None:
+        """Single-line block with first_line_weight still wraps in a span."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Bold Single",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0, width=200.0, height=14.0,
+            font_size=10.0, first_line_weight="bold",
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Bold Only",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert '<span style="font-weight: bold">Bold Only</span>' in view.content
+
+    def test_render_layout_no_first_line_weight(self) -> None:
+        """Blocks without first_line_weight render plain text with <br>."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Normal Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0, width=400.0, height=40.0,
+            font_size=10.0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Line 1\nLine 2",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "Line 1<br>Line 2" in view.content
+        # No <span> wrapping for first-line bold.
+        assert '<span style="font-weight:' not in view.content
+
+    def test_render_layout_font_family_with_commas(self) -> None:
+        """CSS font stacks with commas are not escaped in layout view."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Font Stack",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=72.0, width=400.0, height=14.0,
+            font_family='"Times New Roman", Times, serif',
+            font_size=10.0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Font stack text",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        # The font-family should contain the full CSS stack, not escaped.
+        assert 'font-family: "Times New Roman", Times, serif' in view.content
+
     def test_layout_node_no_rotation_for_horizontal(self) -> None:
         """Horizontal text (rotation=None) has no CSS transform."""
         sdb, session, lens = _setup()

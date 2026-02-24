@@ -48,6 +48,7 @@ class LayoutHint:
     color: str | None = None
     reading_order: int | None = None
     rotation: float | None = None
+    first_line_weight: str | None = None
     header_footer: bool = False
 
 
