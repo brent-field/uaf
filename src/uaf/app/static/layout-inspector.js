@@ -77,13 +77,8 @@
   }
 
   function positionTooltip(tip, evt) {
-    var root = document.getElementById("doc-content");
-    if (!root) return;
-    var rect = root.getBoundingClientRect();
-    var x = evt.clientX - rect.left + 12;
-    var y = evt.clientY - rect.top + 12;
-    tip.style.left = x + "px";
-    tip.style.top = y + "px";
+    tip.style.left = (evt.clientX + 12) + "px";
+    tip.style.top = (evt.clientY + 12) + "px";
   }
 
   function hideTooltip() {
