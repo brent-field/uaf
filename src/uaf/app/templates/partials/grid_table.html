@@ -1,0 +1,7 @@
+{% if grid_html %}
+{{ grid_html | safe }}
+{% else %}
+<div class="empty-state">
+    <p>No spreadsheet data. Import a CSV to get started.</p>
+</div>
+{% endif %}

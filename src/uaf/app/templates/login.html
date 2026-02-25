@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Login — UAF{% endblock %}
+{% block content %}
+<div class="auth-page">
+    <div class="auth-form card">
+        <h2>UAF</h2>
+        <div class="tabs">
+            <a href="/login" class="{{ 'active' if mode == 'login' else '' }}">Login</a>
+            <a href="/register" class="{{ 'active' if mode == 'register' else '' }}">Register</a>
+        </div>
+        {% if mode == 'login' %}
+        <form method="post" action="/login">
+            <label for="principal_id">Principal ID</label>
+            <input type="text" id="principal_id" name="principal_id" required />
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required />
+            <button type="submit" class="btn btn-primary btn-block">Login</button>
+        </form>
+        {% else %}
+        <form method="post" action="/register">
+            <label for="display_name">Display Name</label>
+            <input type="text" id="display_name" name="display_name" required />
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required />
+            <button type="submit" class="btn btn-primary btn-block">Register</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

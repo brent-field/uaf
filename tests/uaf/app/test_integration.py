@@ -312,6 +312,138 @@ class TestMultiUserAPI:
         assert audit.count() > 0
 
 
+class TestPdfImportRoute:
+    """Import a PDF via the API route and verify the artifact is created."""
+
+    def test_import_pdf_via_api(self) -> None:
+        import fitz
+
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        registry.register(GridLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        # Register and get token
+        resp = client.post(
+            "/api/auth/register", json={"display_name": "PdfUser", "password": "pw"},
+        )
+        token = resp.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Create a small PDF in memory
+        pdf_doc = fitz.open()
+        page = pdf_doc.new_page()
+        page.insert_text((72, 72), "Hello from PDF import test")
+        pdf_bytes = pdf_doc.tobytes()
+        pdf_doc.close()
+
+        # Import via API (auto-detect from .pdf extension)
+        resp = client.post(
+            "/api/artifacts/import",
+            files={"file": ("sample.pdf", pdf_bytes, "application/pdf")},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["title"] == "sample"
+
+        # Verify children were created
+        aid = data["id"]
+        resp = client.get(f"/api/nodes/{aid}/children", headers=headers)
+        assert resp.status_code == 200
+        children = resp.json()["children"]
+        assert len(children) >= 1
+        texts = [c.get("fields", {}).get("text", "") for c in children]
+        assert any("Hello from PDF" in t for t in texts)
+
+    def test_import_docx_via_api(self) -> None:
+        from io import BytesIO
+
+        from docx import Document
+
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        registry.register(GridLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        # Register and get token
+        resp = client.post(
+            "/api/auth/register", json={"display_name": "DocxUser", "password": "pw"},
+        )
+        token = resp.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Create a DOCX in memory
+        doc = Document()
+        doc.add_heading("Test Heading", level=1)
+        doc.add_paragraph("Test paragraph content")
+        buf = BytesIO()
+        doc.save(buf)
+        docx_bytes = buf.getvalue()
+
+        # Import via API
+        resp = client.post(
+            "/api/artifacts/import",
+            files={"file": (
+                "report.docx", docx_bytes,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["title"] == "report"
+
+    def test_import_gdoc_via_api(self) -> None:
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        registry.register(GridLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        # Register and get token
+        resp = client.post(
+            "/api/auth/register", json={"display_name": "GdocUser", "password": "pw"},
+        )
+        token = resp.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Create Google Docs JSON
+        gdoc_data = json.dumps({
+            "title": "My Google Doc",
+            "body": {
+                "content": [
+                    {
+                        "paragraph": {
+                            "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                            "elements": [{"textRun": {"content": "Hello from GDoc\n"}}],
+                        },
+                    },
+                ],
+            },
+        })
+
+        resp = client.post(
+            "/api/artifacts/import",
+            files={"file": ("notes.json", gdoc_data.encode(), "application/json")},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["title"] == "My Google Doc"
+
+
 class TestCrossLensConsistency:
     """Create document via DocLens -> same artifact rendered via API JSON endpoint
     -> both views show same content."""
@@ -362,6 +494,183 @@ class TestCrossLensConsistency:
         # Node API shows the same child
         assert len(children) == 1
         assert children[0]["node_type"] == "paragraph"
+
+
+class TestLayoutViewRoute:
+    """Test the HTMX layout/semantic view toggle routes."""
+
+    @staticmethod
+    def _setup_client_with_pdf(
+        text_items: list[tuple[tuple[float, float], str]],
+        *,
+        pages: int = 1,
+    ) -> tuple[TestClient, str]:
+        """Create a TestClient, register a user, import a PDF, return (client, aid).
+
+        *text_items* are (position, text) pairs inserted on the first page.
+        *pages* adds extra pages with "Page N" text for multipage tests.
+        """
+        import fitz
+
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        registry.register(GridLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        # Register via API to get a JWT token.
+        resp = client.post(
+            "/api/auth/register",
+            json={"display_name": "LayoutUser", "password": "pw"},
+        )
+        token = resp.json()["token"]
+        # Set cookie for HTMX frontend routes.
+        client.cookies.set("uaf_token", token)
+
+        # Build a PDF.
+        pdf_doc = fitz.open()
+        page = pdf_doc.new_page()
+        for pos, txt in text_items:
+            page.insert_text(pos, txt)
+        for i in range(1, pages):
+            extra = pdf_doc.new_page()
+            extra.insert_text((72, 72), f"Page {i + 1}")
+        pdf_bytes = pdf_doc.tobytes()
+        pdf_doc.close()
+
+        # Import via API (returns JSON with artifact id).
+        resp = client.post(
+            "/api/artifacts/import",
+            files={"file": ("test.pdf", pdf_bytes, "application/pdf")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 201, resp.text
+        aid = resp.json()["id"]
+        return client, aid
+
+    def test_layout_toggle_returns_layout_html(self) -> None:
+        """GET ?mode=layout returns layout-page structure, not <article>."""
+        client, aid = self._setup_client_with_pdf([
+            ((72, 72), "Hello World"),
+        ])
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "layout-page" in html
+        assert "layout-block" in html
+        assert "position: absolute" in html
+        assert "<article" not in html
+
+    def test_semantic_toggle_returns_semantic_html(self) -> None:
+        """GET ?mode=semantic returns doc-block structure, not layout-page."""
+        client, aid = self._setup_client_with_pdf([
+            ((72, 72), "Hello World"),
+        ])
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=semantic")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "doc-block" in html
+        assert "layout-page" not in html
+
+    def test_layout_view_has_no_extra_spaces(self) -> None:
+        """Imported PDF text has no spurious double spaces."""
+        client, aid = self._setup_client_with_pdf([
+            ((72, 72), "Hello World"),
+        ])
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        assert "Hello World" in resp.text
+
+    def test_layout_view_multipage_structure(self) -> None:
+        """Multi-page PDF produces one layout-page per source page."""
+        client, aid = self._setup_client_with_pdf(
+            [((72, 72), "Page 1")], pages=3,
+        )
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        assert resp.text.count("layout-page") >= 3
+
+    def test_layout_blocks_have_no_height(self) -> None:
+        """Individual layout blocks must not set explicit height."""
+        import re
+
+        client, aid = self._setup_client_with_pdf([
+            ((72, 72), "Block text"),
+        ])
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        # Page container has height — that's expected.
+        # But individual blocks must not.
+        block_styles = re.findall(
+            r'class="layout-block"[^>]*style="([^"]*)"', resp.text,
+        )
+        for style in block_styles:
+            assert "height:" not in style
+
+    def test_layout_view_includes_inspector_panel(self) -> None:
+        """Layout view HTML includes the inspector container."""
+        client, aid = self._setup_client_with_pdf([
+            ((72, 72), "Inspector test"),
+        ])
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        assert 'id="layout-inspector"' in resp.text
+        assert 'id="layout-tooltip"' in resp.text
+        assert "inspector-close" in resp.text
+
+    def test_layout_blocks_have_data_attributes(self) -> None:
+        """Layout blocks served via the route include data-node-type etc."""
+        client, aid = self._setup_client_with_pdf([
+            ((72, 72), "Data attr test"),
+        ])
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        assert "data-node-type=" in resp.text
+        assert "data-page=" in resp.text
+
+    def test_header_footer_detection_via_route(self) -> None:
+        """Repeated header text across pages gets header-footer class."""
+        import fitz
+
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        registry.register(GridLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/auth/register",
+            json={"display_name": "HFUser", "password": "pw"},
+        )
+        token = resp.json()["token"]
+        client.cookies.set("uaf_token", token)
+
+        # Build PDF with repeated header text on 3 pages.
+        pdf_doc = fitz.open()
+        for i in range(3):
+            page = pdf_doc.new_page()
+            page.insert_text((400, 30), "PREPRINT HEADER")
+            page.insert_text((72, 200), f"Body text page {i + 1}")
+        pdf_bytes = pdf_doc.tobytes()
+        pdf_doc.close()
+
+        resp = client.post(
+            "/api/artifacts/import",
+            files={"file": ("hf.pdf", pdf_bytes, "application/pdf")},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 201
+        aid = resp.json()["id"]
+
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        assert "layout-header-footer" in resp.text
 
 
 def _parse_nid(s: str) -> NodeId:

@@ -235,6 +235,19 @@ The format handler implementations remain in the db plan because they're tested 
 round-trip fidelity tests (proving the data model works). The API wrapper is this plan's
 concern.
 
+**Layout metadata:** PDF and DOCX format handlers populate `LayoutHint` on each imported
+node with spatial coordinates, font properties, page numbers, and text rotation. The PDF
+handler uses PyMuPDF's `get_text("dict")` for rich block-level metadata (bounding boxes,
+font family, size, weight, style, color, direction vector). The DOCX handler extracts
+section geometry and per-paragraph font info from `python-docx`. PDF import also detects
+repeating headers/footers across pages and tags them via `LayoutHint.header_footer`.
+
+**Text storage:** All imported text is stored in *semantic form* — end-of-line hyphenation
+is dehyphenated (e.g., `"capa-" + "bility"` → `"capability"`), and display-level line
+breaks are captured via `LayoutHint` coordinates rather than embedded in the text. Bold
+and italic styling are detected from the first line of each block to avoid dilution by
+later lines with different formatting.
+
 ---
 
 ## 3. Dependencies
@@ -360,9 +373,22 @@ back to graph nodes. The HTML is semantic, not styled — CSS is the UI layer's 
 objects, all applied as a batch. This is the "command grouping" from Appendix C1 of
 the db plan — each `LensAction` is one undo-able command.
 
-**Tests:** `tests/uaf/app/test_doc_lens.py` (~18 tests: render empty artifact, render
-with headings + paragraphs, render with nested content, render with images, insert
-paragraph, insert heading, delete node, reorder, format change, code block rendering)
+**Layout rendering** (`render_layout()`):
+
+DocLens also supports a **Layout view** that renders nodes with spatial positioning,
+approximating the original document appearance. Uses `LayoutHint` metadata from
+`NodeMetadata.layout` (populated during PDF/DOCX import):
+- Nodes with coordinates are absolutely positioned within page-sized containers
+- Nodes without coordinates fall back to reading-order flow
+- Multi-page documents render as separate page divs
+- Detected headers/footers are tagged with a distinct CSS class
+- Layout view is read-only (no editing actions)
+
+The UI provides a Semantic/Layout toggle in the toolbar that swaps content via HTMX.
+
+**Tests:** `tests/uaf/app/test_doc_lens.py` (~25 tests: semantic rendering, layout
+rendering with positioned nodes, multipage, font styles, header/footer tagging,
+HTML escaping, editing actions, format changes)
 
 ---
 

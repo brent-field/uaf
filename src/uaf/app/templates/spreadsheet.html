@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — UAF Spreadsheet{% endblock %}
+{% block content %}
+<div class="card">
+    <div class="editor-header">
+        <form hx-post="/artifacts/{{ artifact_id }}/rename"
+              hx-target="#grid-content"
+              hx-swap="innerHTML"
+              style="flex:1;display:flex;gap:0.5rem;align-items:center;">
+            <input type="text" name="title" value="{{ title }}"
+                   class="editor-title"
+                   hx-trigger="change"
+                   hx-post="/artifacts/{{ artifact_id }}/grid/rename"
+                   hx-target="#grid-content"
+                   hx-swap="innerHTML"
+                   hx-include="this" />
+        </form>
+        <a href="/dashboard" class="btn btn-sm">Back</a>
+        <a href="/api/artifacts/{{ artifact_id }}/export?format=csv" class="btn btn-sm">Export .csv</a>
+        <button class="btn btn-sm no-print" onclick="window.print()">Print</button>
+    </div>
+
+    {% if sheet_id %}
+    <div class="grid-toolbar">
+        <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/grid/add-row"
+                hx-target="#grid-content"
+                hx-swap="innerHTML">+ Row</button>
+        <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/grid/add-col"
+                hx-target="#grid-content"
+                hx-swap="innerHTML">+ Column</button>
+        <span class="htmx-indicator">Saving...</span>
+    </div>
+    {% endif %}
+
+    <div id="grid-content" class="grid-content">
+        {% include "partials/grid_table.html" %}
+    </div>
+</div>
+
+<div id="cell-edit-modal"></div>
+
+<script>
+document.body.addEventListener('click', function(e) {
+    var td = e.target.closest('td[data-node-id]');
+    if (!td) return;
+    var nodeId = td.getAttribute('data-node-id');
+    var currentVal = td.textContent.trim();
+    var artifactId = '{{ artifact_id }}';
+    var modal = document.getElementById('cell-edit-modal');
+    modal.innerHTML =
+        '<div class="cell-edit-overlay" onclick="if(event.target===this)this.remove()">' +
+        '<form class="cell-edit-form" hx-post="/artifacts/' + artifactId + '/grid/set-cell" ' +
+        'hx-target="#grid-content" hx-swap="innerHTML">' +
+        '<h4>Edit Cell</h4>' +
+        '<input type="hidden" name="cell_id" value="' + nodeId + '" />' +
+        '<input type="text" name="value" value="' + currentVal.replace(/"/g, '&quot;') + '" autofocus />' +
+        '<div class="cell-edit-actions">' +
+        '<button type="button" class="btn btn-sm" onclick="this.closest(\'.cell-edit-overlay\').remove()">Cancel</button>' +
+        '<button type="submit" class="btn btn-sm btn-primary">Save</button>' +
+        '</div></form></div>';
+    htmx.process(modal);
+});
+</script>
+{% endblock %}

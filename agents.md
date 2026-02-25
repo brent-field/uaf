@@ -10,6 +10,7 @@ point for AI agents and collaborators navigating the UAF project.
 | Document | Path | Summary |
 |----------|------|---------|
 | **Architecture Overview** | [docs/architecture.md](docs/architecture.md) | System architecture, data model, layer design, technology choices, and design principles |
+| **UI Guide** | [docs/ui-guide.md](docs/ui-guide.md) | How to run and use the HTMX web frontend (login, dashboard, document editor, spreadsheet viewer, import/export) |
 
 ---
 

@@ -22,6 +22,7 @@ from uaf.core.nodes import (
     CodeBlock,
     Heading,
     Image,
+    LayoutHint,
     NodeType,
     Paragraph,
     RawNode,
@@ -99,6 +100,85 @@ class DocLens:
             rendered_at=utc_now(),
         )
 
+    def render_layout(
+        self, db: SecureGraphDB, session: Session, artifact_id: NodeId
+    ) -> LensView:
+        """Render the artifact tree as layout-positioned HTML."""
+        artifact = db.get_node(session, artifact_id)
+        if artifact is None or not isinstance(artifact, Artifact):
+            return LensView(
+                lens_type="doc",
+                artifact_id=artifact_id,
+                title="(not found)",
+                content="",
+                content_type="text/html",
+                node_count=0,
+                rendered_at=utc_now(),
+            )
+
+        # Page dimensions from artifact layout (default US Letter).
+        page_w, page_h = _page_dimensions(artifact)
+        children = db.get_children(session, artifact_id)
+
+        # Group children by page number.
+        pages: dict[int, list[object]] = {}
+        flow_nodes: list[object] = []  # nodes without coordinates
+        node_count = 1
+
+        for child in children:
+            layout = _get_layout(child)
+            if layout is not None and layout.x is not None and layout.y is not None:
+                pg = layout.page if layout.page is not None else 0
+                pages.setdefault(pg, []).append(child)
+            else:
+                flow_nodes.append(child)
+            node_count += 1
+
+        parts: list[str] = []
+
+        if pages:
+            for pg_num in sorted(pages):
+                page_parts: list[str] = []
+                for node in pages[pg_num]:
+                    page_parts.append(self._render_layout_node(node))
+                inner = "\n".join(page_parts)
+                parts.append(
+                    f'<div class="layout-page" style="position: relative;'
+                    f" width: {page_w}pt; height: {page_h}pt;"
+                    f' margin: 0 auto 1rem; background: #fff;'
+                    f' border: 1px solid #ccc;">\n{inner}\n</div>'
+                )
+
+        if flow_nodes:
+            flow_parts: list[str] = []
+            for node in flow_nodes:
+                flow_parts.append(self._render_layout_flow_node(node))
+            flow_inner = "\n".join(flow_parts)
+            parts.append(
+                f'<div class="layout-flow"'
+                f' style="max-width: {page_w}pt;'
+                f' margin: 0 auto; padding: 1rem;">'
+                f"\n{flow_inner}\n</div>"
+            )
+
+        if not parts:
+            parts.append(
+                '<div class="empty-state">'
+                "<p>No layout data available."
+                " Import a PDF or DOCX to see layout view.</p></div>"
+            )
+
+        content = "\n".join(parts)
+        return LensView(
+            lens_type="doc",
+            artifact_id=artifact_id,
+            title=artifact.title,
+            content=content,
+            content_type="text/html",
+            node_count=node_count,
+            rendered_at=utc_now(),
+        )
+
     def apply_action(
         self,
         db: SecureGraphDB,
@@ -127,7 +207,83 @@ class DocLens:
                 raise ValueError(msg)
 
     # ------------------------------------------------------------------
-    # Rendering helpers
+    # Layout rendering helpers
+    # ------------------------------------------------------------------
+
+    def _render_layout_node(self, node: object) -> str:
+        """Render a node as an absolutely-positioned div."""
+        layout = _get_layout(node)
+        text = _get_text(node)
+        nid = _get_node_id(node)
+
+        if layout is None or text is None or nid is None:
+            return ""
+
+        style_parts = ["position: absolute"]
+        if layout.x is not None:
+            style_parts.append(f"left: {layout.x}pt")
+        if layout.y is not None:
+            style_parts.append(f"top: {layout.y}pt")
+        if layout.width is not None:
+            style_parts.append(f"width: {layout.width}pt")
+        # No explicit height — let content flow naturally to avoid
+        # clipping when HTML font metrics differ from the PDF engine.
+        if layout.reading_order is not None:
+            style_parts.append(f"z-index: {1000 - layout.reading_order}")
+        if layout.rotation is not None:
+            style_parts.append(f"transform: rotate({layout.rotation}deg)")
+            style_parts.append("transform-origin: top left")
+        style_parts.extend(_font_style_parts(layout))
+
+        css_class = "layout-block"
+        if layout.header_footer:
+            css_class += " layout-header-footer"
+
+        # Build data attributes for the inspector.
+        data_parts = [f'data-node-id="{nid}"']
+        data_parts.append(f'data-node-type="{_get_node_type_name(node)}"')
+        if layout.page is not None:
+            data_parts.append(f'data-page="{layout.page}"')
+        if layout.reading_order is not None:
+            data_parts.append(f'data-reading-order="{layout.reading_order}"')
+        if layout.height is not None:
+            data_parts.append(f'data-height="{layout.height}"')
+        if layout.rotation is not None:
+            data_parts.append(f'data-rotation="{layout.rotation}"')
+        if layout.first_line_weight:
+            data_parts.append(
+                f'data-first-line-weight="{escape(layout.first_line_weight)}"'
+            )
+        data_attr_str = " ".join(data_parts)
+
+        style = "; ".join(style_parts)
+        # Preserve line breaks from PDF extraction, with per-line bold
+        # when the first line has a different weight from the block.
+        escaped = _format_layout_text(text, layout)
+        return (
+            f'  <div {data_attr_str} class="{css_class}"'
+            f' style="{style}">{escaped}</div>'
+        )
+
+    def _render_layout_flow_node(self, node: object) -> str:
+        """Render a node in flow layout (no absolute positioning)."""
+        layout = _get_layout(node)
+        text = _get_text(node)
+        nid = _get_node_id(node)
+
+        if text is None or nid is None:
+            return ""
+
+        style_parts = _font_style_parts(layout) if layout else []
+        style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ""
+
+        return (
+            f'  <div data-node-id="{nid}" class="layout-block"'
+            f"{style_attr}>{escape(text)}</div>"
+        )
+
+    # ------------------------------------------------------------------
+    # Semantic rendering helpers
     # ------------------------------------------------------------------
 
     def _render_node(
@@ -327,3 +483,128 @@ class DocLens:
             principal_id=session.principal.id.value,
         )
         db._db.apply(op)
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers for layout rendering
+# ---------------------------------------------------------------------------
+
+# Default US Letter dimensions in points.
+_DEFAULT_PAGE_W = 612.0
+_DEFAULT_PAGE_H = 792.0
+
+
+def _page_dimensions(artifact: Artifact) -> tuple[float, float]:
+    """Extract page width/height from artifact layout or use defaults."""
+    layout = artifact.meta.layout
+    if layout is not None:
+        w = layout.width if layout.width is not None else _DEFAULT_PAGE_W
+        h = layout.height if layout.height is not None else _DEFAULT_PAGE_H
+        return w, h
+    return _DEFAULT_PAGE_W, _DEFAULT_PAGE_H
+
+
+def _get_layout(node: object) -> LayoutHint | None:
+    """Safely extract LayoutHint from any node."""
+    if hasattr(node, "meta") and hasattr(node.meta, "layout"):
+        return node.meta.layout  # type: ignore[no-any-return]
+    return None
+
+
+def _get_text(node: object) -> str | None:
+    """Extract text content from a node."""
+    match node:
+        case Heading(text=t):
+            return t
+        case Paragraph(text=t):
+            return t
+        case CodeBlock(source=s):
+            return s
+        case TextBlock(text=t):
+            return t
+        case Image(alt_text=alt):
+            return alt
+        case _:
+            return None
+
+
+def _get_node_type_name(node: object) -> str:
+    """Return a human-readable node type name for inspector data attributes."""
+    match node:
+        case Heading():
+            return "heading"
+        case Paragraph():
+            return "paragraph"
+        case CodeBlock():
+            return "code_block"
+        case TextBlock():
+            return "text_block"
+        case Image():
+            return "image"
+        case _:
+            return "unknown"
+
+
+def _get_node_id(node: object) -> object | None:
+    """Extract node ID from any node."""
+    match node:
+        case Heading(meta=meta):
+            return meta.id
+        case Paragraph(meta=meta):
+            return meta.id
+        case CodeBlock(meta=meta):
+            return meta.id
+        case TextBlock(meta=meta):
+            return meta.id
+        case Image(meta=meta):
+            return meta.id
+        case RawNode(meta=meta):
+            return meta.id
+        case _:
+            return None
+
+
+def _font_style_parts(layout: LayoutHint) -> list[str]:
+    """Build CSS style parts from LayoutHint font properties."""
+    parts: list[str] = []
+    if layout.font_family:
+        # Font family may contain commas (CSS font stack) — don't escape.
+        parts.append(f"font-family: {layout.font_family}")
+    if layout.font_size is not None:
+        parts.append(f"font-size: {layout.font_size}pt")
+    if layout.font_weight:
+        parts.append(f"font-weight: {escape(layout.font_weight)}")
+    if layout.font_style:
+        parts.append(f"font-style: {escape(layout.font_style)}")
+    if layout.color:
+        parts.append(f"color: {escape(layout.color)}")
+    return parts
+
+
+def _format_layout_text(text: str, layout: LayoutHint) -> str:
+    """Format node text as HTML for layout view.
+
+    Handles two concerns:
+    - ``\\n`` → ``<br>`` for line breaks
+    - First-line bold: if ``layout.first_line_weight`` differs from the
+      block's ``font_weight``, the first line is wrapped in a ``<span>``
+      with the first-line weight (e.g. bold author name above normal-weight
+      affiliation text).
+    """
+    flw = layout.first_line_weight
+    block_w = layout.font_weight or "normal"
+    if flw and flw != block_w:
+        # Mixed-weight block — bold just the first line.
+        if "\n" in text:
+            idx = text.index("\n")
+            first = escape(text[:idx])
+            rest = escape(text[idx + 1:]).replace("\n", "<br>")
+            return (
+                f'<span style="font-weight: {escape(flw)}">'
+                f"{first}</span><br>{rest}"
+            )
+        return (
+            f'<span style="font-weight: {escape(flw)}">'
+            f"{escape(text)}</span>"
+        )
+    return escape(text).replace("\n", "<br>")

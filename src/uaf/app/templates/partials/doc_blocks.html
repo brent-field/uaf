@@ -1,0 +1,57 @@
+{% for block in blocks %}
+<div class="doc-block" data-node-id="{{ block.id }}">
+    <div class="block-content"
+         onclick="this.style.display='none';this.nextElementSibling.style.display='block';this.nextElementSibling.querySelector('textarea,input').focus();">
+        {{ block.html | safe }}
+    </div>
+    <div class="block-edit" style="display:none;">
+        <form hx-post="/artifacts/{{ artifact_id }}/action/edit"
+              hx-target="#doc-content"
+              hx-swap="innerHTML">
+            <input type="hidden" name="node_id" value="{{ block.id }}" />
+            {% if block.type == 'code_block' %}
+            <textarea name="text" rows="4" class="edit-textarea">{{ block.text }}</textarea>
+            {% else %}
+            <input type="text" name="text" value="{{ block.text }}"
+                   class="edit-input"
+                   onkeydown="if(event.key==='Escape'){this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';}" />
+            {% endif %}
+            <div class="edit-actions">
+                <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                <button type="button" class="btn btn-sm"
+                        onclick="this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';">Cancel</button>
+            </div>
+        </form>
+    </div>
+    <div class="block-actions">
+        {% if not loop.first %}
+        <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/action/move-up"
+                hx-vals='{"node_id": "{{ block.id }}"}'
+                hx-target="#doc-content"
+                hx-swap="innerHTML"
+                title="Move up">&#9650;</button>
+        {% endif %}
+        {% if not loop.last %}
+        <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/action/move-down"
+                hx-vals='{"node_id": "{{ block.id }}"}'
+                hx-target="#doc-content"
+                hx-swap="innerHTML"
+                title="Move down">&#9660;</button>
+        {% endif %}
+        <button class="btn btn-sm btn-danger"
+                hx-post="/artifacts/{{ artifact_id }}/action/delete"
+                hx-vals='{"node_id": "{{ block.id }}"}'
+                hx-target="#doc-content"
+                hx-swap="innerHTML"
+                hx-confirm="Delete this block?"
+                title="Delete">&times;</button>
+    </div>
+</div>
+{% endfor %}
+{% if not blocks %}
+<div class="empty-state">
+    <p>Empty document. Use the toolbar to add content.</p>
+</div>
+{% endif %}
