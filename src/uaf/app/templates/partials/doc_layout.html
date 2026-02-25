@@ -2,6 +2,15 @@
 <div class="layout-view">
     {{ layout_html | safe }}
 </div>
+<div id="layout-inspector" class="layout-inspector hidden">
+    <div class="inspector-header">
+        <span class="inspector-title">Inspector</span>
+        <button class="inspector-close" onclick="hideInspector()"
+                aria-label="Close">&times;</button>
+    </div>
+    <div class="inspector-body"></div>
+</div>
+<div id="layout-tooltip" class="layout-tooltip hidden"></div>
 {% else %}
 <div class="empty-state">
     <p>No layout data available. Import a PDF or DOCX to see layout view.</p>

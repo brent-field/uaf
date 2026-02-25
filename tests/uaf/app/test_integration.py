@@ -610,6 +610,27 @@ class TestLayoutViewRoute:
         for style in block_styles:
             assert "height:" not in style
 
+    def test_layout_view_includes_inspector_panel(self) -> None:
+        """Layout view HTML includes the inspector container."""
+        client, aid = self._setup_client_with_pdf([
+            ((72, 72), "Inspector test"),
+        ])
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        assert 'id="layout-inspector"' in resp.text
+        assert 'id="layout-tooltip"' in resp.text
+        assert "inspector-close" in resp.text
+
+    def test_layout_blocks_have_data_attributes(self) -> None:
+        """Layout blocks served via the route include data-node-type etc."""
+        client, aid = self._setup_client_with_pdf([
+            ((72, 72), "Data attr test"),
+        ])
+        resp = client.get(f"/artifacts/{aid}/blocks?mode=layout")
+        assert resp.status_code == 200
+        assert "data-node-type=" in resp.text
+        assert "data-page=" in resp.text
+
     def test_header_footer_detection_via_route(self) -> None:
         """Repeated header text across pages gets header-footer class."""
         import fitz

@@ -758,6 +758,89 @@ class TestDocLensLayoutRender:
         # The font-family should contain the full CSS stack, not escaped.
         assert 'font-family: "Times New Roman", Times, serif' in view.content
 
+    def test_layout_block_data_attributes(self) -> None:
+        """Layout blocks include data-page, data-node-type, data-reading-order, etc."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Data Attrs",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0, width=468.0, height=14.0,
+            reading_order=3, rotation=-90.0, first_line_weight="bold",
+            font_size=10.0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Inspector test",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert 'data-page="0"' in view.content
+        assert 'data-node-type="paragraph"' in view.content
+        assert 'data-reading-order="3"' in view.content
+        assert 'data-height="14.0"' in view.content
+        assert 'data-rotation="-90.0"' in view.content
+        assert 'data-first-line-weight="bold"' in view.content
+
+    def test_layout_block_data_attributes_heading(self) -> None:
+        """Heading nodes report data-node-type='heading'."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Heading Type",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=72.0, width=400.0, height=20.0,
+            font_size=18.0,
+        )
+        h = Heading(
+            meta=make_node_metadata(NodeType.HEADING, layout=layout),
+            text="Big Title", level=1,
+        )
+        h_id = sdb.create_node(session, h)
+        sdb.create_edge(session, _contains(art_id, h_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert 'data-node-type="heading"' in view.content
+
+    def test_layout_block_data_attributes_optional_fields_absent(self) -> None:
+        """Data attributes are omitted when the corresponding fields are None."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Sparse Layout",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=72.0, width=400.0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Sparse",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert 'data-node-type="paragraph"' in view.content
+        assert 'data-page="0"' in view.content
+        # Optional fields should be absent.
+        assert "data-rotation" not in view.content
+        assert "data-first-line-weight" not in view.content
+        assert "data-height" not in view.content
+        assert "data-reading-order" not in view.content
+
     def test_layout_node_no_rotation_for_horizontal(self) -> None:
         """Horizontal text (rotation=None) has no CSS transform."""
         sdb, session, lens = _setup()

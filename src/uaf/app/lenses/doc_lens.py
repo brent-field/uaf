@@ -239,12 +239,29 @@ class DocLens:
         if layout.header_footer:
             css_class += " layout-header-footer"
 
+        # Build data attributes for the inspector.
+        data_parts = [f'data-node-id="{nid}"']
+        data_parts.append(f'data-node-type="{_get_node_type_name(node)}"')
+        if layout.page is not None:
+            data_parts.append(f'data-page="{layout.page}"')
+        if layout.reading_order is not None:
+            data_parts.append(f'data-reading-order="{layout.reading_order}"')
+        if layout.height is not None:
+            data_parts.append(f'data-height="{layout.height}"')
+        if layout.rotation is not None:
+            data_parts.append(f'data-rotation="{layout.rotation}"')
+        if layout.first_line_weight:
+            data_parts.append(
+                f'data-first-line-weight="{escape(layout.first_line_weight)}"'
+            )
+        data_attr_str = " ".join(data_parts)
+
         style = "; ".join(style_parts)
         # Preserve line breaks from PDF extraction, with per-line bold
         # when the first line has a different weight from the block.
         escaped = _format_layout_text(text, layout)
         return (
-            f'  <div data-node-id="{nid}" class="{css_class}"'
+            f'  <div {data_attr_str} class="{css_class}"'
             f' style="{style}">{escaped}</div>'
         )
 
@@ -509,6 +526,23 @@ def _get_text(node: object) -> str | None:
             return alt
         case _:
             return None
+
+
+def _get_node_type_name(node: object) -> str:
+    """Return a human-readable node type name for inspector data attributes."""
+    match node:
+        case Heading():
+            return "heading"
+        case Paragraph():
+            return "paragraph"
+        case CodeBlock():
+            return "code_block"
+        case TextBlock():
+            return "text_block"
+        case Image():
+            return "image"
+        case _:
+            return "unknown"
 
 
 def _get_node_id(node: object) -> object | None:
