@@ -367,7 +367,7 @@ input:focus, select:focus {
 .layout-tooltip.hidden { display: none; }
 
 /* Document content blocks */
-.doc-content { min-height: 200px; }
+.doc-content { min-height: 200px; position: relative; }
 .doc-block {
     position: relative;
     padding: 0.375rem 0.5rem;
