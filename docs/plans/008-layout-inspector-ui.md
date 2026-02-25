@@ -364,7 +364,7 @@ def test_layout_view_includes_inspector_panel(self) -> None:
 ## Commands
 
 ```bash
-make check      # Verify all tests pass (449 currently)
+make check      # Verify all tests pass (474 currently)
 make test       # Run pytest only
 ```
 
@@ -377,5 +377,13 @@ make test       # Run pytest only
 5. Inspector works after HTMX view toggle (semantic → layout → semantic → layout)
 6. Inspector works correctly for rotated blocks
 7. Inspector shows first_line_weight when applicable
-8. All existing tests continue to pass (449)
+8. All existing tests continue to pass (474)
 9. New tests verify data attribute presence and inspector panel markup
+
+## Implementation notes
+
+- Tooltip uses `position: fixed` with viewport coordinates (`clientX`/`clientY`)
+  rather than `position: absolute` relative to `#doc-content`. This avoids
+  issues with scroll offsets and ancestor positioning contexts.
+- Event delegation on `#doc-content` (Approach A) was chosen for HTMX
+  compatibility — listeners survive partial swaps.
