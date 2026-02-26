@@ -568,8 +568,11 @@ def _font_style_parts(layout: LayoutHint) -> list[str]:
     """Build CSS style parts from LayoutHint font properties."""
     parts: list[str] = []
     if layout.font_family:
-        # Font family may contain commas (CSS font stack) — don't escape.
-        parts.append(f"font-family: {layout.font_family}")
+        # Font family may contain commas (CSS font stack) — don't HTML-escape.
+        # However, double-quotes in font names (e.g. "Times New Roman") must
+        # be converted to single quotes so they don't break style="..." attrs.
+        safe_family = layout.font_family.replace('"', "'")
+        parts.append(f"font-family: {safe_family}")
     if layout.font_size is not None:
         parts.append(f"font-size: {layout.font_size}pt")
     if layout.font_weight:

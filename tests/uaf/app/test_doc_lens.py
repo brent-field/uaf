@@ -733,7 +733,7 @@ class TestDocLensLayoutRender:
         assert '<span style="font-weight:' not in view.content
 
     def test_render_layout_font_family_with_commas(self) -> None:
-        """CSS font stacks with commas are not escaped in layout view."""
+        """CSS font stacks with commas are preserved; double-quotes become single."""
         sdb, session, lens = _setup()
         art_layout = LayoutHint(width=612.0, height=792.0)
         art = Artifact(
@@ -755,8 +755,10 @@ class TestDocLensLayoutRender:
         sdb.create_edge(session, _contains(art_id, p_id))
 
         view = lens.render_layout(sdb, session, art_id)
-        # The font-family should contain the full CSS stack, not escaped.
-        assert 'font-family: "Times New Roman", Times, serif' in view.content
+        # Double-quotes converted to single-quotes to avoid breaking style="...".
+        assert "font-family: 'Times New Roman', Times, serif" in view.content
+        # font-size must also survive (not truncated by broken quotes).
+        assert "font-size: 10.0pt" in view.content
 
     def test_layout_block_data_attributes(self) -> None:
         """Layout blocks include data-page, data-node-type, data-reading-order, etc."""

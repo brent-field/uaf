@@ -2,9 +2,16 @@
 
 Imports a reference PDF, extracts layout metadata via PdfHandler, and asserts
 specific geometric/typographic properties against values measured in Mac Preview.
+
+The TestPdfRenderedLayout class tests the *rendered HTML* output of
+DocLens.render_layout() — verifying that CSS font properties survive into
+valid HTML attributes and that the layout view faithfully reproduces the
+original PDF's visual appearance.
 """
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
@@ -283,3 +290,176 @@ class TestPdfFidelity2511:
     def test_page1_block_count(self) -> None:
         """Page 1 has approximately 12 text blocks (+/-1)."""
         assert len(self.page0) == pytest.approx(12, abs=1)
+
+
+class TestPdfRenderedLayout:
+    """End-to-end tests: PDF import → DocLens.render_layout() → valid HTML.
+
+    These test the *rendered HTML output*, not just the extracted LayoutHint
+    metadata. They verify that CSS properties (font-family, font-size, etc.)
+    survive into valid HTML style attributes and produce a visually faithful
+    layout view.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        from uaf.app.lenses.doc_lens import DocLens
+        from uaf.security.auth import LocalAuthProvider
+        from uaf.security.secure_graph_db import SecureGraphDB
+
+        db, root_id, _children = _import_pdf("2511.14823v1.pdf")
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        session = sdb.system_session()
+        lens = DocLens()
+        self.view = lens.render_layout(sdb, session, root_id)
+        self.html = self.view.content
+
+    def _extract_block_styles(self) -> list[dict[str, str]]:
+        """Parse all layout-block divs and extract their style attribute values."""
+        # Match: class="layout-block" ... style="..."
+        # The style attr must be a single unbroken quoted string.
+        pattern = re.compile(
+            r'class="layout-block[^"]*"\s+style="([^"]*)"',
+        )
+        results = []
+        for m in pattern.finditer(self.html):
+            style_str = m.group(1)
+            # Parse individual CSS properties.
+            props: dict[str, str] = {}
+            for part in style_str.split(";"):
+                part = part.strip()
+                if ":" in part:
+                    key, val = part.split(":", 1)
+                    props[key.strip()] = val.strip()
+            results.append(props)
+        return results
+
+    # -- Style attribute validity tests --
+
+    def test_style_attributes_not_truncated_by_quotes(self) -> None:
+        """Font-family with quotes must not break the style attribute.
+
+        The font map produces values like '"Times New Roman", Times, serif'.
+        If these double-quotes are not escaped or converted, they prematurely
+        close the style="..." attribute, truncating font-size and all
+        subsequent CSS properties.
+        """
+        blocks = self._extract_block_styles()
+        assert len(blocks) > 0, "No layout-block divs found in rendered HTML"
+
+        for i, props in enumerate(blocks):
+            # Every block that has position:absolute should also have left/top
+            # AND font-size (since every PDF block has a font size).
+            if "position" in props and props["position"] == "absolute":
+                assert "left" in props, f"Block {i}: 'left' missing from style"
+                assert "top" in props, f"Block {i}: 'top' missing from style"
+                assert "font-size" in props, (
+                    f"Block {i}: 'font-size' missing — style attribute likely "
+                    f"truncated by unescaped quotes in font-family. "
+                    f"Got properties: {list(props.keys())}"
+                )
+
+    def test_font_family_and_font_size_coexist(self) -> None:
+        """Blocks with font-family must also retain font-size in the same style."""
+        blocks = self._extract_block_styles()
+        blocks_with_family = [b for b in blocks if "font-family" in b]
+        assert len(blocks_with_family) > 0, "No blocks have font-family"
+
+        for i, props in enumerate(blocks_with_family):
+            assert "font-size" in props, (
+                f"Block {i}: has font-family={props['font-family']!r} but "
+                f"font-size is missing. The style attribute was likely "
+                f"truncated by unescaped double-quotes in font-family."
+            )
+
+    def test_title_renders_with_font_size(self) -> None:
+        """The title block must have a visible font-size in the rendered HTML."""
+        # Find the title block by its text content.
+        title_pattern = re.compile(
+            r'class="layout-block[^"]*"\s+style="([^"]*)">'
+            r"[^<]*DYNAMIC NESTED",
+        )
+        m = title_pattern.search(self.html)
+        assert m is not None, "Title block not found in rendered HTML"
+        style = m.group(1)
+        assert "font-size" in style, (
+            f"Title block is missing font-size in its style attribute. "
+            f"Style: {style!r}"
+        )
+
+    def test_section_heading_renders_bold(self) -> None:
+        """The '1 Introduction' heading must render with font-weight: bold."""
+        # The heading block renders as "1<br>Introduction" (PyMuPDF splits the
+        # number and title onto separate lines within the same block).
+        heading_pattern = re.compile(
+            r'class="layout-block[^"]*"\s+style="([^"]*)">'
+            r"1<br>Introduction",
+        )
+        m = heading_pattern.search(self.html)
+        assert m is not None, "Introduction heading block not found in rendered HTML"
+        style = m.group(1)
+        assert "font-weight: bold" in style, (
+            f"Section heading missing font-weight: bold. Style: {style!r}"
+        )
+
+    def test_body_text_renders_at_10pt(self) -> None:
+        """Body paragraphs must render with ~10pt font-size."""
+        body_pattern = re.compile(
+            r'class="layout-block[^"]*"\s+style="([^"]*)">'
+            r"[^<]*Advancements in deep learning",
+        )
+        m = body_pattern.search(self.html)
+        assert m is not None, "Body text block not found in rendered HTML"
+        style = m.group(1)
+        # Extract font-size value.
+        size_match = re.search(r"font-size:\s*([\d.]+)pt", style)
+        assert size_match is not None, (
+            f"Body block is missing font-size. Style: {style!r}"
+        )
+        size = float(size_match.group(1))
+        assert size == pytest.approx(10.0, abs=0.5), (
+            f"Body font-size should be ~10pt, got {size}pt"
+        )
+
+    def test_rendered_blocks_have_distinct_font_sizes(self) -> None:
+        """Not all blocks should render at the same font-size.
+
+        The PDF has title (~13-17pt), headings (~12pt), body (~10pt), and
+        abstract heading (~9.6pt). If font-size is lost, all blocks default
+        to the browser's default size.
+        """
+        blocks = self._extract_block_styles()
+        sizes = set()
+        for props in blocks:
+            if "font-size" in props:
+                size_match = re.search(r"([\d.]+)", props["font-size"])
+                if size_match:
+                    sizes.add(float(size_match.group(1)))
+
+        assert len(sizes) >= 3, (
+            f"Expected at least 3 distinct font sizes in rendered HTML "
+            f"(title, heading, body), but found {len(sizes)}: {sorted(sizes)}"
+        )
+
+    def test_no_raw_double_quotes_in_style_attribute(self) -> None:
+        """Style attribute values must not contain unescaped double-quotes.
+
+        Raw " inside a style="..." attribute breaks the HTML parser.
+        Font-family values like '"Times New Roman"' must use single quotes
+        or HTML entities instead.
+        """
+        # Find broken style attributes where font-family is followed by a
+        # closing quote (meaning the double-quote in the font name terminated
+        # the style attribute prematurely).
+        # A broken style looks like: style="...font-family: "
+        truncated = re.findall(
+            r'style="[^"]*font-family:\s*"', self.html,
+        )
+        for hit in truncated:
+            fam_match = re.search(r"font-family:\s*(.*)$", hit)
+            if fam_match:
+                fam_value = fam_match.group(1).strip().rstrip('"')
+                assert len(fam_value) > 0, (
+                    f"font-family value is empty/truncated: {hit!r}"
+                )
