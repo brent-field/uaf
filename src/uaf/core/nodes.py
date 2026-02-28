@@ -50,6 +50,8 @@ class LayoutHint:
     rotation: float | None = None
     first_line_weight: str | None = None
     header_footer: bool = False
+    display_text: str | None = None
+    line_height: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

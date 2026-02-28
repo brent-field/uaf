@@ -23,6 +23,9 @@ point for AI agents and collaborators navigating the UAF project.
 | 003 | **Security Layer** | [docs/plans/003-security-layer.md](docs/plans/003-security-layer.md) | Authentication, authorization (RBAC + ACLs), audit logging, SecureGraphDB wrapper. 6 implementation phases. Appendices: encryption roadmap, state-sponsored threat model |
 | 004 | **Application Layer** | [docs/plans/004-application-layer.md](docs/plans/004-application-layer.md) | Lens protocol, DocLens, GridLens, REST API (FastAPI), MCP server, format handlers. 6 implementation phases. Appendices: frontend options, real-time collaboration, rich text editing |
 | 005 | **Business Plan** | [docs/plans/005-business-plan.md](docs/plans/005-business-plan.md) | Products, distribution, open-source strategy, revenue model, market segments, competitive landscape, ERP replacement architecture with 9 industry applications |
+| 006 | **Shapes Support** | [docs/plans/006-shapes-support.md](docs/plans/006-shapes-support.md) | Shape node types (lines, rectangles, circles, paths) for diagramming and annotation |
+| 007 | **Layout Fidelity Tests** | [docs/plans/007-layout-fidelity-tests.md](docs/plans/007-layout-fidelity-tests.md) | Ground-truth PDF fidelity test suite comparing extracted layout properties against known PDF structure |
+| 008 | **Layout Inspector UI** | [docs/plans/008-layout-inspector-ui.md](docs/plans/008-layout-inspector-ui.md) | Interactive typographic debugging — hover tooltips, click-to-inspect panel, keyboard shortcuts for the Layout view |
 
 ---
 

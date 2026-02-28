@@ -63,6 +63,20 @@ The editor (`/artifacts/{id}/edit`) provides a Word-like block editing experienc
 - **Semantic** (default) — clean flowing document with headings, paragraphs, and code blocks. This is the native UAF editing view.
 - **Layout** — spatial "desktop publishing" view that preserves the original document layout (text positioning, font properties, page geometry). Available for imported PDFs and DOCX files. Headers and footers are auto-detected and shown with a distinct dashed-border style. Layout view is **read-only** — switch to Semantic to edit.
 
+#### Layout Inspector
+
+When in Layout view, an interactive inspector is available for typographic debugging:
+
+- **Hover** over any text block to see a tooltip showing font family, size, and weight
+- **Click** a block to open the inspector panel on the right with full properties:
+  - Position & Size (page, x/y, width, height, reading order)
+  - Typography (font family, size, weight, style, colour, first-line weight)
+  - Rotation (angle, origin)
+  - Content (text preview, line count, character count)
+  - Identity (node ID, node type)
+- **Click** the same block again or press **Escape** to close the panel
+- **C** (when the panel is open) copies the node ID to the clipboard
+
 #### Insert Buttons
 - **+ Paragraph** — appends a new paragraph block
 - **+ Heading** — appends a new heading block

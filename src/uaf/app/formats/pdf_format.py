@@ -17,6 +17,7 @@ from uaf.core.nodes import (
     LayoutHint,
     NodeType,
     Paragraph,
+    Shape,
     make_node_metadata,
 )
 
@@ -76,6 +77,12 @@ class PdfHandler:
                 if not text:
                     continue
 
+                # Raw text preserves original PDF line breaks and hyphens
+                # for layout rendering.  Only store when it differs from
+                # the semantic (dehyphenated) text to save space.
+                raw_text = _extract_raw_block_text(block)
+                display_text: str | None = raw_text if raw_text != text else None
+
                 font = _extract_dominant_font(block)
                 first_line_font = _extract_first_line_font(block)
                 rotation = _extract_rotation(block)
@@ -90,8 +97,19 @@ class PdfHandler:
                 # For ≈90° rotated blocks the bbox width is the line
                 # thickness and height is the text run length.  CSS needs
                 # the run length as width (text is laid out then rotated).
+                #
+                # The CSS anchor point (top/left + transform-origin: top left)
+                # also needs adjustment so the rotated text fills the correct
+                # region of the page:
+                #   -90° (bottom→top): rotate() swings the text *upward* from
+                #       the anchor, so place it at the bbox bottom (y1).
+                #   +90° (top→bottom): rotate() swings the text *downward*,
+                #       so the bbox top (y0) is already correct.
+                layout_y = y0
                 if rotation is not None and abs(abs(rotation) - 90.0) < 5.0:
                     layout_w = y1 - y0  # text run length
+                    if rotation < 0:
+                        layout_y = y1  # anchor at bbox bottom
                 else:
                     layout_w = x1 - x0
 
@@ -103,10 +121,12 @@ class PdfHandler:
                 if fl_weight and fl_weight != (block_weight or "normal"):
                     first_lw = fl_weight
 
+                line_ht = _compute_line_height(block)
+
                 layout = LayoutHint(
                     page=page_num,
                     x=x0,
-                    y=y0,
+                    y=layout_y,
                     width=layout_w,
                     height=y1 - y0,
                     font_family=font.get("family"),
@@ -117,6 +137,8 @@ class PdfHandler:
                     reading_order=block_index,
                     rotation=rotation,
                     first_line_weight=first_lw,
+                    display_text=display_text,
+                    line_height=line_ht,
                 )
 
                 # Detect heading heuristic: large font or bold
@@ -144,6 +166,13 @@ class PdfHandler:
 
                 normalised = _PAGE_NUM_RE.sub("N", text.strip())
                 block_records.append((nid, page_num, y0, normalised, page_height))
+                block_index += 1
+
+        # Extract vector shapes (lines, rectangles) from each page.
+        for page_num, page in enumerate(doc):
+            for shape_node in _extract_shapes(page, page_num, block_index):
+                nid = db.create_node(shape_node)
+                db.create_edge(_contains(art_id, nid))
                 block_index += 1
 
         doc.close()
@@ -195,18 +224,120 @@ def _extract_block_text(block: dict[str, Any]) -> str:
     the fragments rejoined so the stored text is the semantic form
     (e.g. "capability") rather than the display form ("capa-" + "bility").
     """
-    line_texts: list[str] = []
-    for line in block.get("lines", []):
-        parts: list[str] = []
-        for span in line.get("spans", []):
-            parts.append(span.get("text", ""))
-        line_texts.append("".join(parts))
-    text = "\n".join(line_texts)
+    raw = _extract_raw_block_text(block)
     # Dehyphenate: "capa-\nbilities" → "capabilities".
-    text = _HYPHEN_RE.sub(r"\1\2", text)
+    text = _HYPHEN_RE.sub(r"\1\2", raw)
     # Collapse runs of multiple spaces (but not newlines).
     text = re.sub(r"  +", " ", text)
     return text.strip()
+
+
+def _extract_raw_block_text(block: dict[str, Any]) -> str:
+    """Aggregate text from all lines/spans, preserving original line breaks.
+
+    Unlike :func:`_extract_block_text`, this does **not** dehyphenate or
+    collapse spaces.  The result is the display form of the text — exactly
+    as it appears in the PDF — suitable for layout rendering where line
+    breaks must match the original document.
+
+    PyMuPDF sometimes splits text that appears on the same visual line into
+    separate "line" objects (e.g. section numbers and titles, or equation
+    parts).  These same-baseline lines are merged with a space so the
+    layout view matches PDF viewers.
+    """
+    visual_lines = _merge_visual_lines(block)
+    return "\n".join(visual_lines).strip()
+
+
+def _merge_visual_lines(block: dict[str, Any]) -> list[str]:
+    """Group PyMuPDF lines by visual baseline and return merged text.
+
+    PyMuPDF may split text on the same visual line into separate ``line``
+    objects — e.g. "1" and "Introduction" in a section heading, or equation
+    fragments with equation numbers.  This function detects lines that share
+    the same baseline (significant y-overlap) and merges their text with a
+    space separator.
+
+    Returns a list of visual-line strings (one per distinct baseline).
+    """
+    lines = block.get("lines", [])
+    if not lines:
+        return []
+
+    # Build list of (text, bbox) for each PyMuPDF line.
+    line_data: list[tuple[str, tuple[float, float, float, float]]] = []
+    for line in lines:
+        parts: list[str] = []
+        for span in line.get("spans", []):
+            parts.append(span.get("text", ""))
+        text = "".join(parts)
+        bbox = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        line_data.append((text, (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))))
+
+    # Group consecutive lines that share the same baseline.
+    visual: list[str] = [line_data[0][0]]
+    prev_bbox = line_data[0][1]
+
+    for text, bbox in line_data[1:]:
+        if _same_baseline(prev_bbox, bbox):
+            # Same visual line — append with space.
+            visual[-1] = visual[-1] + " " + text
+        else:
+            visual.append(text)
+        prev_bbox = bbox
+
+    return visual
+
+
+def _same_baseline(
+    bbox_a: tuple[float, float, float, float],
+    bbox_b: tuple[float, float, float, float],
+) -> bool:
+    """Check whether two line bboxes share the same visual baseline.
+
+    Two lines are on the same baseline when their y-ranges overlap by more
+    than 50 % of the shorter line's height.
+    """
+    y_a_top, y_a_bot = bbox_a[1], bbox_a[3]
+    y_b_top, y_b_bot = bbox_b[1], bbox_b[3]
+
+    overlap = min(y_a_bot, y_b_bot) - max(y_a_top, y_b_top)
+    min_height = min(y_a_bot - y_a_top, y_b_bot - y_b_top)
+
+    if min_height <= 0:
+        return False
+    return overlap / min_height > 0.5
+
+
+def _compute_line_height(block: dict[str, Any]) -> float | None:
+    """Compute inter-line spacing from PDF block data.
+
+    Returns the average top-to-top distance between consecutive *visual*
+    lines (after merging same-baseline segments).  Returns ``None`` for
+    single-line blocks where line-height is not meaningful.
+    """
+    lines = block.get("lines", [])
+    if not lines:
+        return None
+
+    # Collect the y-top of each visual line group.
+    visual_tops: list[float] = [float(lines[0].get("bbox", (0, 0, 0, 0))[1])]
+    raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
+    prev_bbox = (float(raw_bb[0]), float(raw_bb[1]), float(raw_bb[2]), float(raw_bb[3]))
+
+    for line in lines[1:]:
+        raw = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        bbox = (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
+        if not _same_baseline(prev_bbox, bbox):
+            visual_tops.append(bbox[1])
+        prev_bbox = bbox
+
+    if len(visual_tops) < 2:
+        return None
+
+    spacings = [visual_tops[i + 1] - visual_tops[i] for i in range(len(visual_tops) - 1)]
+    avg = sum(spacings) / len(spacings)
+    return round(avg, 1)
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:
@@ -429,3 +560,98 @@ def _tag_headers_footers(
                     new_meta = replace(node.meta, layout=new_layout)
                     new_node = replace(node, meta=new_meta)
                     db.update_node(new_node)
+
+
+# ---------------------------------------------------------------------------
+# Shape extraction — vector graphics from PDF drawing commands
+# ---------------------------------------------------------------------------
+
+# Minimum dimension threshold: ignore shapes smaller than this in both axes.
+_MIN_SHAPE_DIM = 1.0
+
+# Horizontal/vertical rule detection: height (or width) below this is a rule.
+_RULE_THICKNESS_MAX = 5.0
+
+
+def _extract_shapes(
+    page: Any,
+    page_num: int,
+    block_index_start: int,
+) -> list[Shape]:
+    """Extract simple vector shapes (lines, rectangles, rules) from a PDF page.
+
+    Uses ``page.get_drawings()`` to find drawing commands and converts them
+    to ``Shape`` nodes.  Only simple shapes are extracted — complex paths
+    (Bézier curves) are skipped.
+
+    Classification:
+    - **hrule**: thin rectangle or line where ``width >> height`` and ``height < 5pt``
+    - **vrule**: thin rectangle or line where ``height >> width`` and ``width < 5pt``
+    - **rect**: all other rectangles
+    - **line**: all other lines
+    """
+    shapes: list[Shape] = []
+    block_idx = block_index_start
+
+    for drawing in page.get_drawings():
+        items = drawing.get("items", [])
+        if not items:
+            continue
+
+        # Only handle simple drawings: single-item lines or rectangles.
+        item_types = {it[0] for it in items}
+        if not item_types & {"l", "re"}:
+            continue  # skip curves, quads, etc.
+
+        rect = drawing.get("rect")
+        if rect is None:
+            continue
+
+        x0, y0, x1, y1 = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
+        w = x1 - x0
+        h = y1 - y0
+
+        # Skip invisible / degenerate shapes.
+        if w < _MIN_SHAPE_DIM and h < _MIN_SHAPE_DIM:
+            continue
+
+        # Determine fill color for LayoutHint.
+        fill = drawing.get("fill")
+        stroke = drawing.get("color")
+        color_tuple = fill if fill is not None else stroke
+        hex_color: str | None = None
+        if color_tuple is not None:
+            r, g, b = color_tuple[0], color_tuple[1], color_tuple[2]
+            hex_color = f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+        # Classify shape type.
+        if h < _RULE_THICKNESS_MAX and w > h * 3:
+            shape_type = "hrule"
+        elif w < _RULE_THICKNESS_MAX and h > w * 3:
+            shape_type = "vrule"
+        elif "re" in item_types:
+            shape_type = "rect"
+        else:
+            shape_type = "line"
+
+        layout = LayoutHint(
+            page=page_num,
+            x=x0,
+            y=y0,
+            width=w,
+            height=h,
+            reading_order=block_idx,
+            color=hex_color,
+        )
+        node = Shape(
+            meta=make_node_metadata(NodeType.SHAPE, layout=layout),
+            shape_type=shape_type,
+            x=x0,
+            y=y0,
+            width=w,
+            height=h,
+        )
+        shapes.append(node)
+        block_idx += 1
+
+    return shapes
