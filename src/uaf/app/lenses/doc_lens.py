@@ -624,6 +624,8 @@ def _font_style_parts(layout: LayoutHint) -> list[str]:
         parts.append(f"font-family: {safe_family}")
     if layout.font_size is not None:
         parts.append(f"font-size: {layout.font_size}pt")
+    if layout.line_height is not None:
+        parts.append(f"line-height: {layout.line_height}pt")
     if layout.font_weight:
         parts.append(f"font-weight: {escape(layout.font_weight)}")
     if layout.font_style:

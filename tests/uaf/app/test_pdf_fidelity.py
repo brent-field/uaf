@@ -538,11 +538,10 @@ class TestPdfRenderedLayout:
 
     def test_section_heading_renders_bold(self) -> None:
         """The '1 Introduction' heading must render with font-weight: bold."""
-        # The heading block renders as "1<br>Introduction" (PyMuPDF splits the
-        # number and title onto separate lines within the same block).
+        # After same-baseline merging, "1" and "Introduction" are on one line.
         heading_pattern = re.compile(
             r'class="layout-block[^"]*"\s+style="([^"]*)">'
-            r"1<br>Introduction",
+            r"1 Introduction",
         )
         m = heading_pattern.search(self.html)
         assert m is not None, "Introduction heading block not found in rendered HTML"
@@ -664,7 +663,13 @@ _PDF_PATH = "tests/fixtures/pdf/2511.14823v1.pdf"
 
 
 def _pdf_block_lines(substring: str) -> list[str]:
-    """Extract raw line texts from the PyMuPDF block containing *substring*."""
+    """Extract visual-line texts from the PyMuPDF block containing *substring*.
+
+    Same-baseline lines (lines sharing significant y-overlap) are merged
+    with a space, matching the visual line merging applied during import.
+    """
+    from uaf.app.formats.pdf_format import _merge_visual_lines
+
     doc = fitz.open(_PDF_PATH)
     try:
         for page in doc:
@@ -678,10 +683,7 @@ def _pdf_block_lines(substring: str) -> list[str]:
                     for ln in lines
                 )
                 if substring in full:
-                    return [
-                        "".join(s.get("text", "") for s in ln.get("spans", []))
-                        for ln in lines
-                    ]
+                    return _merge_visual_lines(block)
     finally:
         doc.close()
     msg = f"No PDF block containing {substring!r}"
@@ -712,6 +714,169 @@ def _html_lines_for_block(html: str, substring: str) -> list[str]:
             return [unescape(ln) for ln in lines]
     msg = f"No layout-block containing {substring!r}"
     raise ValueError(msg)
+
+
+class TestPdfSameBaselineMerging:
+    """Verify that PyMuPDF lines sharing the same baseline are merged.
+
+    PyMuPDF sometimes splits text that appears on the same visual line into
+    separate "line" objects — e.g. section numbers and titles ("1" and
+    "Introduction") or equation parts.  These same-baseline lines must be
+    merged so the layout view matches PDF viewers (Adobe, Mac Preview) which
+    render them on a single line.
+
+    This is a *general* issue, not specific to headings — it affects section
+    headings, sub-section headings, equations with equation numbers, and text
+    with sub/superscripts.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        from uaf.app.lenses.doc_lens import DocLens
+        from uaf.security.auth import LocalAuthProvider
+        from uaf.security.secure_graph_db import SecureGraphDB
+
+        db, root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.children = children
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        session = sdb.system_session()
+        lens = DocLens()
+        self.view = lens.render_layout(sdb, session, root_id)
+        self.html = self.view.content
+        self.page0 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 0
+        ]
+
+    def test_section_heading_single_line(self) -> None:
+        """'1 Introduction' must render on a single line, not '1<br>Introduction'."""
+        html_lines = _html_lines_for_block(self.html, "Introduction")
+        assert len(html_lines) == 1, (
+            f"Section heading should be 1 visual line, got {len(html_lines)}: "
+            f"{html_lines}"
+        )
+        assert "1" in html_lines[0]
+        assert "Introduction" in html_lines[0]
+
+    def test_section_heading_display_text_single_line(self) -> None:
+        """The stored display_text for '1 Introduction' must not contain '\\n'."""
+        heading = _find_block(self.page0, "Introduction")
+        layout = heading.meta.layout
+        assert layout is not None
+        # The display_text (or semantic text) should have "1" and "Introduction"
+        # on the same line — no newline between them.
+        text = layout.display_text if layout.display_text else heading.text
+        assert "1" in text
+        assert "Introduction" in text
+        # They must be on the same line.
+        for line in text.split("\n"):
+            if "Introduction" in line:
+                assert "1" in line, (
+                    f"'1' and 'Introduction' should be on the same line but are "
+                    f"split across lines: {text!r}"
+                )
+                break
+
+    def test_subsection_heading_single_line(self) -> None:
+        """Sub-section headings like '2.1 Limitations...' render on one line."""
+        # Page 1 has "2.1" and "Limitations of Static Nested Learning" as
+        # same-baseline lines in PyMuPDF — they must be merged.
+        all_children = self.children
+        page1 = [
+            c for c in all_children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 1
+        ]
+        heading = _find_block(page1, "Limitations of Static")
+        layout = heading.meta.layout
+        assert layout is not None
+        text = layout.display_text if layout.display_text else heading.text
+        for line in text.split("\n"):
+            if "Limitations" in line:
+                assert "2.1" in line, (
+                    f"'2.1' and 'Limitations' should be on the same line: {text!r}"
+                )
+                break
+
+
+class TestPdfParagraphSpacing:
+    """Verify that inter-paragraph spacing matches PDF viewers.
+
+    Without explicit CSS ``line-height``, the browser uses its default
+    (~1.2x font-size) which makes multi-line blocks taller than the PDF
+    intended.  For 10pt body text the PDF uses ~10.9pt line spacing, but
+    the browser default produces ~12pt — making each 8-line block ~10pt
+    taller, which eats into (or overlaps) the gap with the next block.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        from uaf.app.lenses.doc_lens import DocLens
+        from uaf.security.auth import LocalAuthProvider
+        from uaf.security.secure_graph_db import SecureGraphDB
+
+        db, root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.children = children
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        session = sdb.system_session()
+        lens = DocLens()
+        self.view = lens.render_layout(sdb, session, root_id)
+        self.html = self.view.content
+        self.page0 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 0
+        ]
+
+    def test_body_block_has_line_height_metadata(self) -> None:
+        """Multi-line body block must have line_height in LayoutHint."""
+        body = _find_block(self.page0, "Advancements in deep learning")
+        layout = body.meta.layout
+        assert layout is not None
+        assert layout.line_height is not None, (
+            "Multi-line body block should have line_height computed from PDF data"
+        )
+        # PDF body text has ~10.9pt line spacing (top-to-top).
+        assert layout.line_height == pytest.approx(10.9, abs=0.5)
+
+    def test_body_block_has_line_height_css(self) -> None:
+        """Body paragraphs must include line-height in rendered CSS."""
+        body_pattern = re.compile(
+            r'class="layout-block[^"]*"\s+style="([^"]*)">'
+            r"[^<]*Advancements in deep learning",
+        )
+        m = body_pattern.search(self.html)
+        assert m is not None, "Body text block not found in rendered HTML"
+        style = m.group(1)
+        assert "line-height" in style, (
+            f"Body block is missing line-height in CSS. Without explicit "
+            f"line-height, browser default (~1.2) produces blocks taller than "
+            f"the PDF, distorting inter-paragraph spacing. Style: {style!r}"
+        )
+        # Verify the value is close to 10.9pt.
+        lh_match = re.search(r"line-height:\s*([\d.]+)pt", style)
+        assert lh_match is not None, f"line-height has no pt value in: {style!r}"
+        lh = float(lh_match.group(1))
+        assert lh == pytest.approx(10.9, abs=0.5), (
+            f"line-height should be ~10.9pt (PDF line spacing), got {lh}pt"
+        )
+
+    def test_abstract_block_has_line_height(self) -> None:
+        """Abstract body (14 lines) must have line_height metadata."""
+        abstract = _find_block(self.page0, "Contemporary machine learning")
+        layout = abstract.meta.layout
+        assert layout is not None
+        assert layout.line_height is not None, (
+            "Abstract block should have line_height (it has 14 lines)"
+        )
+
+    def test_single_line_block_no_line_height(self) -> None:
+        """Single-line blocks (e.g. date) should not have line_height."""
+        date = _find_block(self.page0, "November 20, 2025")
+        layout = date.meta.layout
+        assert layout is not None
+        # Single-line blocks don't need line_height.
+        assert layout.line_height is None
 
 
 class TestPdfLineBreakFidelity:
@@ -798,7 +963,9 @@ class TestPdfLineBreakFidelity:
         )
 
     def test_all_page0_blocks_preserve_line_count(self) -> None:
-        """Every block on page 0 must have the same line count as the PDF."""
+        """Every block on page 0 must have the same visual line count as the PDF."""
+        from uaf.app.formats.pdf_format import _merge_visual_lines
+
         doc = fitz.open(_PDF_PATH)
         page = doc[0]
         raw: dict[str, Any] = page.get_text("dict")
@@ -821,9 +988,11 @@ class TestPdfLineBreakFidelity:
                 html_lines = _html_lines_for_block(self.html, ident)
             except ValueError:
                 continue  # block might not be on page 0 or wasn't rendered
-            if len(html_lines) != len(lines):
+            # Compare against visual lines (after same-baseline merging).
+            visual_lines = _merge_visual_lines(block)
+            if len(html_lines) != len(visual_lines):
                 mismatches.append(
-                    f"  {ident!r}: PDF={len(lines)}, HTML={len(html_lines)}"
+                    f"  {ident!r}: PDF={len(visual_lines)}, HTML={len(html_lines)}"
                 )
         doc.close()
 
