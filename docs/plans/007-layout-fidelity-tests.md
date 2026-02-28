@@ -181,9 +181,9 @@ class TestPdfFidelity2511:
         """Rotated sidebar width = text run length (≈352pt), not 26.7."""
 
     def test_sidebar_y_position(self):
-        """Sidebar y ≈ 220 (top of the text run in the PDF).
-        NOTE: whether this renders correctly after CSS rotation is a
-        separate rendering concern — this test checks extraction only."""
+        """Sidebar y ≈ 572 (bbox bottom — anchor for -90° CSS rotation).
+        The y is adjusted at extraction time so CSS rotate(-90deg) with
+        transform-origin: top left places the text in the correct span."""
 
     # -- Typography tests --
 
@@ -241,11 +241,12 @@ web-safe CSS), we don't extract character/word spacing. The `width` of
 each block is correct, but the text within it wraps differently because
 browser fonts have different metrics than the original PDF fonts.
 
-### Rotated text positioning
-The sidebar bbox top-left is `(10.9, 219.9)`. After CSS `rotate(-90deg)`
-with `transform-origin: top left`, the visual position shifts. The
-extraction is correct but the rendering may place the text in the wrong
-spot.
+### Rotated text positioning — FIXED
+The sidebar bbox top-left is `(10.9, 219.9)`. CSS `rotate(-90deg)` with
+`transform-origin: top left` swings the text upward from the anchor.
+The extractor now places the anchor at the bbox bottom (`y1 ≈ 572`) for
+-90° rotation so the text fills the correct vertical span (220–572 pt).
+Verified by `test_sidebar_rotation_renders_within_page`.
 
 ### Small-caps title
 PyMuPDF reports the title as `D YNAMIC  N ESTED...` with alternating

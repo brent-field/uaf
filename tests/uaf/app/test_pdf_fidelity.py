@@ -21,7 +21,7 @@ import fitz
 import pytest
 
 from tests.uaf.app._pdf_fidelity_helpers import _find_block, _import_pdf
-from uaf.core.nodes import Artifact, Paragraph
+from uaf.core.nodes import Artifact, Paragraph, Shape
 
 
 class TestPdfFidelity2511:
@@ -146,11 +146,18 @@ class TestPdfFidelity2511:
         assert layout.width > 100.0  # definitely not the narrow dimension
 
     def test_sidebar_y_position(self) -> None:
-        """Sidebar y ~ 220 (top of the text run in the PDF)."""
+        """Sidebar y ~ 572 (bbox bottom — anchor for -90° CSS rotation).
+
+        CSS ``rotate(-90deg)`` with ``transform-origin: top left`` swings
+        the text upward from the anchor.  The y position must be at the
+        *bottom* of the original bbox so the rotated text fills the correct
+        vertical span (approx 220-572 pt) on the page.
+        """
         sidebar = _find_block(self.page0, "arXiv:2511")
         layout = sidebar.meta.layout
         assert layout is not None
-        assert layout.y == pytest.approx(220.0, abs=5.0)
+        # y should be at bbox bottom (y0 + height ≈ 220 + 352 ≈ 572)
+        assert layout.y == pytest.approx(572.0, abs=5.0)
 
     # -- Typography tests --
 
@@ -293,8 +300,144 @@ class TestPdfFidelity2511:
     # -- Block count test --
 
     def test_page1_block_count(self) -> None:
-        """Page 1 has approximately 12 text blocks (+/-1)."""
-        assert len(self.page0) == pytest.approx(12, abs=1)
+        """Page 1 has approximately 14 nodes: 12 text blocks + 2 shapes."""
+        assert len(self.page0) == pytest.approx(14, abs=1)
+
+
+class TestPdfShapeExtraction:
+    """Tests for horizontal rule / shape extraction from 2511.14823v1.pdf.
+
+    The PDF has two thin filled rectangles (horizontal rules) on page 1:
+    - Rule above the title at y ≈ 79pt (from x=72 to x=540, height ≈ 2pt)
+    - Rule below the title at y ≈ 166pt (same dimensions)
+
+    These are drawing commands (vector graphics) that should be extracted as
+    Shape nodes so the Layout view matches Mac Preview / Adobe Acrobat.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        db, root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.db = db
+        self.root_id = root_id
+        self.children = children
+        self.shapes = [c for c in children if isinstance(c, Shape)]
+        self.page0_shapes = [
+            s for s in self.shapes
+            if s.meta.layout is not None and s.meta.layout.page == 0
+        ]
+
+    def test_shapes_extracted(self) -> None:
+        """PDF import must produce Shape nodes for the horizontal rules."""
+        assert len(self.page0_shapes) >= 2, (
+            f"Expected at least 2 Shape nodes on page 0 (horizontal rules above "
+            f"and below title), got {len(self.page0_shapes)}"
+        )
+
+    def test_shape_type_is_hrule(self) -> None:
+        """Both rules are horizontal (width >> height, height < 3pt)."""
+        for s in self.page0_shapes:
+            assert s.shape_type == "hrule", (
+                f"Expected shape_type='hrule', got {s.shape_type!r}"
+            )
+
+    def test_rule_above_title_position(self) -> None:
+        """Rule above the title at y ≈ 79, x ≈ 72, width ≈ 468."""
+        above = [
+            s for s in self.page0_shapes
+            if s.y < 100.0
+        ]
+        assert len(above) == 1, f"Expected 1 rule above title, got {len(above)}"
+        rule = above[0]
+        assert rule.x == pytest.approx(72.0, abs=2.0)
+        assert rule.y == pytest.approx(79.2, abs=2.0)
+        assert rule.width == pytest.approx(468.0, abs=5.0)
+        assert rule.height == pytest.approx(2.0, abs=1.0)
+
+    def test_rule_below_title_position(self) -> None:
+        """Rule below the title at y ≈ 166, x ≈ 72, width ≈ 468."""
+        below = [
+            s for s in self.page0_shapes
+            if 150.0 < s.y < 200.0
+        ]
+        assert len(below) == 1, f"Expected 1 rule below title, got {len(below)}"
+        rule = below[0]
+        assert rule.x == pytest.approx(72.0, abs=2.0)
+        assert rule.y == pytest.approx(166.2, abs=2.0)
+        assert rule.width == pytest.approx(468.0, abs=5.0)
+        assert rule.height == pytest.approx(2.0, abs=1.0)
+
+    def test_shapes_have_layout_hint(self) -> None:
+        """Shape nodes must have LayoutHint with page, x, y, width, height."""
+        for s in self.page0_shapes:
+            layout = s.meta.layout
+            assert layout is not None, "Shape node missing LayoutHint"
+            assert layout.page == 0
+            assert layout.x is not None
+            assert layout.y is not None
+            assert layout.width is not None
+            assert layout.height is not None
+
+    def test_shapes_have_fill_color(self) -> None:
+        """Shape LayoutHint records fill color (black = #000000)."""
+        for s in self.page0_shapes:
+            layout = s.meta.layout
+            assert layout is not None
+            assert layout.color is not None, "Shape should have color in LayoutHint"
+
+
+class TestPdfShapeRendering:
+    """Tests that Shape nodes render correctly in the Layout view HTML."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        from uaf.app.lenses.doc_lens import DocLens
+        from uaf.security.auth import LocalAuthProvider
+        from uaf.security.secure_graph_db import SecureGraphDB
+
+        db, root_id, _children = _import_pdf("2511.14823v1.pdf")
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        session = sdb.system_session()
+        lens = DocLens()
+        self.view = lens.render_layout(sdb, session, root_id)
+        self.html = self.view.content
+
+    def test_layout_html_contains_shape_elements(self) -> None:
+        """Layout view HTML must contain div elements for shapes."""
+        assert "layout-shape" in self.html, (
+            "No shape elements found in layout HTML — horizontal rules are missing"
+        )
+
+    def test_shape_elements_have_position(self) -> None:
+        """Shape divs must be absolutely positioned."""
+        shape_pattern = re.compile(
+            r'class="layout-shape[^"]*"\s+style="([^"]*)"',
+        )
+        matches = list(shape_pattern.finditer(self.html))
+        assert len(matches) >= 2, (
+            f"Expected at least 2 shape elements, found {len(matches)}"
+        )
+        for m in matches:
+            style = m.group(1)
+            assert "position: absolute" in style
+            assert "left:" in style
+            assert "top:" in style
+
+    def test_shape_above_title_precedes_title_in_layout(self) -> None:
+        """The horizontal rule above the title should appear in the HTML."""
+        # Rule above title is at y ≈ 79pt, title is at y ≈ 98pt
+        shape_pattern = re.compile(
+            r'class="layout-shape[^"]*"\s+style="([^"]*)"',
+        )
+        matches = list(shape_pattern.finditer(self.html))
+        above_title = [
+            m for m in matches
+            if "top: 79" in m.group(1) or "top: 80" in m.group(1)
+        ]
+        assert len(above_title) >= 1, (
+            "No shape element found near y=79pt (above-title rule)"
+        )
 
 
 class TestPdfRenderedLayout:
@@ -445,6 +588,49 @@ class TestPdfRenderedLayout:
         assert len(sizes) >= 3, (
             f"Expected at least 3 distinct font sizes in rendered HTML "
             f"(title, heading, body), but found {len(sizes)}: {sorted(sizes)}"
+        )
+
+    def test_sidebar_rotation_renders_within_page(self) -> None:
+        """Rotated arXiv sidebar must be visually positioned within the page.
+
+        The sidebar has rotation ≈ -90° and CSS ``transform: rotate(-90deg)``
+        with ``transform-origin: top left``.  After rotation the text extends
+        *upward* from the CSS ``top`` position by ``width`` points.
+
+        The visual top edge (``css_top - css_width``) must be >= 0 and the
+        visual bottom edge (``css_top``) must be <= 792 (page height).
+
+        Before the fix the anchor sat at y ~ 220, giving a visual top of
+        220 - 352 = -132 -- completely off the page.  After the fix the
+        anchor is at y ~ 572 (bbox bottom), so the visual range is 220-572.
+        """
+        sidebar_pattern = re.compile(
+            r'class="layout-block[^"]*"\s+style="([^"]*)">'
+            r"[^<]*arXiv:2511",
+        )
+        m = sidebar_pattern.search(self.html)
+        assert m is not None, "Sidebar block not found in rendered HTML"
+        style = m.group(1)
+
+        top_match = re.search(r"top:\s*([\d.]+)pt", style)
+        width_match = re.search(r"width:\s*([\d.]+)pt", style)
+        assert top_match is not None, f"Missing 'top' in style: {style!r}"
+        assert width_match is not None, f"Missing 'width' in style: {style!r}"
+
+        css_top = float(top_match.group(1))
+        css_width = float(width_match.group(1))
+
+        # For -90° rotation with transform-origin: top left, the text
+        # extends upward: visual top = css_top - css_width.
+        visual_top = css_top - css_width
+        assert visual_top >= 0.0, (
+            f"Rotated sidebar extends above the page! "
+            f"CSS top={css_top}pt, width={css_width}pt → "
+            f"visual top={visual_top}pt (should be >= 0)"
+        )
+        assert css_top <= 792.0, (
+            f"Rotated sidebar anchor below the page! "
+            f"CSS top={css_top}pt (page height=792pt)"
         )
 
     def test_no_raw_double_quotes_in_style_attribute(self) -> None:

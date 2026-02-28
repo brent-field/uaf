@@ -17,6 +17,7 @@ from uaf.core.nodes import (
     LayoutHint,
     NodeType,
     Paragraph,
+    Shape,
     make_node_metadata,
 )
 
@@ -96,8 +97,19 @@ class PdfHandler:
                 # For ≈90° rotated blocks the bbox width is the line
                 # thickness and height is the text run length.  CSS needs
                 # the run length as width (text is laid out then rotated).
+                #
+                # The CSS anchor point (top/left + transform-origin: top left)
+                # also needs adjustment so the rotated text fills the correct
+                # region of the page:
+                #   -90° (bottom→top): rotate() swings the text *upward* from
+                #       the anchor, so place it at the bbox bottom (y1).
+                #   +90° (top→bottom): rotate() swings the text *downward*,
+                #       so the bbox top (y0) is already correct.
+                layout_y = y0
                 if rotation is not None and abs(abs(rotation) - 90.0) < 5.0:
                     layout_w = y1 - y0  # text run length
+                    if rotation < 0:
+                        layout_y = y1  # anchor at bbox bottom
                 else:
                     layout_w = x1 - x0
 
@@ -112,7 +124,7 @@ class PdfHandler:
                 layout = LayoutHint(
                     page=page_num,
                     x=x0,
-                    y=y0,
+                    y=layout_y,
                     width=layout_w,
                     height=y1 - y0,
                     font_family=font.get("family"),
@@ -151,6 +163,13 @@ class PdfHandler:
 
                 normalised = _PAGE_NUM_RE.sub("N", text.strip())
                 block_records.append((nid, page_num, y0, normalised, page_height))
+                block_index += 1
+
+        # Extract vector shapes (lines, rectangles) from each page.
+        for page_num, page in enumerate(doc):
+            for shape_node in _extract_shapes(page, page_num, block_index):
+                nid = db.create_node(shape_node)
+                db.create_edge(_contains(art_id, nid))
                 block_index += 1
 
         doc.close()
@@ -447,3 +466,98 @@ def _tag_headers_footers(
                     new_meta = replace(node.meta, layout=new_layout)
                     new_node = replace(node, meta=new_meta)
                     db.update_node(new_node)
+
+
+# ---------------------------------------------------------------------------
+# Shape extraction — vector graphics from PDF drawing commands
+# ---------------------------------------------------------------------------
+
+# Minimum dimension threshold: ignore shapes smaller than this in both axes.
+_MIN_SHAPE_DIM = 1.0
+
+# Horizontal/vertical rule detection: height (or width) below this is a rule.
+_RULE_THICKNESS_MAX = 5.0
+
+
+def _extract_shapes(
+    page: Any,
+    page_num: int,
+    block_index_start: int,
+) -> list[Shape]:
+    """Extract simple vector shapes (lines, rectangles, rules) from a PDF page.
+
+    Uses ``page.get_drawings()`` to find drawing commands and converts them
+    to ``Shape`` nodes.  Only simple shapes are extracted — complex paths
+    (Bézier curves) are skipped.
+
+    Classification:
+    - **hrule**: thin rectangle or line where ``width >> height`` and ``height < 5pt``
+    - **vrule**: thin rectangle or line where ``height >> width`` and ``width < 5pt``
+    - **rect**: all other rectangles
+    - **line**: all other lines
+    """
+    shapes: list[Shape] = []
+    block_idx = block_index_start
+
+    for drawing in page.get_drawings():
+        items = drawing.get("items", [])
+        if not items:
+            continue
+
+        # Only handle simple drawings: single-item lines or rectangles.
+        item_types = {it[0] for it in items}
+        if not item_types & {"l", "re"}:
+            continue  # skip curves, quads, etc.
+
+        rect = drawing.get("rect")
+        if rect is None:
+            continue
+
+        x0, y0, x1, y1 = float(rect[0]), float(rect[1]), float(rect[2]), float(rect[3])
+        w = x1 - x0
+        h = y1 - y0
+
+        # Skip invisible / degenerate shapes.
+        if w < _MIN_SHAPE_DIM and h < _MIN_SHAPE_DIM:
+            continue
+
+        # Determine fill color for LayoutHint.
+        fill = drawing.get("fill")
+        stroke = drawing.get("color")
+        color_tuple = fill if fill is not None else stroke
+        hex_color: str | None = None
+        if color_tuple is not None:
+            r, g, b = color_tuple[0], color_tuple[1], color_tuple[2]
+            hex_color = f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+        # Classify shape type.
+        if h < _RULE_THICKNESS_MAX and w > h * 3:
+            shape_type = "hrule"
+        elif w < _RULE_THICKNESS_MAX and h > w * 3:
+            shape_type = "vrule"
+        elif "re" in item_types:
+            shape_type = "rect"
+        else:
+            shape_type = "line"
+
+        layout = LayoutHint(
+            page=page_num,
+            x=x0,
+            y=y0,
+            width=w,
+            height=h,
+            reading_order=block_idx,
+            color=hex_color,
+        )
+        node = Shape(
+            meta=make_node_metadata(NodeType.SHAPE, layout=layout),
+            shape_type=shape_type,
+            x=x0,
+            y=y0,
+            width=w,
+            height=h,
+        )
+        shapes.append(node)
+        block_idx += 1
+
+    return shapes

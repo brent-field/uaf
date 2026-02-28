@@ -26,6 +26,7 @@ from uaf.core.nodes import (
     NodeType,
     Paragraph,
     RawNode,
+    Shape,
     TextBlock,
     make_node_metadata,
 )
@@ -43,6 +44,7 @@ _SUPPORTED = frozenset({
     NodeType.TEXT_BLOCK,
     NodeType.CODE_BLOCK,
     NodeType.IMAGE,
+    NodeType.SHAPE,
 })
 
 
@@ -212,6 +214,10 @@ class DocLens:
 
     def _render_layout_node(self, node: object) -> str:
         """Render a node as an absolutely-positioned div."""
+        # Shape nodes have no text — handle separately.
+        if isinstance(node, Shape):
+            return _render_layout_shape(node)
+
         layout = _get_layout(node)
         text = _get_text(node)
         nid = _get_node_id(node)
@@ -543,6 +549,8 @@ def _get_node_type_name(node: object) -> str:
             return "text_block"
         case Image():
             return "image"
+        case Shape():
+            return "shape"
         case _:
             return "unknown"
 
@@ -560,10 +568,49 @@ def _get_node_id(node: object) -> object | None:
             return meta.id
         case Image(meta=meta):
             return meta.id
+        case Shape(meta=meta):
+            return meta.id
         case RawNode(meta=meta):
             return meta.id
         case _:
             return None
+
+
+def _render_layout_shape(node: Shape) -> str:
+    """Render a Shape node as an absolutely-positioned div."""
+    layout = node.meta.layout
+    nid = node.meta.id
+
+    style_parts = ["position: absolute", "pointer-events: none"]
+    if layout is not None:
+        if layout.x is not None:
+            style_parts.append(f"left: {layout.x}pt")
+        if layout.y is not None:
+            style_parts.append(f"top: {layout.y}pt")
+        if layout.width is not None:
+            style_parts.append(f"width: {layout.width}pt")
+        if layout.height is not None:
+            style_parts.append(f"height: {layout.height}pt")
+        if layout.reading_order is not None:
+            style_parts.append(f"z-index: {1000 - layout.reading_order}")
+
+    # Use fill color from layout, default to black.
+    color = (layout.color if layout is not None and layout.color else "#000000")
+    style_parts.append(f"background: {color}")
+
+    css_class = f"layout-shape layout-shape-{escape(node.shape_type)}"
+
+    data_parts = [
+        f'data-node-id="{nid}"',
+        'data-node-type="shape"',
+        f'data-shape-type="{escape(node.shape_type)}"',
+    ]
+    if layout is not None and layout.page is not None:
+        data_parts.append(f'data-page="{layout.page}"')
+    data_attr_str = " ".join(data_parts)
+
+    style = "; ".join(style_parts)
+    return f'  <div {data_attr_str} class="{css_class}" style="{style}"></div>'
 
 
 def _font_style_parts(layout: LayoutHint) -> list[str]:
