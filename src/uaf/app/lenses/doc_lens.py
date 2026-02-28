@@ -219,7 +219,7 @@ class DocLens:
         if layout is None or text is None or nid is None:
             return ""
 
-        style_parts = ["position: absolute"]
+        style_parts = ["position: absolute", "white-space: nowrap"]
         if layout.x is not None:
             style_parts.append(f"left: {layout.x}pt")
         if layout.y is not None:
@@ -257,9 +257,11 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # Preserve line breaks from PDF extraction, with per-line bold
-        # when the first line has a different weight from the block.
-        escaped = _format_layout_text(text, layout)
+        # For layout view, prefer the original PDF line-broken text
+        # (display_text) so that line breaks match the source document,
+        # including end-of-line hyphenation.
+        render_text = layout.display_text if layout.display_text else text
+        escaped = _format_layout_text(render_text, layout)
         return (
             f'  <div {data_attr_str} class="{css_class}"'
             f' style="{style}">{escaped}</div>'

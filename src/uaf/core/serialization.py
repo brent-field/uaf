@@ -91,6 +91,8 @@ def _layout_to_dict(layout: LayoutHint) -> dict[str, Any]:
         d["first_line_weight"] = layout.first_line_weight
     if layout.header_footer:
         d["header_footer"] = True
+    if layout.display_text is not None:
+        d["display_text"] = layout.display_text
     return d
 
 
@@ -110,6 +112,7 @@ def _layout_from_dict(d: dict[str, Any]) -> LayoutHint:
         rotation=d.get("rotation"),
         first_line_weight=d.get("first_line_weight"),
         header_footer=bool(d.get("header_footer", False)),
+        display_text=d.get("display_text"),
     )
 
 

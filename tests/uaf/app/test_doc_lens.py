@@ -581,6 +581,41 @@ class TestDocLensLayoutRender:
         block_style = block_match.group(1)
         assert "height:" not in block_style
 
+    def test_layout_node_has_nowrap(self) -> None:
+        """Layout blocks must use white-space: nowrap to prevent CSS re-wrapping.
+
+        Line breaks come from <br> tags that match the PDF's original line
+        positions.  The browser must not add its own wraps on top of those.
+        """
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Nowrap Test",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=100.0,
+            width=468.0, height=14.0, reading_order=0,
+        )
+        p = Paragraph(
+            meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
+            text="Should not be re-wrapped by the browser",
+        )
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        import re
+
+        block_match = re.search(
+            r'class="layout-block"[^>]*style="([^"]*)"', view.content,
+        )
+        assert block_match is not None
+        block_style = block_match.group(1)
+        assert "white-space: nowrap" in block_style
+
     def test_layout_node_has_z_index(self) -> None:
         """Layout blocks include z-index derived from reading_order."""
         sdb, session, lens = _setup()

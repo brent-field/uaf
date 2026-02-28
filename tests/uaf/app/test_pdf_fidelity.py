@@ -7,12 +7,17 @@ The TestPdfRenderedLayout class tests the *rendered HTML* output of
 DocLens.render_layout() — verifying that CSS font properties survive into
 valid HTML attributes and that the layout view faithfully reproduces the
 original PDF's visual appearance.
+
+The TestPdfLineBreakFidelity class tests that the layout view preserves the
+exact line breaks from the original PDF, including end-of-line hyphenation.
 """
 
 from __future__ import annotations
 
 import re
+from typing import Any
 
+import fitz
 import pytest
 
 from tests.uaf.app._pdf_fidelity_helpers import _find_block, _import_pdf
@@ -463,3 +468,180 @@ class TestPdfRenderedLayout:
                 assert len(fam_value) > 0, (
                     f"font-family value is empty/truncated: {hit!r}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Helpers for line-break fidelity tests
+# ---------------------------------------------------------------------------
+
+_PDF_PATH = "tests/fixtures/pdf/2511.14823v1.pdf"
+
+
+def _pdf_block_lines(substring: str) -> list[str]:
+    """Extract raw line texts from the PyMuPDF block containing *substring*."""
+    doc = fitz.open(_PDF_PATH)
+    try:
+        for page in doc:
+            raw: dict[str, Any] = page.get_text("dict")
+            for block in raw.get("blocks", []):
+                if block.get("type", 0) != 0:
+                    continue
+                lines = block.get("lines", [])
+                full = "".join(
+                    "".join(s.get("text", "") for s in ln.get("spans", []))
+                    for ln in lines
+                )
+                if substring in full:
+                    return [
+                        "".join(s.get("text", "") for s in ln.get("spans", []))
+                        for ln in lines
+                    ]
+    finally:
+        doc.close()
+    msg = f"No PDF block containing {substring!r}"
+    raise ValueError(msg)
+
+
+def _html_lines_for_block(html: str, substring: str) -> list[str]:
+    """Extract the text lines from the rendered layout-block containing *substring*.
+
+    The layout renderer uses ``<br>`` for line breaks, so we split on that.
+    HTML entities are decoded for comparison.
+    """
+    # Find the div whose inner HTML contains the substring.
+    pattern = re.compile(
+        r'class="layout-block[^"]*"[^>]*>(.+?)</div>',
+        re.DOTALL,
+    )
+    for m in pattern.finditer(html):
+        inner = m.group(1)
+        # Strip any <span> wrappers (first-line bold) for text extraction.
+        text = re.sub(r"<span[^>]*>", "", inner)
+        text = text.replace("</span>", "")
+        if substring in text:
+            lines = text.split("<br>")
+            # Decode HTML entities for comparison.
+            from html import unescape
+
+            return [unescape(ln) for ln in lines]
+    msg = f"No layout-block containing {substring!r}"
+    raise ValueError(msg)
+
+
+class TestPdfLineBreakFidelity:
+    """Verify that the layout view preserves the PDF's exact line breaks.
+
+    A PDF viewer (Mac Preview, Adobe Acrobat) displays text with the exact
+    line breaks recorded in the PDF.  Our layout view should reproduce these
+    same breaks — including end-of-line hyphenation — rather than allowing
+    CSS to re-wrap the text at different positions.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        from uaf.app.lenses.doc_lens import DocLens
+        from uaf.security.auth import LocalAuthProvider
+        from uaf.security.secure_graph_db import SecureGraphDB
+
+        db, root_id, _children = _import_pdf("2511.14823v1.pdf")
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        session = sdb.system_session()
+        lens = DocLens()
+        self.view = lens.render_layout(sdb, session, root_id)
+        self.html = self.view.content
+
+    def test_abstract_line_count_matches_pdf(self) -> None:
+        """The abstract must have the same number of lines as the PDF (14)."""
+        pdf_lines = _pdf_block_lines("Contemporary machine learning")
+        html_lines = _html_lines_for_block(
+            self.html, "Contemporary machine learning",
+        )
+        assert len(html_lines) == len(pdf_lines), (
+            f"Line count mismatch: PDF has {len(pdf_lines)} lines, "
+            f"layout HTML has {len(html_lines)} lines.\n"
+            f"PDF line 0 ends: ...{pdf_lines[0][-30:]!r}\n"
+            f"HTML line 0 ends: ...{html_lines[0][-30:]!r}"
+        )
+
+    def test_abstract_preserves_hyphenation(self) -> None:
+        """The abstract must show 'capa-' at end of line (not 'capabilities').
+
+        In the PDF, 'capabilities' is hyphenated across lines 0-1 as
+        'capa-' / 'bilities'.  The layout view must reproduce this so
+        the text wraps at the same point as Mac Preview / Adobe Acrobat.
+        """
+        html_lines = _html_lines_for_block(
+            self.html, "Contemporary machine learning",
+        )
+        # Line 0 should end with "capa-" (the hyphen is part of the display).
+        assert html_lines[0].rstrip().endswith("capa-"), (
+            f"First line should end with 'capa-' but ends with: "
+            f"...{html_lines[0][-30:]!r}"
+        )
+        # Line 1 should start with "bilities".
+        assert html_lines[1].lstrip().startswith("bilities"), (
+            f"Second line should start with 'bilities' but starts with: "
+            f"{html_lines[1][:30]!r}"
+        )
+
+    def test_abstract_line_endings_match_pdf(self) -> None:
+        """Each line in the abstract should end at the same word as the PDF."""
+        pdf_lines = _pdf_block_lines("Contemporary machine learning")
+        html_lines = _html_lines_for_block(
+            self.html, "Contemporary machine learning",
+        )
+        # Compare line-by-line (as many as we have).
+        for i in range(min(len(pdf_lines), len(html_lines))):
+            pdf_end = pdf_lines[i].rstrip()
+            html_end = html_lines[i].rstrip()
+            assert pdf_end == html_end, (
+                f"Line {i} differs:\n"
+                f"  PDF:  ...{pdf_end[-40:]!r}\n"
+                f"  HTML: ...{html_end[-40:]!r}"
+            )
+
+    def test_body_text_line_count_matches_pdf(self) -> None:
+        """Body text block line count must match the PDF."""
+        pdf_lines = _pdf_block_lines("Advancements in deep learning")
+        html_lines = _html_lines_for_block(
+            self.html, "Advancements in deep learning",
+        )
+        assert len(html_lines) == len(pdf_lines), (
+            f"Body block line count: PDF={len(pdf_lines)}, HTML={len(html_lines)}"
+        )
+
+    def test_all_page0_blocks_preserve_line_count(self) -> None:
+        """Every block on page 0 must have the same line count as the PDF."""
+        doc = fitz.open(_PDF_PATH)
+        page = doc[0]
+        raw: dict[str, Any] = page.get_text("dict")
+        mismatches: list[str] = []
+
+        for block in raw.get("blocks", []):
+            if block.get("type", 0) != 0:
+                continue
+            lines = block.get("lines", [])
+            if not lines:
+                continue
+            # Use first 20 chars as identifier.
+            first_text = "".join(
+                s.get("text", "") for s in lines[0].get("spans", [])
+            )
+            ident = first_text[:20].strip()
+            if not ident:
+                continue
+            try:
+                html_lines = _html_lines_for_block(self.html, ident)
+            except ValueError:
+                continue  # block might not be on page 0 or wasn't rendered
+            if len(html_lines) != len(lines):
+                mismatches.append(
+                    f"  {ident!r}: PDF={len(lines)}, HTML={len(html_lines)}"
+                )
+        doc.close()
+
+        assert not mismatches, (
+            f"{len(mismatches)} block(s) have wrong line count:\n"
+            + "\n".join(mismatches)
+        )

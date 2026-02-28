@@ -76,6 +76,12 @@ class PdfHandler:
                 if not text:
                     continue
 
+                # Raw text preserves original PDF line breaks and hyphens
+                # for layout rendering.  Only store when it differs from
+                # the semantic (dehyphenated) text to save space.
+                raw_text = _extract_raw_block_text(block)
+                display_text: str | None = raw_text if raw_text != text else None
+
                 font = _extract_dominant_font(block)
                 first_line_font = _extract_first_line_font(block)
                 rotation = _extract_rotation(block)
@@ -117,6 +123,7 @@ class PdfHandler:
                     reading_order=block_index,
                     rotation=rotation,
                     first_line_weight=first_lw,
+                    display_text=display_text,
                 )
 
                 # Detect heading heuristic: large font or bold
@@ -195,18 +202,29 @@ def _extract_block_text(block: dict[str, Any]) -> str:
     the fragments rejoined so the stored text is the semantic form
     (e.g. "capability") rather than the display form ("capa-" + "bility").
     """
+    raw = _extract_raw_block_text(block)
+    # Dehyphenate: "capa-\nbilities" → "capabilities".
+    text = _HYPHEN_RE.sub(r"\1\2", raw)
+    # Collapse runs of multiple spaces (but not newlines).
+    text = re.sub(r"  +", " ", text)
+    return text.strip()
+
+
+def _extract_raw_block_text(block: dict[str, Any]) -> str:
+    """Aggregate text from all lines/spans, preserving original line breaks.
+
+    Unlike :func:`_extract_block_text`, this does **not** dehyphenate or
+    collapse spaces.  The result is the display form of the text — exactly
+    as it appears in the PDF — suitable for layout rendering where line
+    breaks must match the original document.
+    """
     line_texts: list[str] = []
     for line in block.get("lines", []):
         parts: list[str] = []
         for span in line.get("spans", []):
             parts.append(span.get("text", ""))
         line_texts.append("".join(parts))
-    text = "\n".join(line_texts)
-    # Dehyphenate: "capa-\nbilities" → "capabilities".
-    text = _HYPHEN_RE.sub(r"\1\2", text)
-    # Collapse runs of multiple spaces (but not newlines).
-    text = re.sub(r"  +", " ", text)
-    return text.strip()
+    return "\n".join(line_texts).strip()
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:
