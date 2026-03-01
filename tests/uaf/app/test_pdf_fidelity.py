@@ -632,6 +632,38 @@ class TestPdfRenderedLayout:
             f"CSS top={css_top}pt (page height=792pt)"
         )
 
+    def test_layout_blocks_allow_text_wrapping(self) -> None:
+        """Layout blocks must not use white-space: nowrap.
+
+        PDF viewers render text within bounding boxes, wrapping at box
+        boundaries when lines are too wide.  Our layout view uses <br> tags
+        to reproduce the PDF's exact line breaks — these force line breaks
+        regardless of the CSS white-space value.
+
+        Setting ``white-space: nowrap`` prevents the browser from wrapping
+        text at box boundaries when web font metrics differ from the PDF's
+        embedded fonts (which they always will — we use fallback stacks
+        like 'Times New Roman' instead of NimbusRomNo9L).  This causes
+        text to overflow its positioned box, breaking the layout.
+
+        This is a GENERAL issue affecting all layout blocks, not just
+        headings.  Headings are more visible because their larger font
+        sizes amplify the metric mismatch.  For example, the title
+        "DYNAMIC NESTED HIERARCHIES..." spans 3 lines in a 467pt box;
+        a 1% font-width difference would overflow by ~5pt per line.
+        """
+        blocks = self._extract_block_styles()
+        nowrap_blocks: list[int] = []
+        for i, props in enumerate(blocks):
+            if props.get("white-space") == "nowrap":
+                nowrap_blocks.append(i)
+        assert not nowrap_blocks, (
+            f"{len(nowrap_blocks)} of {len(blocks)} layout blocks use "
+            f"'white-space: nowrap', which prevents text from wrapping "
+            f"at box boundaries.  Remove nowrap — <br> tags still create "
+            f"line breaks at PDF positions."
+        )
+
     def test_no_raw_double_quotes_in_style_attribute(self) -> None:
         """Style attribute values must not contain unescaped double-quotes.
 
@@ -877,6 +909,68 @@ class TestPdfParagraphSpacing:
         assert layout is not None
         # Single-line blocks don't need line_height.
         assert layout.line_height is None
+
+
+class TestPdfParagraphSpacingCss:
+    """Verify that CSS does not distort inter-paragraph spacing.
+
+    Layout blocks are absolutely positioned at exact PDF coordinates.
+    Any CSS padding or margin on ``.layout-block`` expands the rendered
+    box beyond the PDF bounding box, systematically shrinking the visual
+    gap between consecutive blocks.
+
+    For the reference PDF, the median inter-paragraph gap is ~6.4pt
+    (~8.5px at 96 dpi).  Adding 1px top + 1px bottom padding reduces
+    this gap by ~24%, making paragraphs appear more tightly packed than
+    in Mac Preview or Adobe Acrobat.
+    """
+
+    def test_layout_block_css_no_padding(self) -> None:
+        """The .layout-block CSS rule must not add padding."""
+        from pathlib import Path
+
+        css_path = (
+            Path(__file__).resolve().parent.parent.parent.parent
+            / "src" / "uaf" / "app" / "static" / "style.css"
+        )
+        css_text = css_path.read_text()
+        # Extract the .layout-block { ... } rule.
+        match = re.search(r"\.layout-block\s*\{([^}]*)\}", css_text)
+        assert match is not None, ".layout-block rule not found in style.css"
+        rule_body = match.group(1)
+        assert "padding" not in rule_body, (
+            f".layout-block CSS adds padding which distorts inter-block "
+            f"spacing for absolutely-positioned layout blocks.  Blocks are "
+            f"positioned at exact PDF coordinates — any padding makes them "
+            f"taller than the PDF bbox and shrinks the gap to the next block. "
+            f"Rule: .layout-block {{{rule_body}}}"
+        )
+
+    def test_layout_block_css_no_default_line_height(self) -> None:
+        """The .layout-block CSS must not set a fallback line-height.
+
+        Individual blocks already have inline ``line-height`` CSS from the
+        PDF's actual inter-line spacing.  A class-level fallback (e.g.
+        ``line-height: 1.2``) would apply to single-line blocks and to
+        any block where the inline value is missing, making them taller
+        than the PDF intended and distorting spacing.
+        """
+        from pathlib import Path
+
+        css_path = (
+            Path(__file__).resolve().parent.parent.parent.parent
+            / "src" / "uaf" / "app" / "static" / "style.css"
+        )
+        css_text = css_path.read_text()
+        match = re.search(r"\.layout-block\s*\{([^}]*)\}", css_text)
+        assert match is not None, ".layout-block rule not found in style.css"
+        rule_body = match.group(1)
+        assert "line-height" not in rule_body, (
+            f".layout-block CSS sets a default line-height which can "
+            f"override or conflict with inline line-height values from "
+            f"PDF import.  Remove it — blocks get their line-height from "
+            f"inline styles. Rule: .layout-block {{{rule_body}}}"
+        )
 
 
 class TestPdfLineBreakFidelity:

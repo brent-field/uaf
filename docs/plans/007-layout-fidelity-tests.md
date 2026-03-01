@@ -235,11 +235,24 @@ class TestPdfFidelity2511:
 
 ## Known Issues (context for xfail annotations)
 
-### Wrapping fidelity
-Line breaks won't match the PDF exactly. Even with font mapping (PDF →
-web-safe CSS), we don't extract character/word spacing. The `width` of
-each block is correct, but the text within it wraps differently because
-browser fonts have different metrics than the original PDF fonts.
+### Wrapping fidelity — FIXED
+Layout blocks previously used `white-space: nowrap` which prevented text
+from wrapping at box boundaries entirely.  This caused overflow when web
+font metrics differed from PDF embedded fonts.  Fixed by removing `nowrap`
+and using `overflow-wrap: break-word` instead.  The `<br>` tags from
+`display_text` still enforce PDF line breaks regardless of white-space.
+
+This is a **general** issue affecting all layout blocks, not just headings.
+Headings are more visible because larger font sizes amplify metric
+differences between PDF fonts and web-safe CSS fallback stacks.
+
+### Paragraph spacing CSS — FIXED
+The `.layout-block` CSS class previously had `padding: 1px 0` and
+`line-height: 1.2`, which expanded every absolutely-positioned block
+beyond its PDF bounding box.  For the reference PDF's 6.4pt median
+inter-paragraph gap, the 2px padding reduced visible gaps by ~24%.
+Fixed by removing both properties from the CSS class — individual blocks
+get their line-height from inline styles set during PDF import.
 
 ### Rotated text positioning — FIXED
 The sidebar bbox top-left is `(10.9, 219.9)`. CSS `rotate(-90deg)` with
@@ -259,7 +272,7 @@ literally. Reconstruction is not yet implemented.
 2. Copy `2511.14823v1.pdf` from the source path to `tests/fixtures/pdf/`
 3. Create `tests/uaf/app/test_pdf_fidelity.py` with helper functions
 4. Implement all test cases above
-5. Run `make check` — all 449 existing tests must still pass
+5. Run `make check` — all existing tests must still pass
 6. For new tests that fail: add `@pytest.mark.xfail(reason="...")` and
    a comment showing the actual value
 7. Commit the test file, fixture, and any fixes

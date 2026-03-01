@@ -225,7 +225,7 @@ class DocLens:
         if layout is None or text is None or nid is None:
             return ""
 
-        style_parts = ["position: absolute", "white-space: nowrap"]
+        style_parts = ["position: absolute", "overflow-wrap: break-word"]
         if layout.x is not None:
             style_parts.append(f"left: {layout.x}pt")
         if layout.y is not None:

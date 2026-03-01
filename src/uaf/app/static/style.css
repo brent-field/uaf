@@ -239,8 +239,6 @@ input:focus, select:focus {
     overflow: hidden;
 }
 .layout-block {
-    line-height: 1.2;
-    padding: 1px 0;
 }
 .layout-header-footer {
     color: var(--text-muted);
