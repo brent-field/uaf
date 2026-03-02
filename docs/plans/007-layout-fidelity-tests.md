@@ -235,16 +235,18 @@ class TestPdfFidelity2511:
 
 ## Known Issues (context for xfail annotations)
 
-### Wrapping fidelity — FIXED
-Layout blocks previously used `white-space: nowrap` which prevented text
-from wrapping at box boundaries entirely.  This caused overflow when web
-font metrics differed from PDF embedded fonts.  Fixed by removing `nowrap`
-and using `overflow-wrap: break-word` instead.  The `<br>` tags from
-`display_text` still enforce PDF line breaks regardless of white-space.
+### Wrapping fidelity — nowrap is intentional
+Layout blocks use `white-space: nowrap` to prevent double-wrapping.  PDF
+line breaks are preserved via `<br>` tags, which force breaks regardless
+of CSS white-space.  Without `nowrap`, the browser **also** wraps at box
+boundaries when web font metrics differ from PDF embedded fonts — this
+produces double line breaks (orphan words on their own lines).
 
-This is a **general** issue affecting all layout blocks, not just headings.
-Headings are more visible because larger font sizes amplify metric
-differences between PDF fonts and web-safe CSS fallback stacks.
+The `nowrap` + page-level `overflow: hidden` approach is correct: slight
+clipping on overflow is far less visible than systematic double-wrapping.
+The minor metric differences between PDF fonts (e.g. NimbusRomNo9L) and
+web-safe CSS stacks (e.g. Times New Roman) mean some overflow is
+inevitable, but it is clipped cleanly by the page container.
 
 ### Paragraph spacing CSS — FIXED
 The `.layout-block` CSS class previously had `padding: 1px 0` and

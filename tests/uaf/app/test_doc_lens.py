@@ -20,6 +20,7 @@ from uaf.core.nodes import (
     Heading,
     Image,
     LayoutHint,
+    MathBlock,
     NodeType,
     Paragraph,
     RawNode,
@@ -64,6 +65,7 @@ class TestDocLensProtocol:
         assert NodeType.PARAGRAPH in types
         assert NodeType.HEADING in types
         assert NodeType.CODE_BLOCK in types
+        assert NodeType.MATH_BLOCK in types
         assert NodeType.IMAGE in types
 
 
@@ -182,6 +184,43 @@ class TestDocLensRender:
         view = lens.render(sdb, session, art_id)
         assert "raw-node" in view.content
         assert "widget" in view.content
+
+    def test_render_with_math_block(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Doc")
+        art_id = sdb.create_node(session, art)
+
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK),
+            source="E = mc^2",
+            equation_number="(3)",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render(sdb, session, art_id)
+        assert "math-block" in view.content
+        assert "<code>" in view.content
+        assert "E = mc^2" in view.content
+        assert "eq-number" in view.content
+        assert "(3)" in view.content
+
+    def test_render_with_math_block_no_equation_number(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Doc")
+        art_id = sdb.create_node(session, art)
+
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK),
+            source="x + y",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render(sdb, session, art_id)
+        assert "math-block" in view.content
+        assert "x + y" in view.content
+        assert "eq-number" not in view.content
 
     def test_render_html_escaping(self) -> None:
         sdb, session, lens = _setup()
@@ -581,13 +620,15 @@ class TestDocLensLayoutRender:
         block_style = block_match.group(1)
         assert "height:" not in block_style
 
-    def test_layout_node_allows_wrapping(self) -> None:
-        """Layout blocks must allow text wrapping at box boundaries.
+    def test_layout_node_has_nowrap(self) -> None:
+        """Layout blocks use white-space: nowrap to prevent double-wrapping.
 
-        Line breaks come from <br> tags that match the PDF's original line
-        positions.  The browser should also be allowed to wrap text that
-        overflows the box when web font metrics differ from PDF fonts.
-        ``overflow-wrap: break-word`` is used as a safety net.
+        PDF line breaks are preserved via <br> tags.  Without nowrap, the
+        browser also wraps at box boundaries when web font metrics differ
+        from the PDF's embedded fonts — producing double line breaks
+        (orphan words on their own lines).  nowrap + overflow: hidden on
+        the page container clips any minor overflow, which is far less
+        visible than systematic double-wrapping.
         """
         sdb, session, lens = _setup()
         art_layout = LayoutHint(width=612.0, height=792.0)
@@ -603,7 +644,7 @@ class TestDocLensLayoutRender:
         )
         p = Paragraph(
             meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
-            text="Text that should wrap gracefully at box boundaries",
+            text="Text that should not double-wrap",
         )
         p_id = sdb.create_node(session, p)
         sdb.create_edge(session, _contains(art_id, p_id))
@@ -616,8 +657,7 @@ class TestDocLensLayoutRender:
         )
         assert block_match is not None
         block_style = block_match.group(1)
-        assert "white-space: nowrap" not in block_style
-        assert "overflow-wrap: break-word" in block_style
+        assert "white-space: nowrap" in block_style
 
     def test_layout_node_has_z_index(self) -> None:
         """Layout blocks include z-index derived from reading_order."""
@@ -880,6 +920,33 @@ class TestDocLensLayoutRender:
         assert "data-first-line-weight" not in view.content
         assert "data-height" not in view.content
         assert "data-reading-order" not in view.content
+
+    def test_render_layout_math_block(self) -> None:
+        """MathBlock nodes render in layout view with correct data-node-type."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Math Layout",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=200.0, width=468.0, height=14.0,
+            font_size=10.0,
+        )
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK, layout=layout),
+            source="E = mc^2",
+            equation_number="(3)",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "E = mc^2" in view.content
+        assert 'data-node-type="math_block"' in view.content
+        assert "layout-block" in view.content
 
     def test_layout_node_no_rotation_for_horizontal(self) -> None:
         """Horizontal text (rotation=None) has no CSS transform."""

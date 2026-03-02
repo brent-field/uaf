@@ -23,6 +23,7 @@ from uaf.core.nodes import (
     Heading,
     Image,
     LayoutHint,
+    MathBlock,
     NodeType,
     Paragraph,
     RawNode,
@@ -43,6 +44,7 @@ _SUPPORTED = frozenset({
     NodeType.HEADING,
     NodeType.TEXT_BLOCK,
     NodeType.CODE_BLOCK,
+    NodeType.MATH_BLOCK,
     NodeType.IMAGE,
     NodeType.SHAPE,
 })
@@ -225,7 +227,7 @@ class DocLens:
         if layout is None or text is None or nid is None:
             return ""
 
-        style_parts = ["position: absolute", "overflow-wrap: break-word"]
+        style_parts = ["position: absolute", "white-space: nowrap"]
         if layout.x is not None:
             style_parts.append(f"left: {layout.x}pt")
         if layout.y is not None:
@@ -320,6 +322,16 @@ class DocLens:
                 return (
                     f'  <pre data-node-id="{meta.id}">'
                     f"<code{lang_attr}>{escape(source)}</code></pre>",
+                    1,
+                )
+            case MathBlock(meta=meta, source=source, equation_number=eq_num):
+                eq_html = (
+                    f' <span class="eq-number">{escape(eq_num)}</span>'
+                    if eq_num else ""
+                )
+                return (
+                    f'  <div data-node-id="{meta.id}" class="math-block">'
+                    f"<code>{escape(source)}</code>{eq_html}</div>",
                     1,
                 )
             case TextBlock(meta=meta, text=text):
@@ -528,6 +540,8 @@ def _get_text(node: object) -> str | None:
             return t
         case CodeBlock(source=s):
             return s
+        case MathBlock(source=s):
+            return s
         case TextBlock(text=t):
             return t
         case Image(alt_text=alt):
@@ -545,6 +559,8 @@ def _get_node_type_name(node: object) -> str:
             return "paragraph"
         case CodeBlock():
             return "code_block"
+        case MathBlock():
+            return "math_block"
         case TextBlock():
             return "text_block"
         case Image():
@@ -563,6 +579,8 @@ def _get_node_id(node: object) -> object | None:
         case Paragraph(meta=meta):
             return meta.id
         case CodeBlock(meta=meta):
+            return meta.id
+        case MathBlock(meta=meta):
             return meta.id
         case TextBlock(meta=meta):
             return meta.id

@@ -16,12 +16,14 @@ from uaf.core.nodes import (
     Heading,
     Image,
     LayoutHint,
+    MathBlock,
     NodeType,
     Paragraph,
     RawNode,
     Shape,
     Sheet,
     Slide,
+    SpanInfo,
     Task,
     TextBlock,
     make_node_metadata,
@@ -108,6 +110,21 @@ class TestNodeRoundTrip:
         )
         assert _roundtrip_node(orig) == orig
 
+    def test_math_block(self) -> None:
+        orig = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK),
+            source="E = mc^2",
+            equation_number="(3)",
+        )
+        assert _roundtrip_node(orig) == orig
+
+    def test_math_block_no_equation_number(self) -> None:
+        orig = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK),
+            source="x + y",
+        )
+        assert _roundtrip_node(orig) == orig
+
     def test_task_no_due_date(self) -> None:
         orig = Task(meta=make_node_metadata(NodeType.TASK), title="Do it", completed=False)
         assert _roundtrip_node(orig) == orig
@@ -168,6 +185,24 @@ class TestNodeWithLayout:
         layout = LayoutHint(page=1, x=10.0, y=20.0, font_size=12.0)
         meta = make_node_metadata(NodeType.PARAGRAPH, layout=layout)
         orig = Paragraph(meta=meta, text="With layout")
+        result = _roundtrip_node(orig)
+        assert result == orig
+
+    def test_roundtrip_with_spans(self) -> None:
+        spans = (
+            SpanInfo(text="E", font_family="Symbol, serif", font_size=12.0),
+            SpanInfo(text=" = mc", font_size=12.0, y_offset=8.5),
+        )
+        layout = LayoutHint(page=0, x=72.0, y=100.0, spans=spans)
+        meta = make_node_metadata(NodeType.PARAGRAPH, layout=layout)
+        orig = Paragraph(meta=meta, text="E = mc")
+        result = _roundtrip_node(orig)
+        assert result == orig
+
+    def test_roundtrip_with_line_height(self) -> None:
+        layout = LayoutHint(page=0, x=72.0, y=100.0, line_height=14.5)
+        meta = make_node_metadata(NodeType.PARAGRAPH, layout=layout)
+        orig = Paragraph(meta=meta, text="With line height")
         result = _roundtrip_node(orig)
         assert result == orig
 

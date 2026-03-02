@@ -21,7 +21,7 @@ import fitz
 import pytest
 
 from tests.uaf.app._pdf_fidelity_helpers import _find_block, _import_pdf
-from uaf.core.nodes import Artifact, Paragraph, Shape
+from uaf.core.nodes import Artifact, MathBlock, Paragraph, Shape
 
 
 class TestPdfFidelity2511:
@@ -632,36 +632,28 @@ class TestPdfRenderedLayout:
             f"CSS top={css_top}pt (page height=792pt)"
         )
 
-    def test_layout_blocks_allow_text_wrapping(self) -> None:
-        """Layout blocks must not use white-space: nowrap.
+    def test_layout_blocks_use_nowrap(self) -> None:
+        """Layout blocks must use white-space: nowrap to prevent double-wrapping.
 
-        PDF viewers render text within bounding boxes, wrapping at box
-        boundaries when lines are too wide.  Our layout view uses <br> tags
-        to reproduce the PDF's exact line breaks — these force line breaks
-        regardless of the CSS white-space value.
+        PDF line breaks are preserved via <br> tags in display_text.  These
+        force line breaks regardless of the CSS white-space value.  Without
+        nowrap, the browser ALSO wraps text at box boundaries when web font
+        metrics differ from the PDF's embedded fonts — producing double
+        line breaks (orphan words on their own lines).
 
-        Setting ``white-space: nowrap`` prevents the browser from wrapping
-        text at box boundaries when web font metrics differ from the PDF's
-        embedded fonts (which they always will — we use fallback stacks
-        like 'Times New Roman' instead of NimbusRomNo9L).  This causes
-        text to overflow its positioned box, breaking the layout.
-
-        This is a GENERAL issue affecting all layout blocks, not just
-        headings.  Headings are more visible because their larger font
-        sizes amplify the metric mismatch.  For example, the title
-        "DYNAMIC NESTED HIERARCHIES..." spans 3 lines in a 467pt box;
-        a 1% font-width difference would overflow by ~5pt per line.
+        The nowrap + page-level overflow: hidden approach is correct:
+        slight clipping on overflow is far less visible than systematic
+        double-wrapping across every text block.
         """
         blocks = self._extract_block_styles()
-        nowrap_blocks: list[int] = []
+        non_nowrap: list[int] = []
         for i, props in enumerate(blocks):
-            if props.get("white-space") == "nowrap":
-                nowrap_blocks.append(i)
-        assert not nowrap_blocks, (
-            f"{len(nowrap_blocks)} of {len(blocks)} layout blocks use "
-            f"'white-space: nowrap', which prevents text from wrapping "
-            f"at box boundaries.  Remove nowrap — <br> tags still create "
-            f"line breaks at PDF positions."
+            if props.get("white-space") != "nowrap":
+                non_nowrap.append(i)
+        assert not non_nowrap, (
+            f"{len(non_nowrap)} of {len(blocks)} layout blocks lack "
+            f"'white-space: nowrap'.  All layout blocks need nowrap to "
+            f"prevent double-wrapping from <br> tags + browser wrapping."
         )
 
     def test_no_raw_double_quotes_in_style_attribute(self) -> None:
@@ -1093,4 +1085,77 @@ class TestPdfLineBreakFidelity:
         assert not mismatches, (
             f"{len(mismatches)} block(s) have wrong line count:\n"
             + "\n".join(mismatches)
+        )
+
+
+class TestPdfEquationFidelity:
+    """Verify that math equations are classified as MathBlock with span data.
+
+    The reference PDF (2511.14823v1.pdf) contains equations with Computer Modern
+    math fonts (CMSY, CMMI, CMR, CMEX) and mixed font sizes (main text at ~10pt,
+    subscripts at ~7pt, superscripts at ~5pt).  These should be extracted as
+    MathBlock nodes with per-span font metadata in LayoutHint.spans.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        db, root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.db = db
+        self.root_id = root_id
+        self.children = children
+        # Page 2 (0-indexed) contains equations in section 2.3.
+        self.page2 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 2
+        ]
+
+    def test_math_blocks_exist(self) -> None:
+        """At least one MathBlock node should be extracted from the PDF."""
+        math_blocks = [c for c in self.children if isinstance(c, MathBlock)]
+        assert len(math_blocks) > 0, (
+            "No MathBlock nodes found — equations should be classified as MathBlock"
+        )
+
+    def test_equation_3_is_math_block(self) -> None:
+        """The block containing equation 3 (with 'arg min') should be a MathBlock."""
+        eq3 = _find_block(self.page2, "arg min")
+        assert isinstance(eq3, MathBlock), (
+            f"Equation 3 should be MathBlock, got {type(eq3).__name__}"
+        )
+
+    def test_equation_3_has_spans(self) -> None:
+        """Equation 3 should have span data with font size variation."""
+        eq3 = _find_block(self.page2, "arg min")
+        layout = eq3.meta.layout
+        assert layout is not None
+        assert layout.spans is not None, (
+            "Equation 3 should have spans with per-span font metadata"
+        )
+        assert len(layout.spans) > 1, (
+            f"Equation 3 should have multiple spans, got {len(layout.spans)}"
+        )
+
+    def test_equation_3_has_font_size_variation(self) -> None:
+        """Equation 3 spans should have at least 2 distinct font sizes."""
+        eq3 = _find_block(self.page2, "arg min")
+        layout = eq3.meta.layout
+        assert layout is not None
+        assert layout.spans is not None
+        sizes = {s.font_size for s in layout.spans if s.font_size is not None}
+        assert len(sizes) >= 2, (
+            f"Expected at least 2 distinct font sizes in equation 3 spans, "
+            f"got {sorted(sizes)}"
+        )
+
+    def test_uniform_body_paragraph_no_spans(self) -> None:
+        """A body paragraph with uniform font (no inline math) has no spans."""
+        page0 = [
+            c for c in self.children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 0
+        ]
+        body = _find_block(page0, "Advancements in deep learning")
+        layout = body.meta.layout
+        assert layout is not None
+        assert layout.spans is None, (
+            "Uniform body paragraph should not have spans"
         )

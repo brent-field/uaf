@@ -24,12 +24,25 @@ class NodeType(Enum):
     FORMULA_CELL = "formula_cell"
     SHEET = "sheet"
     CODE_BLOCK = "code_block"
+    MATH_BLOCK = "math_block"
     TASK = "task"
     SLIDE = "slide"
     SHAPE = "shape"
     IMAGE = "image"
     ARTIFACT_ACL = "artifact_acl"
     RAW = "raw"
+
+
+@dataclass(frozen=True, slots=True)
+class SpanInfo:
+    """Per-span font/position metadata for preserving inline typographic variation."""
+
+    text: str
+    font_size: float | None = None
+    font_family: str | None = None
+    font_weight: str | None = None
+    font_style: str | None = None
+    y_offset: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +65,7 @@ class LayoutHint:
     header_footer: bool = False
     display_text: str | None = None
     line_height: float | None = None
+    spans: tuple[SpanInfo, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +183,16 @@ class CodeBlock:
 
 
 @dataclass(frozen=True, slots=True)
+class MathBlock:
+    """A block of mathematical content (equation, formula)."""
+
+    meta: NodeMetadata
+    source: str
+    equation_number: str | None = None
+    display: str = "block"
+
+
+@dataclass(frozen=True, slots=True)
 class Task:
     """A task / to-do item."""
 
@@ -241,6 +265,7 @@ type NodeData = (
     | FormulaCell
     | Sheet
     | CodeBlock
+    | MathBlock
     | Task
     | Slide
     | Shape
