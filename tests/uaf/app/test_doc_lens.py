@@ -24,6 +24,7 @@ from uaf.core.nodes import (
     NodeType,
     Paragraph,
     RawNode,
+    SpanInfo,
     TextBlock,
     make_node_metadata,
 )
@@ -947,6 +948,78 @@ class TestDocLensLayoutRender:
         assert "E = mc^2" in view.content
         assert 'data-node-type="math_block"' in view.content
         assert "layout-block" in view.content
+
+    def test_render_layout_spans_produce_per_span_elements(self) -> None:
+        """When layout.spans is populated, each span gets its own HTML element."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Span Render",
+        )
+        art_id = sdb.create_node(session, art)
+
+        spans = (
+            SpanInfo(text="θ", font_size=10.0, y_offset=8.0),
+            SpanInfo(text="t+1", font_size=7.0, y_offset=11.0),
+            SpanInfo(text=" = ", font_size=10.0, y_offset=8.0),
+            SpanInfo(text="x", font_size=10.0, y_offset=8.0),
+        )
+        layout = LayoutHint(
+            page=0, x=72.0, y=200.0, width=468.0, height=14.0,
+            font_size=10.0, spans=spans,
+        )
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK, layout=layout),
+            source="θt+1 = x",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        # Per-span <span> elements with individual font sizes.
+        assert "font-size: 7.0pt" in view.content
+        assert "θ" in view.content
+        assert "t+1" in view.content
+
+    def test_render_layout_spans_vertical_offset(self) -> None:
+        """Spans with different y_offsets get relative vertical positioning."""
+        import re
+
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Offset Render",
+        )
+        art_id = sdb.create_node(session, art)
+
+        # Base text at y_offset=8, subscript shifted down at y_offset=11
+        spans = (
+            SpanInfo(text="θ", font_size=10.0, y_offset=8.0),
+            SpanInfo(text="t", font_size=7.0, y_offset=11.0),
+        )
+        layout = LayoutHint(
+            page=0, x=72.0, y=200.0, width=468.0, height=14.0,
+            font_size=10.0, spans=spans,
+        )
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK, layout=layout),
+            source="θt",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        # The subscript span should have a per-span top offset style
+        # (distinct from the block's own absolute top: positioning).
+        span_matches = re.findall(
+            r'<span[^>]*style="([^"]*)"[^>]*>', view.content,
+        )
+        has_offset = any("top:" in s for s in span_matches)
+        assert has_offset, (
+            f"No <span> with top: offset found. Span styles: {span_matches}"
+        )
 
     def test_layout_node_no_rotation_for_horizontal(self) -> None:
         """Horizontal text (rotation=None) has no CSS transform."""

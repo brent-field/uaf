@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 from collections import Counter
@@ -154,6 +155,18 @@ class PdfHandler:
 
                 # Detect math block: majority Computer Modern math fonts
                 is_math = _is_math_block(block)
+
+                # For math blocks, the character-weighted dominant font size
+                # can be wrong: dense subscripts/superscripts (7pt, 5pt) may
+                # outnumber base-size (10pt) characters.  Use the max span
+                # font size as the base size instead.
+                if is_math and span_list:
+                    max_sz = max(
+                        (s.font_size for s in span_list if s.font_size),
+                        default=None,
+                    )
+                    if max_sz is not None:
+                        layout = dataclasses.replace(layout, font_size=max_sz)
 
                 # Detect heading heuristic: large font or bold
                 is_heading = (

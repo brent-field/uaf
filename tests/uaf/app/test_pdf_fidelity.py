@@ -1147,6 +1147,30 @@ class TestPdfEquationFidelity:
             f"got {sorted(sizes)}"
         )
 
+    def test_math_block_base_font_size_not_subscript(self) -> None:
+        """Math blocks should use the base (max) font size, not subscript size.
+
+        Equations with dense subscripts/superscripts have more small-font
+        characters than base-font characters.  The block-level font_size
+        should reflect the base size (~10pt), not the subscript size (~7pt).
+        """
+        math_blocks = [
+            c for c in self.page2
+            if isinstance(c, MathBlock)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        assert len(math_blocks) > 0, "No MathBlocks with spans on page 2"
+        for mb in math_blocks:
+            layout = mb.meta.layout
+            assert layout is not None
+            assert layout.font_size is not None
+            assert layout.font_size >= 9.5, (
+                f"MathBlock font_size={layout.font_size} is too small — "
+                f"should be base (~10pt), not subscript (~7pt). "
+                f"Source: {getattr(mb, 'source', '')[:50]}"
+            )
+
     def test_uniform_body_paragraph_no_spans(self) -> None:
         """A body paragraph with uniform font (no inline math) has no spans."""
         page0 = [

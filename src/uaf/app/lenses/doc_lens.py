@@ -265,11 +265,16 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # For layout view, prefer the original PDF line-broken text
-        # (display_text) so that line breaks match the source document,
-        # including end-of-line hyphenation.
-        render_text = layout.display_text if layout.display_text else text
-        escaped = _format_layout_text(render_text, layout)
+        # For math blocks with per-span data, render each span with
+        # its own font-size and vertical offset (subscripts/superscripts).
+        if isinstance(node, MathBlock) and layout.spans:
+            escaped = _format_spans(layout)
+        else:
+            # For layout view, prefer the original PDF line-broken text
+            # (display_text) so that line breaks match the source document,
+            # including end-of-line hyphenation.
+            render_text = layout.display_text if layout.display_text else text
+            escaped = _format_layout_text(render_text, layout)
         return (
             f'  <div {data_attr_str} class="{css_class}"'
             f' style="{style}">{escaped}</div>'
@@ -680,3 +685,49 @@ def _format_layout_text(text: str, layout: LayoutHint) -> str:
             f"{escape(text)}</span>"
         )
     return escape(text).replace("\n", "<br>")
+
+
+def _format_spans(layout: LayoutHint) -> str:
+    """Render per-span HTML with individual font sizes and vertical offsets.
+
+    Each span is wrapped in a ``<span>`` tag with its own ``font-size``
+    CSS.  When y_offsets vary across spans, a ``position: relative; top:``
+    style shifts subscripts/superscripts to their correct vertical position
+    relative to the dominant baseline.
+    """
+    assert layout.spans is not None
+    block_size = layout.font_size
+
+    # Determine the base y_offset (the most common baseline position
+    # among spans that have the largest font size).
+    offsets = [
+        s.y_offset for s in layout.spans
+        if s.y_offset is not None and s.font_size == block_size
+    ]
+    base_y = offsets[0] if offsets else None
+
+    parts: list[str] = []
+    for span in layout.spans:
+        css: list[str] = []
+        if span.font_size is not None and span.font_size != block_size:
+            css.append(f"font-size: {span.font_size}pt")
+        if span.font_style:
+            css.append(f"font-style: {escape(span.font_style)}")
+        if span.font_weight:
+            css.append(f"font-weight: {escape(span.font_weight)}")
+
+        # Vertical offset relative to the base line.
+        if base_y is not None and span.y_offset is not None:
+            delta = round(span.y_offset - base_y, 1)
+            if delta != 0.0:
+                css.append("position: relative")
+                css.append(f"top: {delta}pt")
+
+        escaped_text = escape(span.text)
+        if css:
+            style = "; ".join(css)
+            parts.append(f'<span style="{style}">{escaped_text}</span>')
+        else:
+            parts.append(escaped_text)
+
+    return "".join(parts)
