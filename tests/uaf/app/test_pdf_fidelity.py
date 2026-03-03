@@ -21,7 +21,7 @@ import fitz
 import pytest
 
 from tests.uaf.app._pdf_fidelity_helpers import _find_block, _import_pdf
-from uaf.core.nodes import Artifact, Paragraph, Shape
+from uaf.core.nodes import Artifact, MathBlock, Paragraph, Shape
 
 
 class TestPdfFidelity2511:
@@ -170,16 +170,16 @@ class TestPdfFidelity2511:
         assert "Times New Roman" in layout.font_family
 
     @pytest.mark.xfail(
-        reason="Small-caps: dominant font size is 13.8pt (majority chars), not 17.2pt",
+        reason=(
+            "Small-caps title: dominant font is 13.8pt (the small-cap size) "
+            "because it covers more characters than the 17.2pt initials."
+        ),
     )
     def test_title_font_size(self) -> None:
-        """Title font size ~ 17.2pt."""
+        """Title font size ~ 17.2pt (the large initial-cap size)."""
         title = _find_block(self.page0, "DYNAMIC NESTED")
         layout = title.meta.layout
         assert layout is not None
-        # Ground truth from PDF: 17.2pt for the large caps.
-        # Actual: 13.8pt — character-weighted voting picks the smaller size
-        # because small-caps splits produce more chars at the smaller size.
         assert layout.font_size == pytest.approx(17.2, abs=1.0)
 
     @pytest.mark.xfail(
@@ -523,12 +523,12 @@ class TestPdfRenderedLayout:
 
     def test_title_renders_with_font_size(self) -> None:
         """The title block must have a visible font-size in the rendered HTML."""
-        # Find the title block by its text content.
-        title_pattern = re.compile(
+        block_pattern = re.compile(
             r'class="layout-block[^"]*"\s+style="([^"]*)">'
-            r"[^<]*DYNAMIC NESTED",
+            r".*?YNAMIC",
+            re.DOTALL,
         )
-        m = title_pattern.search(self.html)
+        m = block_pattern.search(self.html)
         assert m is not None, "Title block not found in rendered HTML"
         style = m.group(1)
         assert "font-size" in style, (
@@ -632,6 +632,30 @@ class TestPdfRenderedLayout:
             f"CSS top={css_top}pt (page height=792pt)"
         )
 
+    def test_layout_blocks_use_nowrap(self) -> None:
+        """Layout blocks must use white-space: nowrap to prevent double-wrapping.
+
+        PDF line breaks are preserved via <br> tags in display_text.  These
+        force line breaks regardless of the CSS white-space value.  Without
+        nowrap, the browser ALSO wraps text at box boundaries when web font
+        metrics differ from the PDF's embedded fonts — producing double
+        line breaks (orphan words on their own lines).
+
+        The nowrap + page-level overflow: hidden approach is correct:
+        slight clipping on overflow is far less visible than systematic
+        double-wrapping across every text block.
+        """
+        blocks = self._extract_block_styles()
+        non_nowrap: list[int] = []
+        for i, props in enumerate(blocks):
+            if props.get("white-space") != "nowrap":
+                non_nowrap.append(i)
+        assert not non_nowrap, (
+            f"{len(non_nowrap)} of {len(blocks)} layout blocks lack "
+            f"'white-space: nowrap'.  All layout blocks need nowrap to "
+            f"prevent double-wrapping from <br> tags + browser wrapping."
+        )
+
     def test_no_raw_double_quotes_in_style_attribute(self) -> None:
         """Style attribute values must not contain unescaped double-quotes.
 
@@ -693,9 +717,14 @@ def _pdf_block_lines(substring: str) -> list[str]:
 def _html_lines_for_block(html: str, substring: str) -> list[str]:
     """Extract the text lines from the rendered layout-block containing *substring*.
 
-    The layout renderer uses ``<br>`` for line breaks, so we split on that.
-    HTML entities are decoded for comparison.
+    Handles two rendering modes:
+    1. **Inline text** — the renderer uses ``<br>`` for line breaks.
+    2. **Absolute-positioned spans** — each ``<span>`` has a ``top: Ypt``
+       style.  Spans with similar y-offsets (within 4pt) are grouped into
+       visual lines.
     """
+    from html import unescape
+
     # Find the div whose inner HTML contains the substring.
     pattern = re.compile(
         r'class="layout-block[^"]*"[^>]*>(.+?)</div>',
@@ -703,15 +732,42 @@ def _html_lines_for_block(html: str, substring: str) -> list[str]:
     )
     for m in pattern.finditer(html):
         inner = m.group(1)
-        # Strip any <span> wrappers (first-line bold) for text extraction.
+
+        # Check if this block uses absolute-positioned spans.
+        span_pattern = re.compile(
+            r'<span[^>]*style="[^"]*position:\s*absolute[^"]*top:\s*([\d.]+)pt[^"]*"[^>]*>'
+            r"(.*?)</span>",
+            re.DOTALL,
+        )
+        abs_spans = span_pattern.findall(inner)
+
+        if abs_spans:
+            # Group spans by y-offset (within 4pt tolerance to handle
+            # small-caps and mixed font sizes on the same visual line).
+            text_only = "".join(unescape(txt) for _, txt in abs_spans)
+            if substring not in text_only:
+                continue
+            buckets: dict[float, list[str]] = {}
+            for y_str, txt in abs_spans:
+                y = float(y_str)
+                # Find an existing bucket within 4pt.
+                matched = False
+                for key in buckets:
+                    if abs(key - y) < 4.0:
+                        buckets[key].append(unescape(txt))
+                        matched = True
+                        break
+                if not matched:
+                    buckets[y] = [unescape(txt)]
+            return ["".join(parts) for _, parts in sorted(buckets.items())]
+
+        # Inline text mode: strip any <span> wrappers and split on <br>.
         text = re.sub(r"<span[^>]*>", "", inner)
         text = text.replace("</span>", "")
         if substring in text:
             lines = text.split("<br>")
-            # Decode HTML entities for comparison.
-            from html import unescape
-
             return [unescape(ln) for ln in lines]
+
     msg = f"No layout-block containing {substring!r}"
     raise ValueError(msg)
 
@@ -879,6 +935,68 @@ class TestPdfParagraphSpacing:
         assert layout.line_height is None
 
 
+class TestPdfParagraphSpacingCss:
+    """Verify that CSS does not distort inter-paragraph spacing.
+
+    Layout blocks are absolutely positioned at exact PDF coordinates.
+    Any CSS padding or margin on ``.layout-block`` expands the rendered
+    box beyond the PDF bounding box, systematically shrinking the visual
+    gap between consecutive blocks.
+
+    For the reference PDF, the median inter-paragraph gap is ~6.4pt
+    (~8.5px at 96 dpi).  Adding 1px top + 1px bottom padding reduces
+    this gap by ~24%, making paragraphs appear more tightly packed than
+    in Mac Preview or Adobe Acrobat.
+    """
+
+    def test_layout_block_css_no_padding(self) -> None:
+        """The .layout-block CSS rule must not add padding."""
+        from pathlib import Path
+
+        css_path = (
+            Path(__file__).resolve().parent.parent.parent.parent
+            / "src" / "uaf" / "app" / "static" / "style.css"
+        )
+        css_text = css_path.read_text()
+        # Extract the .layout-block { ... } rule.
+        match = re.search(r"\.layout-block\s*\{([^}]*)\}", css_text)
+        assert match is not None, ".layout-block rule not found in style.css"
+        rule_body = match.group(1)
+        assert "padding" not in rule_body, (
+            f".layout-block CSS adds padding which distorts inter-block "
+            f"spacing for absolutely-positioned layout blocks.  Blocks are "
+            f"positioned at exact PDF coordinates — any padding makes them "
+            f"taller than the PDF bbox and shrinks the gap to the next block. "
+            f"Rule: .layout-block {{{rule_body}}}"
+        )
+
+    def test_layout_block_css_no_default_line_height(self) -> None:
+        """The .layout-block CSS must not set a fallback line-height.
+
+        Individual blocks already have inline ``line-height`` CSS from the
+        PDF's actual inter-line spacing.  A class-level fallback (e.g.
+        ``line-height: 1.2``) would apply to single-line blocks and to
+        any block where the inline value is missing, making them taller
+        than the PDF intended and distorting spacing.
+        """
+        from pathlib import Path
+
+        css_path = (
+            Path(__file__).resolve().parent.parent.parent.parent
+            / "src" / "uaf" / "app" / "static" / "style.css"
+        )
+        css_text = css_path.read_text()
+        match = re.search(r"\.layout-block\s*\{([^}]*)\}", css_text)
+        assert match is not None, ".layout-block rule not found in style.css"
+        rule_body = match.group(1)
+        assert "line-height" not in rule_body, (
+            f".layout-block CSS sets a default line-height which can "
+            f"override or conflict with inline line-height values from "
+            f"PDF import.  Remove it — blocks get their line-height from "
+            f"inline styles. Rule: .layout-block {{{rule_body}}}"
+        )
+
+
 class TestPdfLineBreakFidelity:
     """Verify that the layout view preserves the PDF's exact line breaks.
 
@@ -999,4 +1117,295 @@ class TestPdfLineBreakFidelity:
         assert not mismatches, (
             f"{len(mismatches)} block(s) have wrong line count:\n"
             + "\n".join(mismatches)
+        )
+
+
+class TestPdfEquationFidelity:
+    """Verify that math equations are classified as MathBlock with span data.
+
+    The reference PDF (2511.14823v1.pdf) contains equations with Computer Modern
+    math fonts (CMSY, CMMI, CMR, CMEX) and mixed font sizes (main text at ~10pt,
+    subscripts at ~7pt, superscripts at ~5pt).  These should be extracted as
+    MathBlock nodes with per-span font metadata in LayoutHint.spans.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        db, root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.db = db
+        self.root_id = root_id
+        self.children = children
+        # Page 2 (0-indexed) contains equations in section 2.3.
+        self.page2 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 2
+        ]
+
+    def test_math_blocks_exist(self) -> None:
+        """At least one MathBlock node should be extracted from the PDF."""
+        math_blocks = [c for c in self.children if isinstance(c, MathBlock)]
+        assert len(math_blocks) > 0, (
+            "No MathBlock nodes found — equations should be classified as MathBlock"
+        )
+
+    def test_equation_3_is_math_block(self) -> None:
+        """The block containing equation 3 (with 'arg min') should be a MathBlock."""
+        eq3 = _find_block(self.page2, "arg min")
+        assert isinstance(eq3, MathBlock), (
+            f"Equation 3 should be MathBlock, got {type(eq3).__name__}"
+        )
+
+    def test_equation_3_has_spans(self) -> None:
+        """Equation 3 should have span data with font size variation."""
+        eq3 = _find_block(self.page2, "arg min")
+        layout = eq3.meta.layout
+        assert layout is not None
+        assert layout.spans is not None, (
+            "Equation 3 should have spans with per-span font metadata"
+        )
+        assert len(layout.spans) > 1, (
+            f"Equation 3 should have multiple spans, got {len(layout.spans)}"
+        )
+
+    def test_equation_3_has_font_size_variation(self) -> None:
+        """Equation 3 spans should have at least 2 distinct font sizes."""
+        eq3 = _find_block(self.page2, "arg min")
+        layout = eq3.meta.layout
+        assert layout is not None
+        assert layout.spans is not None
+        sizes = {s.font_size for s in layout.spans if s.font_size is not None}
+        assert len(sizes) >= 2, (
+            f"Expected at least 2 distinct font sizes in equation 3 spans, "
+            f"got {sorted(sizes)}"
+        )
+
+    def test_math_block_base_font_size_not_subscript(self) -> None:
+        """Math blocks should use the base (max) font size, not subscript size.
+
+        Equations with dense subscripts/superscripts have more small-font
+        characters than base-font characters.  The block-level font_size
+        should reflect the base size (~10pt), not the subscript size (~7pt).
+        """
+        math_blocks = [
+            c for c in self.page2
+            if isinstance(c, MathBlock)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        assert len(math_blocks) > 0, "No MathBlocks with spans on page 2"
+        for mb in math_blocks:
+            layout = mb.meta.layout
+            assert layout is not None
+            assert layout.font_size is not None
+            assert layout.font_size >= 9.5, (
+                f"MathBlock font_size={layout.font_size} is too small — "
+                f"should be base (~10pt), not subscript (~7pt). "
+                f"Source: {getattr(mb, 'source', '')[:50]}"
+            )
+
+    def test_spans_have_x_offset(self) -> None:
+        """Equation 3 spans should include x_offset data for horizontal placement."""
+        eq3 = _find_block(self.page2, "arg min")
+        layout = eq3.meta.layout
+        assert layout is not None
+        assert layout.spans is not None
+        x_offsets = [s.x_offset for s in layout.spans if s.x_offset is not None]
+        assert len(x_offsets) > 1, (
+            "Equation 3 spans should have x_offset values for absolute positioning"
+        )
+        # x_offsets should vary (not all the same).
+        assert len(set(x_offsets)) > 1, (
+            f"Expected varying x_offsets, got {x_offsets}"
+        )
+
+    def test_paragraph_inline_math_no_spans(self) -> None:
+        """Paragraphs with inline math must NOT have spans.
+
+        Absolute span positioning breaks normal text flow — browser font
+        metrics differ from PDF fonts, causing missing spaces before
+        equations and uneven gaps after subscripts.  Paragraphs render
+        as plain text flow; only math-majority blocks get spans.
+        """
+        para_with_spans = [
+            c for c in self.page2
+            if isinstance(c, Paragraph)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        assert len(para_with_spans) == 0, (
+            "Paragraphs with inline math should NOT have spans — "
+            "absolute positioning breaks text flow spacing"
+        )
+
+    def test_equation_number_x_offset_near_right_margin(self) -> None:
+        """The '(6)' equation number should have x_offset > 250pt (right margin)."""
+        # Equation 6 contains 'θ' (or similar math symbols) near section 2.3.
+        eq6_candidates = [
+            c for c in self.page2
+            if isinstance(c, MathBlock)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        found_eq_num = False
+        for mb in eq6_candidates:
+            layout = mb.meta.layout
+            assert layout is not None
+            assert layout.spans is not None
+            for span in layout.spans:
+                text = span.text.strip()
+                if text in ("(6)", "(5)", "(4)", "(3)"):
+                    assert span.x_offset is not None
+                    assert span.x_offset > 250.0, (
+                        f"Equation number '{text}' x_offset={span.x_offset} "
+                        f"should be > 250pt (right margin)"
+                    )
+                    found_eq_num = True
+                    break
+            if found_eq_num:
+                break
+        assert found_eq_num, (
+            "No equation number span found with x_offset in right margin"
+        )
+
+    def test_topmost_span_near_block_top(self) -> None:
+        """The topmost span in equation 6 should start near the block's top edge.
+
+        PyMuPDF ``origin`` is the text baseline, but CSS ``top:`` positions
+        from the glyph top.  When y_offset is computed from the origin the
+        minimum y across spans is ~5.5pt (too far from the top).  Using the
+        span bbox gives ~0pt — glyph flush with the block boundary.
+        """
+        eq6 = None
+        for c in self.page2:
+            if (
+                isinstance(c, MathBlock)
+                and c.meta.layout
+                and c.meta.layout.spans
+                and any("(6)" in s.text for s in c.meta.layout.spans)
+            ):
+                eq6 = c
+                break
+        assert eq6 is not None, "Equation 6 not found on page 2"
+        layout = eq6.meta.layout
+        assert layout is not None and layout.spans is not None
+        min_y = min(
+            s.y_offset for s in layout.spans if s.y_offset is not None
+        )
+        assert min_y < 2.0, (
+            f"Topmost span y_offset={min_y} is too far from block top — "
+            f"y_offset should be computed from glyph bbox, not baseline origin"
+        )
+
+    def test_uniform_body_paragraph_no_spans(self) -> None:
+        """A body paragraph with uniform font (no inline math) has no spans."""
+        page0 = [
+            c for c in self.children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 0
+        ]
+        body = _find_block(page0, "Advancements in deep learning")
+        layout = body.meta.layout
+        assert layout is not None
+        assert layout.spans is None, (
+            "Uniform body paragraph should not have spans"
+        )
+
+
+class TestNonMathBlocksNoSpans:
+    """Verify that non-math blocks do not have per-span data.
+
+    Only math-majority blocks (display equations) use absolute span
+    positioning for sub/superscript layout.  All other blocks — including
+    small-caps text and paragraphs with inline math — render as plain
+    text flow to preserve correct word spacing.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        from uaf.app.lenses.doc_lens import DocLens
+        from uaf.security.auth import LocalAuthProvider
+        from uaf.security.secure_graph_db import SecureGraphDB
+
+        db, root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.children = children
+        self.page0 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 0
+        ]
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        session = sdb.system_session()
+        lens = DocLens()
+        self.view = lens.render_layout(sdb, session, root_id)
+        self.html = self.view.content
+
+    def test_abstract_no_spans(self) -> None:
+        """ABSTRACT must not have per-span data (uniform font-size rendering)."""
+        abstract = _find_block(self.page0, "ABSTRACT")
+        layout = abstract.meta.layout
+        assert layout is not None
+        assert layout.spans is None, (
+            "Small-caps ABSTRACT should not have spans — "
+            "clearing spans prevents mixed-size rendering gaps"
+        )
+
+    def test_title_no_spans(self) -> None:
+        """Title must not have per-span data after small-caps detection."""
+        title = _find_block(self.page0, "DYNAMIC NESTED")
+        layout = title.meta.layout
+        assert layout is not None
+        assert layout.spans is None, (
+            "Small-caps title should not have spans — "
+            "clearing spans prevents mixed-size rendering gaps"
+        )
+
+    def test_title_html_no_per_span_positioning(self) -> None:
+        """Title HTML must not contain inner spans with absolute positioning.
+
+        Per-span font-size elements create visible gaps due to font metric
+        mismatches between PDF fonts and browser fonts.
+        """
+        title = _find_block(self.page0, "DYNAMIC NESTED")
+        nid = title.meta.id
+        div_pattern = re.compile(
+            rf'<div[^>]*data-node-id="{re.escape(str(nid))}"[^>]*>(.*?)</div>',
+        )
+        m = div_pattern.search(self.html)
+        assert m is not None, "Title div not found in rendered HTML"
+        inner = m.group(1)
+        assert "position: absolute" not in inner, (
+            "Title inner HTML must not use position: absolute spans"
+        )
+
+    def test_math_blocks_still_use_absolute_positioning(self) -> None:
+        """Math-majority blocks must keep absolute positioning for spans.
+
+        Display equations need per-span absolute positioning for
+        subscripts, superscripts, and equation numbers.
+        """
+        page2 = [
+            c for c in self.children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 2
+        ]
+        math_with_spans = [
+            c for c in page2
+            if isinstance(c, MathBlock)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        assert len(math_with_spans) > 0, (
+            "Expected at least one MathBlock with spans on page 2"
+        )
+
+        # Check that the rendered HTML uses absolute spans
+        mb = math_with_spans[0]
+        nid = mb.meta.id
+        div_pattern = re.compile(
+            rf'<div[^>]*data-node-id="{re.escape(str(nid))}"[^>]*>(.*?)</div>',
+        )
+        m = div_pattern.search(self.html)
+        assert m is not None, "MathBlock div not found in rendered HTML"
+        inner = m.group(1)
+        assert "position: absolute" in inner, (
+            "MathBlock must use absolute positioning for "
+            "sub/superscript placement"
         )

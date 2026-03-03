@@ -490,6 +490,64 @@ class TestPdfHandler:
         assert angle is None
 
 
+class TestMathDetection:
+    """Tests for _is_math_block and _extract_equation_number helpers."""
+
+    def test_cm_fonts_detected_as_math(self) -> None:
+        from uaf.app.formats.pdf_format import _is_math_block
+
+        block: dict[str, object] = {
+            "lines": [{
+                "spans": [
+                    {"text": "E", "font": "CMMI10", "size": 10.0, "flags": 0, "color": 0},
+                    {"text": " = ", "font": "CMR10", "size": 10.0, "flags": 0, "color": 0},
+                    {"text": "mc", "font": "CMMI10", "size": 10.0, "flags": 0, "color": 0},
+                ],
+            }],
+        }
+        assert _is_math_block(block) is True
+
+    def test_regular_text_not_math(self) -> None:
+        from uaf.app.formats.pdf_format import _is_math_block
+
+        block: dict[str, object] = {
+            "lines": [{
+                "spans": [
+                    {"text": "Regular paragraph", "font": "NimbusRomNo9L-Regu",
+                     "size": 10.0, "flags": 0, "color": 0},
+                ],
+            }],
+        }
+        assert _is_math_block(block) is False
+
+    def test_equation_number_extraction(self) -> None:
+        from uaf.app.formats.pdf_format import _extract_equation_number
+
+        source, eq = _extract_equation_number("E = mc^2 (3)")
+        assert source == "E = mc^2"
+        assert eq == "(3)"
+
+    def test_equation_number_none(self) -> None:
+        from uaf.app.formats.pdf_format import _extract_equation_number
+
+        source, eq = _extract_equation_number("E = mc^2")
+        assert source == "E = mc^2"
+        assert eq is None
+
+    def test_equation_number_decimal(self) -> None:
+        from uaf.app.formats.pdf_format import _extract_equation_number
+
+        source, eq = _extract_equation_number("x + y (2.1)")
+        assert source == "x + y"
+        assert eq == "(2.1)"
+
+    def test_font_mapping_cmex(self) -> None:
+        from uaf.app.formats.pdf_format import _map_font_family
+
+        result = _map_font_family("CMEX10")
+        assert "Symbol" in result
+
+
 # ---------------------------------------------------------------------------
 # Google Docs JSON tests
 # ---------------------------------------------------------------------------

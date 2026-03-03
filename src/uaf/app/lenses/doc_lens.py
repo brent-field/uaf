@@ -23,6 +23,7 @@ from uaf.core.nodes import (
     Heading,
     Image,
     LayoutHint,
+    MathBlock,
     NodeType,
     Paragraph,
     RawNode,
@@ -43,6 +44,7 @@ _SUPPORTED = frozenset({
     NodeType.HEADING,
     NodeType.TEXT_BLOCK,
     NodeType.CODE_BLOCK,
+    NodeType.MATH_BLOCK,
     NodeType.IMAGE,
     NodeType.SHAPE,
 })
@@ -232,8 +234,10 @@ class DocLens:
             style_parts.append(f"top: {layout.y}pt")
         if layout.width is not None:
             style_parts.append(f"width: {layout.width}pt")
-        # No explicit height — let content flow naturally to avoid
-        # clipping when HTML font metrics differ from the PDF engine.
+        # When spans use absolute positioning the parent collapses to
+        # zero height, so we must set an explicit height from the PDF bbox.
+        if layout.spans and layout.height is not None:
+            style_parts.append(f"height: {layout.height}pt")
         if layout.reading_order is not None:
             style_parts.append(f"z-index: {1000 - layout.reading_order}")
         if layout.rotation is not None:
@@ -263,11 +267,16 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # For layout view, prefer the original PDF line-broken text
-        # (display_text) so that line breaks match the source document,
-        # including end-of-line hyphenation.
-        render_text = layout.display_text if layout.display_text else text
-        escaped = _format_layout_text(render_text, layout)
+        # Blocks with per-span data (math sub/superscripts) use absolute
+        # positioning.  All other blocks use normal text rendering.
+        if layout.spans:
+            escaped = _format_spans(layout)
+        else:
+            # For layout view, prefer the original PDF line-broken text
+            # (display_text) so that line breaks match the source document,
+            # including end-of-line hyphenation.
+            render_text = layout.display_text if layout.display_text else text
+            escaped = _format_layout_text(render_text, layout)
         return (
             f'  <div {data_attr_str} class="{css_class}"'
             f' style="{style}">{escaped}</div>'
@@ -320,6 +329,16 @@ class DocLens:
                 return (
                     f'  <pre data-node-id="{meta.id}">'
                     f"<code{lang_attr}>{escape(source)}</code></pre>",
+                    1,
+                )
+            case MathBlock(meta=meta, source=source, equation_number=eq_num):
+                eq_html = (
+                    f' <span class="eq-number">{escape(eq_num)}</span>'
+                    if eq_num else ""
+                )
+                return (
+                    f'  <div data-node-id="{meta.id}" class="math-block">'
+                    f"<code>{escape(source)}</code>{eq_html}</div>",
                     1,
                 )
             case TextBlock(meta=meta, text=text):
@@ -528,6 +547,8 @@ def _get_text(node: object) -> str | None:
             return t
         case CodeBlock(source=s):
             return s
+        case MathBlock(source=s):
+            return s
         case TextBlock(text=t):
             return t
         case Image(alt_text=alt):
@@ -545,6 +566,8 @@ def _get_node_type_name(node: object) -> str:
             return "paragraph"
         case CodeBlock():
             return "code_block"
+        case MathBlock():
+            return "math_block"
         case TextBlock():
             return "text_block"
         case Image():
@@ -563,6 +586,8 @@ def _get_node_id(node: object) -> object | None:
         case Paragraph(meta=meta):
             return meta.id
         case CodeBlock(meta=meta):
+            return meta.id
+        case MathBlock(meta=meta):
             return meta.id
         case TextBlock(meta=meta):
             return meta.id
@@ -662,3 +687,42 @@ def _format_layout_text(text: str, layout: LayoutHint) -> str:
             f"{escape(text)}</span>"
         )
     return escape(text).replace("\n", "<br>")
+
+
+def _format_spans(layout: LayoutHint) -> str:
+    """Render per-span HTML with absolute positioning within the block.
+
+    Each span gets ``position: absolute`` with ``left`` / ``top`` from its
+    ``x_offset`` / ``y_offset``, enabling overlapping sub/superscripts and
+    right-margin equation numbers.
+
+    Per-span ``font-family`` is emitted so that math symbols (e.g. CMSY10
+    mapped to Symbol) render with correct glyphs instead of inheriting the
+    block's dominant font family.
+    """
+    assert layout.spans is not None
+    block_size = layout.font_size
+    block_family = layout.font_family
+
+    parts: list[str] = []
+    for span in layout.spans:
+        css: list[str] = ["position: absolute"]
+        if span.x_offset is not None:
+            css.append(f"left: {span.x_offset}pt")
+        if span.y_offset is not None:
+            css.append(f"top: {span.y_offset}pt")
+        if span.font_size is not None and span.font_size != block_size:
+            css.append(f"font-size: {span.font_size}pt")
+        if span.font_family and span.font_family != block_family:
+            safe_family = span.font_family.replace('"', "'")
+            css.append(f"font-family: {safe_family}")
+        if span.font_style:
+            css.append(f"font-style: {escape(span.font_style)}")
+        if span.font_weight:
+            css.append(f"font-weight: {escape(span.font_weight)}")
+
+        escaped_text = escape(span.text)
+        style = "; ".join(css)
+        parts.append(f'<span style="{style}">{escaped_text}</span>')
+
+    return "".join(parts)

@@ -19,6 +19,7 @@ from uaf.core.nodes import (
     Heading,
     Image,
     LayoutHint,
+    MathBlock,
     NodeMetadata,
     NodeType,
     Paragraph,
@@ -26,6 +27,7 @@ from uaf.core.nodes import (
     Shape,
     Sheet,
     Slide,
+    SpanInfo,
     Task,
     TextBlock,
 )
@@ -45,6 +47,7 @@ _NODE_TYPE_NAME: dict[type[Any], str] = {
     FormulaCell: "FormulaCell",
     Sheet: "Sheet",
     CodeBlock: "CodeBlock",
+    MathBlock: "MathBlock",
     Task: "Task",
     Slide: "Slide",
     Shape: "Shape",
@@ -59,6 +62,35 @@ _NAME_TO_NODE_TYPE: dict[str, type[Any]] = {v: k for k, v in _NODE_TYPE_NAME.ite
 # ---------------------------------------------------------------------------
 # Layout serialization
 # ---------------------------------------------------------------------------
+
+
+def _span_to_dict(span: SpanInfo) -> dict[str, Any]:
+    d: dict[str, Any] = {"text": span.text}
+    if span.font_size is not None:
+        d["font_size"] = span.font_size
+    if span.font_family is not None:
+        d["font_family"] = span.font_family
+    if span.font_weight is not None:
+        d["font_weight"] = span.font_weight
+    if span.font_style is not None:
+        d["font_style"] = span.font_style
+    if span.y_offset is not None:
+        d["y_offset"] = span.y_offset
+    if span.x_offset is not None:
+        d["x_offset"] = span.x_offset
+    return d
+
+
+def _span_from_dict(d: dict[str, Any]) -> SpanInfo:
+    return SpanInfo(
+        text=d["text"],
+        font_size=d.get("font_size"),
+        font_family=d.get("font_family"),
+        font_weight=d.get("font_weight"),
+        font_style=d.get("font_style"),
+        y_offset=d.get("y_offset"),
+        x_offset=d.get("x_offset"),
+    )
 
 
 def _layout_to_dict(layout: LayoutHint) -> dict[str, Any]:
@@ -93,10 +125,16 @@ def _layout_to_dict(layout: LayoutHint) -> dict[str, Any]:
         d["header_footer"] = True
     if layout.display_text is not None:
         d["display_text"] = layout.display_text
+    if layout.line_height is not None:
+        d["line_height"] = layout.line_height
+    if layout.spans is not None:
+        d["spans"] = [_span_to_dict(s) for s in layout.spans]
     return d
 
 
 def _layout_from_dict(d: dict[str, Any]) -> LayoutHint:
+    raw_spans = d.get("spans")
+    spans = tuple(_span_from_dict(s) for s in raw_spans) if raw_spans is not None else None
     return LayoutHint(
         page=d.get("page"),
         x=d.get("x"),
@@ -113,6 +151,8 @@ def _layout_from_dict(d: dict[str, Any]) -> LayoutHint:
         first_line_weight=d.get("first_line_weight"),
         header_footer=bool(d.get("header_footer", False)),
         display_text=d.get("display_text"),
+        line_height=d.get("line_height"),
+        spans=spans,
     )
 
 
@@ -193,6 +233,10 @@ def node_to_dict(node: Any) -> dict[str, Any]:
         case CodeBlock(source=source, language=language):
             d["source"] = source
             d["language"] = language
+        case MathBlock(source=source, equation_number=eq_num, display=display):
+            d["source"] = source
+            d["equation_number"] = eq_num
+            d["display"] = display
         case Task(title=title, completed=completed, due_date=due_date):
             d["title"] = title
             d["completed"] = completed
@@ -266,6 +310,13 @@ def node_from_dict(d: dict[str, Any]) -> Any:
             return Sheet(meta=meta, title=d["title"], rows=d["rows"], cols=d["cols"])
         case _ if node_cls is CodeBlock:
             return CodeBlock(meta=meta, source=d["source"], language=d["language"])
+        case _ if node_cls is MathBlock:
+            return MathBlock(
+                meta=meta,
+                source=d["source"],
+                equation_number=d.get("equation_number"),
+                display=d.get("display", "block"),
+            )
         case _ if node_cls is Task:
             due = d.get("due_date")
             due_dt = datetime.fromisoformat(due) if due is not None else None

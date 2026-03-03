@@ -150,7 +150,7 @@ def _parse_doc_blocks(
 
 def _render_single_block(node: object) -> tuple[str, str, str]:
     """Render one node to (html, raw_text, node_type)."""
-    from uaf.core.nodes import CodeBlock, Heading, Image, Paragraph, TextBlock
+    from uaf.core.nodes import CodeBlock, Heading, Image, MathBlock, Paragraph, TextBlock
 
     match node:
         case Heading(text=text, level=level):
@@ -164,6 +164,16 @@ def _render_single_block(node: object) -> tuple[str, str, str]:
             return (
                 f"<pre><code{lang_cls}>{escape(source)}</code></pre>",
                 source, "code_block",
+            )
+        case MathBlock(source=source, equation_number=eq_num):
+            eq_html = (
+                f' <span class="eq-number">{escape(eq_num)}</span>'
+                if eq_num else ""
+            )
+            return (
+                f'<div class="math-block"><code>{escape(source)}</code>'
+                f"{eq_html}</div>",
+                source, "math_block",
             )
         case TextBlock(text=text):
             return f'<div class="text-block">{escape(text)}</div>', text, "text_block"

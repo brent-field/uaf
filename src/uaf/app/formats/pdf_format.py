@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 from collections import Counter
@@ -15,9 +16,11 @@ from uaf.core.nodes import (
     Artifact,
     Heading,
     LayoutHint,
+    MathBlock,
     NodeType,
     Paragraph,
     Shape,
+    SpanInfo,
     make_node_metadata,
 )
 
@@ -38,6 +41,12 @@ _PAGE_NUM_RE = re.compile(r"\b\d+\b")
 # Detects a line-end hyphenation: a letter followed by a hyphen at end of line
 # where the next line starts with a lowercase letter.
 _HYPHEN_RE = re.compile(r"([a-zA-Z])-\n([a-z])")
+
+# Computer Modern font prefixes that indicate mathematical content.
+_CM_MATH_PREFIXES = ("CMR", "CMMI", "CMSY", "CMEX", "CMB")
+
+# Pattern to detect equation numbers like "(3)", "(2.1)", "(A.3)".
+_EQ_NUM_RE = re.compile(r"\((\d+(?:\.\d+)?|[A-Z](?:\.\d+)?)\)\s*$")
 
 
 class PdfHandler:
@@ -123,6 +132,17 @@ class PdfHandler:
 
                 line_ht = _compute_line_height(block)
 
+                # Detect math block: majority Computer Modern math fonts
+                is_math = _is_math_block(block)
+
+                # Only build per-span metadata for math-majority blocks
+                # (display equations).  Non-math blocks — including
+                # paragraphs with inline math and small-caps text —
+                # render as plain text to preserve normal word spacing.
+                # Absolute span positioning breaks text flow because
+                # browser font metrics differ from PDF fonts.
+                span_list = _build_span_list(block) if is_math else None
+
                 layout = LayoutHint(
                     page=page_num,
                     x=x0,
@@ -139,18 +159,43 @@ class PdfHandler:
                     first_line_weight=first_lw,
                     display_text=display_text,
                     line_height=line_ht,
+                    spans=span_list,
                 )
+
+                # For math blocks, the character-weighted dominant font size
+                # can be wrong: dense subscripts/superscripts (7pt, 5pt) may
+                # outnumber base-size (10pt) characters.  Use the max span
+                # font size as the base size instead.
+                if is_math and span_list:
+                    max_sz = max(
+                        (s.font_size for s in span_list if s.font_size),
+                        default=None,
+                    )
+                    if max_sz is not None:
+                        layout = dataclasses.replace(layout, font_size=max_sz)
 
                 # Detect heading heuristic: large font or bold
                 is_heading = (
-                    font.get("size") is not None
+                    not is_math
+                    and font.get("size") is not None
                     and font["size"] >= 16.0
                     and len(text) < 200
                 )
 
-                if is_heading:
+                node: Heading | Paragraph | MathBlock
+                if is_math:
+                    source_text = raw_text if raw_text else text
+                    source_clean, eq_num = _extract_equation_number(source_text)
+                    node = MathBlock(
+                        meta=make_node_metadata(
+                            NodeType.MATH_BLOCK, layout=layout,
+                        ),
+                        source=source_clean,
+                        equation_number=eq_num,
+                    )
+                elif is_heading:
                     level = _heading_level_from_size(font.get("size", 12.0))
-                    node: Heading | Paragraph = Heading(
+                    node = Heading(
                         meta=make_node_metadata(NodeType.HEADING, layout=layout),
                         text=text,
                         level=level,
@@ -190,6 +235,8 @@ class PdfHandler:
         for child in children:
             if isinstance(child, (Paragraph, Heading)):
                 parts.append(child.text)
+            elif isinstance(child, MathBlock):
+                parts.append(child.source)
 
         text = "\n\n".join(parts)
         if not text.endswith("\n"):
@@ -452,6 +499,7 @@ _FONT_MAP: list[tuple[str, str]] = [
     ("CMR", '"Times New Roman", Times, serif'),  # CM Roman
     ("CMSY", "Symbol, serif"),  # CM Symbols
     ("CMMI", '"Times New Roman", Times, serif'),  # CM Math Italic
+    ("CMEX", "Symbol, serif"),  # CM Extension (large brackets, integrals)
     ("CMB", '"Times New Roman", Times, serif'),  # CM Bold
     # Liberation (metric-compatible with MS core fonts)
     ("LiberationSerif", '"Times New Roman", Times, serif'),
@@ -475,6 +523,115 @@ def _map_font_family(pdf_font: str) -> str:
             return css_stack
     # Unknown — keep original and append a generic fallback.
     return f"{pdf_font}, serif"
+
+
+def _is_math_block(block: dict[str, Any]) -> bool:
+    """Detect whether a block is a math equation based on font usage.
+
+    A block is classified as math if Computer Modern math fonts (CMMI, CMSY,
+    CMEX, CMR, etc.) account for the majority of the text characters.
+    """
+    cm_chars = 0
+    total_chars = 0
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            text_len = len(span.get("text", ""))
+            if text_len == 0:
+                continue
+            total_chars += text_len
+            font = span.get("font", "")
+            if any(font.startswith(p) for p in _CM_MATH_PREFIXES):
+                cm_chars += text_len
+    if total_chars == 0:
+        return False
+    return cm_chars / total_chars > 0.5
+
+
+def _extract_equation_number(text: str) -> tuple[str, str | None]:
+    """Extract an equation number from the end of display text.
+
+    Returns (cleaned_source, equation_number).  If no equation number is
+    found, returns (text, None).
+    """
+    m = _EQ_NUM_RE.search(text)
+    if m is not None:
+        eq_num = m.group(0).strip()
+        source = text[: m.start()].rstrip()
+        return source, eq_num
+    return text, None
+
+
+def _has_math_fonts(block: dict[str, Any]) -> bool:
+    """Check whether a block contains any Computer Modern math font spans.
+
+    Returns ``True`` if at least one span uses a CM math font (CMMI, CMSY,
+    CMEX, CMR, CMB).  This is a weaker test than :func:`_is_math_block`
+    (which requires a *majority* of CM characters) and is used to decide
+    whether per-span metadata is needed for sub/superscript positioning.
+    """
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            font = span.get("font", "")
+            if any(font.startswith(p) for p in _CM_MATH_PREFIXES):
+                return True
+    return False
+
+
+def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
+    """Build per-span font metadata from the raw PyMuPDF block.
+
+    Returns ``None`` when all spans have uniform font properties (the
+    block-level LayoutHint already captures everything needed).
+
+    Only called for math-majority blocks (display equations) where
+    absolute positioning is needed for sub/superscript layout.
+    Non-math blocks render as plain text to preserve word spacing.
+    """
+    spans: list[SpanInfo] = []
+    seen_sizes: set[float] = set()
+
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            text = span.get("text", "")
+            if not text:
+                continue
+            font = span.get("font", "")
+            family = _map_font_family(font) if font else None
+            size = round(float(span["size"]), 1) if span.get("size") is not None else None
+            flags = span.get("flags", 0)
+            weight: str | None = "bold" if flags & (1 << 4) else None
+            style: str | None = "italic" if flags & (1 << 1) else None
+
+            # Compute x/y offset from span bbox relative to block bbox.
+            # Using bbox (glyph top-left) rather than origin (baseline)
+            # because CSS ``top:`` positions from the element's top edge.
+            span_bbox = span.get("bbox")
+            block_bbox = block.get("bbox", (0.0, 0.0, 0.0, 0.0))
+            x_off: float | None = None
+            y_off: float | None = None
+            if span_bbox is not None and len(span_bbox) >= 4:
+                x_off = round(float(span_bbox[0]) - float(block_bbox[0]), 1)
+                y_off = round(float(span_bbox[1]) - float(block_bbox[1]), 1)
+
+            spans.append(SpanInfo(
+                text=text,
+                font_size=size,
+                font_family=family,
+                font_weight=weight,
+                font_style=style,
+                y_offset=y_off,
+                x_offset=x_off,
+            ))
+
+            if size is not None:
+                seen_sizes.add(size)
+
+    # Only store spans when font sizes vary significantly (>2pt spread).
+    # Tiny variations (9.9, 10.0, 10.1) are rounding noise.
+    if len(seen_sizes) < 2 or (max(seen_sizes) - min(seen_sizes) < 2.0):
+        return None
+
+    return tuple(spans)
 
 
 def _heading_level_from_size(font_size: float) -> int:

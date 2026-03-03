@@ -20,9 +20,11 @@ from uaf.core.nodes import (
     Heading,
     Image,
     LayoutHint,
+    MathBlock,
     NodeType,
     Paragraph,
     RawNode,
+    SpanInfo,
     TextBlock,
     make_node_metadata,
 )
@@ -64,6 +66,7 @@ class TestDocLensProtocol:
         assert NodeType.PARAGRAPH in types
         assert NodeType.HEADING in types
         assert NodeType.CODE_BLOCK in types
+        assert NodeType.MATH_BLOCK in types
         assert NodeType.IMAGE in types
 
 
@@ -182,6 +185,43 @@ class TestDocLensRender:
         view = lens.render(sdb, session, art_id)
         assert "raw-node" in view.content
         assert "widget" in view.content
+
+    def test_render_with_math_block(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Doc")
+        art_id = sdb.create_node(session, art)
+
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK),
+            source="E = mc^2",
+            equation_number="(3)",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render(sdb, session, art_id)
+        assert "math-block" in view.content
+        assert "<code>" in view.content
+        assert "E = mc^2" in view.content
+        assert "eq-number" in view.content
+        assert "(3)" in view.content
+
+    def test_render_with_math_block_no_equation_number(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Doc")
+        art_id = sdb.create_node(session, art)
+
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK),
+            source="x + y",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render(sdb, session, art_id)
+        assert "math-block" in view.content
+        assert "x + y" in view.content
+        assert "eq-number" not in view.content
 
     def test_render_html_escaping(self) -> None:
         sdb, session, lens = _setup()
@@ -582,16 +622,20 @@ class TestDocLensLayoutRender:
         assert "height:" not in block_style
 
     def test_layout_node_has_nowrap(self) -> None:
-        """Layout blocks must use white-space: nowrap to prevent CSS re-wrapping.
+        """Layout blocks use white-space: nowrap to prevent double-wrapping.
 
-        Line breaks come from <br> tags that match the PDF's original line
-        positions.  The browser must not add its own wraps on top of those.
+        PDF line breaks are preserved via <br> tags.  Without nowrap, the
+        browser also wraps at box boundaries when web font metrics differ
+        from the PDF's embedded fonts — producing double line breaks
+        (orphan words on their own lines).  nowrap + overflow: hidden on
+        the page container clips any minor overflow, which is far less
+        visible than systematic double-wrapping.
         """
         sdb, session, lens = _setup()
         art_layout = LayoutHint(width=612.0, height=792.0)
         art = Artifact(
             meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
-            title="Nowrap Test",
+            title="Wrap Test",
         )
         art_id = sdb.create_node(session, art)
 
@@ -601,7 +645,7 @@ class TestDocLensLayoutRender:
         )
         p = Paragraph(
             meta=make_node_metadata(NodeType.PARAGRAPH, layout=layout),
-            text="Should not be re-wrapped by the browser",
+            text="Text that should not double-wrap",
         )
         p_id = sdb.create_node(session, p)
         sdb.create_edge(session, _contains(art_id, p_id))
@@ -877,6 +921,108 @@ class TestDocLensLayoutRender:
         assert "data-first-line-weight" not in view.content
         assert "data-height" not in view.content
         assert "data-reading-order" not in view.content
+
+    def test_render_layout_math_block(self) -> None:
+        """MathBlock nodes render in layout view with correct data-node-type."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Math Layout",
+        )
+        art_id = sdb.create_node(session, art)
+
+        layout = LayoutHint(
+            page=0, x=72.0, y=200.0, width=468.0, height=14.0,
+            font_size=10.0,
+        )
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK, layout=layout),
+            source="E = mc^2",
+            equation_number="(3)",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        assert "E = mc^2" in view.content
+        assert 'data-node-type="math_block"' in view.content
+        assert "layout-block" in view.content
+
+    def test_render_layout_spans_produce_per_span_elements(self) -> None:
+        """When layout.spans is populated, each span gets its own HTML element."""
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Span Render",
+        )
+        art_id = sdb.create_node(session, art)
+
+        spans = (
+            SpanInfo(text="θ", font_size=10.0, x_offset=0.0, y_offset=8.0),
+            SpanInfo(text="t+1", font_size=7.0, x_offset=6.0, y_offset=11.0),
+            SpanInfo(text=" = ", font_size=10.0, x_offset=14.0, y_offset=8.0),
+            SpanInfo(text="x", font_size=10.0, x_offset=28.0, y_offset=8.0),
+        )
+        layout = LayoutHint(
+            page=0, x=72.0, y=200.0, width=468.0, height=14.0,
+            font_size=10.0, spans=spans,
+        )
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK, layout=layout),
+            source="θt+1 = x",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        # Per-span <span> elements with absolute positioning and font sizes.
+        assert "position: absolute" in view.content
+        assert "font-size: 7.0pt" in view.content
+        assert "left: 6.0pt" in view.content
+        assert "θ" in view.content
+        assert "t+1" in view.content
+
+    def test_render_layout_spans_vertical_offset(self) -> None:
+        """Spans with different y_offsets get absolute vertical positioning."""
+        import re
+
+        sdb, session, lens = _setup()
+        art_layout = LayoutHint(width=612.0, height=792.0)
+        art = Artifact(
+            meta=make_node_metadata(NodeType.ARTIFACT, layout=art_layout),
+            title="Offset Render",
+        )
+        art_id = sdb.create_node(session, art)
+
+        # Base text at y_offset=8, subscript shifted down at y_offset=11
+        spans = (
+            SpanInfo(text="θ", font_size=10.0, x_offset=0.0, y_offset=8.0),
+            SpanInfo(text="t", font_size=7.0, x_offset=6.0, y_offset=11.0),
+        )
+        layout = LayoutHint(
+            page=0, x=72.0, y=200.0, width=468.0, height=14.0,
+            font_size=10.0, spans=spans,
+        )
+        mb = MathBlock(
+            meta=make_node_metadata(NodeType.MATH_BLOCK, layout=layout),
+            source="θt",
+        )
+        mb_id = sdb.create_node(session, mb)
+        sdb.create_edge(session, _contains(art_id, mb_id))
+
+        view = lens.render_layout(sdb, session, art_id)
+        # Each span should have position: absolute with top: for y placement.
+        span_matches = re.findall(
+            r'<span[^>]*style="([^"]*)"[^>]*>', view.content,
+        )
+        has_top_8 = any("top: 8.0pt" in s for s in span_matches)
+        has_top_11 = any("top: 11.0pt" in s for s in span_matches)
+        assert has_top_8 and has_top_11, (
+            f"Expected spans with top: 8.0pt and top: 11.0pt. "
+            f"Span styles: {span_matches}"
+        )
 
     def test_layout_node_no_rotation_for_horizontal(self) -> None:
         """Horizontal text (rotation=None) has no CSS transform."""

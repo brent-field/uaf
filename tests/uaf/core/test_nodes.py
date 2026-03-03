@@ -14,6 +14,7 @@ from uaf.core.nodes import (
     Heading,
     Image,
     LayoutHint,
+    MathBlock,
     NodeMetadata,
     NodeType,
     Paragraph,
@@ -21,6 +22,7 @@ from uaf.core.nodes import (
     Shape,
     Sheet,
     Slide,
+    SpanInfo,
     Task,
     TextBlock,
     make_node_metadata,
@@ -38,6 +40,7 @@ class TestNodeType:
             "FORMULA_CELL",
             "SHEET",
             "CODE_BLOCK",
+            "MATH_BLOCK",
             "TASK",
             "SLIDE",
             "SHAPE",
@@ -209,6 +212,7 @@ class TestNodeDataUnionExhaustiveness:
         | FormulaCell
         | Sheet
         | CodeBlock
+        | MathBlock
         | Task
         | Slide
         | Shape
@@ -233,6 +237,8 @@ class TestNodeDataUnionExhaustiveness:
                 return "sheet"
             case CodeBlock():
                 return "code_block"
+            case MathBlock():
+                return "math_block"
             case Task():
                 return "task"
             case Slide():
@@ -261,3 +267,65 @@ class TestNodeDataUnionExhaustiveness:
     def test_match_image(self) -> None:
         node = Image(meta=make_node_metadata(NodeType.IMAGE), uri="blob:abc")
         assert self._match_node(node) == "image"
+
+    def test_match_math_block(self) -> None:
+        node = MathBlock(meta=make_node_metadata(NodeType.MATH_BLOCK), source="E=mc^2")
+        assert self._match_node(node) == "math_block"
+
+
+class TestSpanInfo:
+    def test_defaults(self) -> None:
+        s = SpanInfo(text="hello")
+        assert s.text == "hello"
+        assert s.font_size is None
+        assert s.font_family is None
+        assert s.y_offset is None
+
+    def test_with_all_fields(self) -> None:
+        s = SpanInfo(
+            text="E",
+            font_size=12.0,
+            font_family="Symbol, serif",
+            font_weight="bold",
+            font_style="italic",
+            y_offset=-3.0,
+        )
+        assert s.font_weight == "bold"
+        assert s.y_offset == -3.0
+
+    def test_is_frozen(self) -> None:
+        s = SpanInfo(text="x")
+        with pytest.raises(AttributeError):
+            s.text = "y"  # type: ignore[misc]
+
+
+class TestMathBlock:
+    def test_construction(self) -> None:
+        meta = make_node_metadata(NodeType.MATH_BLOCK)
+        mb = MathBlock(meta=meta, source="E = mc^2")
+        assert mb.source == "E = mc^2"
+        assert mb.equation_number is None
+        assert mb.display == "block"
+
+    def test_with_equation_number(self) -> None:
+        meta = make_node_metadata(NodeType.MATH_BLOCK)
+        mb = MathBlock(meta=meta, source="x^2", equation_number="(3)")
+        assert mb.equation_number == "(3)"
+
+    def test_is_frozen(self) -> None:
+        mb = MathBlock(meta=make_node_metadata(NodeType.MATH_BLOCK), source="x=1")
+        with pytest.raises(AttributeError):
+            mb.source = "y=2"  # type: ignore[misc]
+
+
+class TestLayoutHintSpans:
+    def test_spans_default_none(self) -> None:
+        hint = LayoutHint()
+        assert hint.spans is None
+
+    def test_with_spans(self) -> None:
+        spans = (SpanInfo(text="E", font_size=10.0),)
+        hint = LayoutHint(spans=spans)
+        assert hint.spans is not None
+        assert len(hint.spans) == 1
+        assert hint.spans[0].text == "E"
