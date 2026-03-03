@@ -18,11 +18,11 @@ point for AI agents and collaborators navigating the UAF project.
 
 | # | Document | Path | Summary |
 |---|----------|------|---------|
-| 001 | **Initial Vision** | [docs/plans/001-initial-vision.md](docs/plans/001-initial-vision.md) | Strategic blueprint — Global Object Graph, Lens architecture, domain extensions, AI strategy, EU sovereignty positioning |
+| 001 | **Initial Vision** | *private — see uaf-confidential repo* | Strategic blueprint — Global Object Graph, Lens architecture, domain extensions, AI strategy, EU sovereignty positioning |
 | 002 | **Database Layer** | [docs/plans/002-database-layer.md](docs/plans/002-database-layer.md) | Core data model + database implementation — event-sourced operation DAG, EAVT indexes, node/edge types, serialization, GraphDB facade. 13 implementation phases. Appendices: undo/redo, CRDT sync, Rust migration, AI training data, business continuity |
 | 003 | **Security Layer** | [docs/plans/003-security-layer.md](docs/plans/003-security-layer.md) | Authentication, authorization (RBAC + ACLs), audit logging, SecureGraphDB wrapper. 6 implementation phases. Appendices: encryption roadmap, state-sponsored threat model |
 | 004 | **Application Layer** | [docs/plans/004-application-layer.md](docs/plans/004-application-layer.md) | Lens protocol, DocLens, GridLens, REST API (FastAPI), MCP server, format handlers. 6 implementation phases. Appendices: frontend options, real-time collaboration, rich text editing |
-| 005 | **Business Plan** | [docs/plans/005-business-plan.md](docs/plans/005-business-plan.md) | Products, distribution, open-source strategy, revenue model, market segments, competitive landscape, ERP replacement architecture with 9 industry applications |
+| 005 | **Business Plan** | *private — see uaf-confidential repo* | Products, distribution, open-source strategy, revenue model, market segments, competitive landscape |
 | 006 | **Shapes Support** | [docs/plans/006-shapes-support.md](docs/plans/006-shapes-support.md) | Shape node types (lines, rectangles, circles, paths) for diagramming and annotation |
 | 007 | **Layout Fidelity Tests** | [docs/plans/007-layout-fidelity-tests.md](docs/plans/007-layout-fidelity-tests.md) | Ground-truth PDF fidelity test suite comparing extracted layout properties against known PDF structure |
 | 008 | **Layout Inspector UI** | [docs/plans/008-layout-inspector-ui.md](docs/plans/008-layout-inspector-ui.md) | Interactive typographic debugging — hover tooltips, click-to-inspect panel, keyboard shortcuts for the Layout view |
@@ -104,5 +104,14 @@ These connections span multiple documents:
    - Data model / database work → [002](docs/plans/002-database-layer.md)
    - Security / auth work → [003](docs/plans/003-security-layer.md)
    - API / Lens / MCP work → [004](docs/plans/004-application-layer.md)
-   - Business / product questions → [005](docs/plans/005-business-plan.md)
+   - Business / product questions → see uaf-confidential repo
 5. Implementation starts at Phase 0 (project rename) in the database plan
+
+---
+
+## Multi-Repo Structure
+
+UAF is split across three repositories:
+- **uaf** (this repo, public) — open-source core: graph primitives, database, security, application layer, lenses
+- **uaf-confidential** (private) — business strategy, vision docs, investor materials (docs 001, 005)
+- **uaf-premium** (private) — proprietary lenses, enterprise integrations, commercial features

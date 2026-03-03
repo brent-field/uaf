@@ -205,3 +205,10 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Claude Code local settings
+.claude/
+
+# Confidential docs (stored in uaf-confidential repo)
+docs/plans/001-initial-vision.md
+docs/plans/005-business-plan.md

@@ -1,15 +1,24 @@
-# Universal Data Format (UDF)
+# Universal Artifact Format (UAF)
 
 ## Project Overview
 
-UDF is a graph-based, AI-native knowledge protocol that replaces file-based legacy software with a Global Object Graph. Information is stored as **Atomic Nodes** (data) connected by semantic **Edges** (logic). Applications are interchangeable **Lenses** that view and manipulate the same underlying graph.
+UAF is a graph-based, AI-native knowledge protocol that replaces file-based legacy software with a Global Object Graph. Information is stored as **Atomic Nodes** (data) connected by semantic **Edges** (logic). Applications are interchangeable **Lenses** that view and manipulate the same underlying graph.
 
 The V1 pilot targets a VC demo with three layers:
-- **Database layer** (`src/udf/db/`) — Storage, persistence, queries, CRDT sync
-- **Security layer** (`src/udf/security/`) — Auth, encryption, access control
-- **Application layer** (`src/udf/app/`) — API endpoints, Lens interfaces
+- **Database layer** (`src/uaf/db/`) — Storage, persistence, queries, CRDT sync
+- **Security layer** (`src/uaf/security/`) — Auth, encryption, access control
+- **Application layer** (`src/uaf/app/`) — API endpoints, Lens interfaces
 
-Core graph primitives live in `src/udf/core/`.
+Core graph primitives live in `src/uaf/core/`.
+
+## Multi-Repo Structure
+
+UAF is split across three repositories:
+- **uaf** (this repo, public) — open-source core: graph primitives, database, security, application layer, lenses
+- **uaf-confidential** (private) — business strategy, vision docs, investor materials
+- **uaf-premium** (private) — proprietary lenses, enterprise integrations, commercial features
+
+All open-source code and technical docs belong here. Business strategy and proprietary extensions go in the private repos. When in doubt, default to this repo.
 
 ## Tech Stack
 
@@ -33,12 +42,12 @@ make check      # lint + test combined
 ## Project Structure
 
 ```
-src/udf/
+src/uaf/
   core/       # Graph primitives, node/edge models, schema
   db/         # Database layer — storage, persistence, queries, sync
   security/   # Security layer — auth, encryption, access control
   app/        # Application layer — API, lenses
-tests/        # Mirrors src/udf/ structure
+tests/        # Mirrors src/uaf/ structure
 docs/         # Architecture and design documents
 ```
 
@@ -65,5 +74,4 @@ docs/         # Architecture and design documents
 - `agents.md` — Document index and table of contents for all project docs
 - `docs/architecture.md` — System architecture and design principles
 - `docs/plans/` — Planning documents (numbered sequentially)
-- `docs/plans/001-initial-vision.md` — Original vision document and strategic blueprint
 - `pyproject.toml` — Project config, dependencies, tool settings

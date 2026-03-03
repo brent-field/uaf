@@ -1,17 +1,17 @@
-# Universal Data Format (UDF)
+# Universal Artifact Format (UAF)
 
 A graph-based, AI-native knowledge protocol that replaces file-based legacy software with a Global Object Graph.
 
 ## Architecture
 
-UDF is structured in three layers:
+UAF is structured in four layers:
 
-- **Core** (`src/udf/core/`) — Graph primitives, node/edge models, schema definitions
-- **Database** (`src/udf/db/`) — Storage, persistence, queries, CRDT sync
-- **Security** (`src/udf/security/`) — Authentication, encryption, access control
-- **Application** (`src/udf/app/`) — API endpoints, Lens interfaces
+- **Core** (`src/uaf/core/`) — Graph primitives, node/edge models, schema definitions
+- **Database** (`src/uaf/db/`) — Storage, persistence, queries, CRDT sync
+- **Security** (`src/uaf/security/`) — Authentication, encryption, access control
+- **Application** (`src/uaf/app/`) — API endpoints, Lens interfaces
 
-See [agents.md](agents.md) for a full document index, [docs/architecture.md](docs/architecture.md) for the system design, and [docs/plans/001-initial-vision.md](docs/plans/001-initial-vision.md) for the original vision document.
+See [agents.md](agents.md) for a full document index and [docs/architecture.md](docs/architecture.md) for the system design.
 
 ## Getting Started
 
@@ -47,3 +47,7 @@ This project uses:
 # Set up pre-commit hooks
 uv run pre-commit install
 ```
+
+## License
+
+This project is licensed under the Apache License 2.0 — see [LICENSE](LICENSE) for details.
