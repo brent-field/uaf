@@ -9,5 +9,5 @@ See [CLAUDE.md](../CLAUDE.md) for comprehensive project instructions, coding con
 - **Test:** `make test` (pytest)
 - **Lint:** `make lint` (ruff + mypy strict)
 - **Format:** `make format` (ruff format)
-- **Structure:** `src/udf/` with `core/`, `db/`, `security/`, `app/` submodules
+- **Structure:** `src/uaf/` with `core/`, `db/`, `security/`, `app/` submodules
 - **Tests:** Mirror structure in `tests/`
