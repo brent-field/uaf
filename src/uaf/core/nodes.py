@@ -43,6 +43,7 @@ class SpanInfo:
     font_weight: str | None = None
     font_style: str | None = None
     y_offset: float | None = None
+    x_offset: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

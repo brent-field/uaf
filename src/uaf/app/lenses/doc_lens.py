@@ -234,8 +234,10 @@ class DocLens:
             style_parts.append(f"top: {layout.y}pt")
         if layout.width is not None:
             style_parts.append(f"width: {layout.width}pt")
-        # No explicit height — let content flow naturally to avoid
-        # clipping when HTML font metrics differ from the PDF engine.
+        # When spans use absolute positioning the parent collapses to
+        # zero height, so we must set an explicit height from the PDF bbox.
+        if layout.spans and layout.height is not None:
+            style_parts.append(f"height: {layout.height}pt")
         if layout.reading_order is not None:
             style_parts.append(f"z-index: {1000 - layout.reading_order}")
         if layout.rotation is not None:
@@ -265,9 +267,9 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # For math blocks with per-span data, render each span with
-        # its own font-size and vertical offset (subscripts/superscripts).
-        if isinstance(node, MathBlock) and layout.spans:
+        # For blocks with per-span data, render each span with absolute
+        # positioning for sub/superscripts, equation numbers, and inline math.
+        if layout.spans:
             escaped = _format_spans(layout)
         else:
             # For layout view, prefer the original PDF line-broken text
@@ -688,27 +690,22 @@ def _format_layout_text(text: str, layout: LayoutHint) -> str:
 
 
 def _format_spans(layout: LayoutHint) -> str:
-    """Render per-span HTML with individual font sizes and vertical offsets.
+    """Render per-span HTML with absolute positioning within the block.
 
-    Each span is wrapped in a ``<span>`` tag with its own ``font-size``
-    CSS.  When y_offsets vary across spans, a ``position: relative; top:``
-    style shifts subscripts/superscripts to their correct vertical position
-    relative to the dominant baseline.
+    Each span gets ``position: absolute`` with ``left`` / ``top`` from its
+    ``x_offset`` / ``y_offset``, enabling overlapping sub/superscripts and
+    right-margin equation numbers.
     """
     assert layout.spans is not None
     block_size = layout.font_size
 
-    # Determine the base y_offset (the most common baseline position
-    # among spans that have the largest font size).
-    offsets = [
-        s.y_offset for s in layout.spans
-        if s.y_offset is not None and s.font_size == block_size
-    ]
-    base_y = offsets[0] if offsets else None
-
     parts: list[str] = []
     for span in layout.spans:
-        css: list[str] = []
+        css: list[str] = ["position: absolute"]
+        if span.x_offset is not None:
+            css.append(f"left: {span.x_offset}pt")
+        if span.y_offset is not None:
+            css.append(f"top: {span.y_offset}pt")
         if span.font_size is not None and span.font_size != block_size:
             css.append(f"font-size: {span.font_size}pt")
         if span.font_style:
@@ -716,18 +713,8 @@ def _format_spans(layout: LayoutHint) -> str:
         if span.font_weight:
             css.append(f"font-weight: {escape(span.font_weight)}")
 
-        # Vertical offset relative to the base line.
-        if base_y is not None and span.y_offset is not None:
-            delta = round(span.y_offset - base_y, 1)
-            if delta != 0.0:
-                css.append("position: relative")
-                css.append(f"top: {delta}pt")
-
         escaped_text = escape(span.text)
-        if css:
-            style = "; ".join(css)
-            parts.append(f'<span style="{style}">{escaped_text}</span>')
-        else:
-            parts.append(escaped_text)
+        style = "; ".join(css)
+        parts.append(f'<span style="{style}">{escaped_text}</span>')
 
     return "".join(parts)

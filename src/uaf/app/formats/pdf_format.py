@@ -576,11 +576,13 @@ def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
             weight: str | None = "bold" if flags & (1 << 4) else None
             style: str | None = "italic" if flags & (1 << 1) else None
 
-            # Compute y_offset from span origin relative to block top.
+            # Compute x/y offset from span origin relative to block bbox.
             origin = span.get("origin")
             block_bbox = block.get("bbox", (0.0, 0.0, 0.0, 0.0))
+            x_off: float | None = None
             y_off: float | None = None
             if origin is not None and len(origin) >= 2:
+                x_off = round(float(origin[0]) - float(block_bbox[0]), 1)
                 y_off = round(float(origin[1]) - float(block_bbox[1]), 1)
 
             spans.append(SpanInfo(
@@ -590,6 +592,7 @@ def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
                 font_weight=weight,
                 font_style=style,
                 y_offset=y_off,
+                x_offset=x_off,
             ))
 
             if size is not None:

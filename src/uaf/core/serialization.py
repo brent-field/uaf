@@ -76,6 +76,8 @@ def _span_to_dict(span: SpanInfo) -> dict[str, Any]:
         d["font_style"] = span.font_style
     if span.y_offset is not None:
         d["y_offset"] = span.y_offset
+    if span.x_offset is not None:
+        d["x_offset"] = span.x_offset
     return d
 
 
@@ -87,6 +89,7 @@ def _span_from_dict(d: dict[str, Any]) -> SpanInfo:
         font_weight=d.get("font_weight"),
         font_style=d.get("font_style"),
         y_offset=d.get("y_offset"),
+        x_offset=d.get("x_offset"),
     )
 
 

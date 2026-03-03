@@ -960,10 +960,10 @@ class TestDocLensLayoutRender:
         art_id = sdb.create_node(session, art)
 
         spans = (
-            SpanInfo(text="θ", font_size=10.0, y_offset=8.0),
-            SpanInfo(text="t+1", font_size=7.0, y_offset=11.0),
-            SpanInfo(text=" = ", font_size=10.0, y_offset=8.0),
-            SpanInfo(text="x", font_size=10.0, y_offset=8.0),
+            SpanInfo(text="θ", font_size=10.0, x_offset=0.0, y_offset=8.0),
+            SpanInfo(text="t+1", font_size=7.0, x_offset=6.0, y_offset=11.0),
+            SpanInfo(text=" = ", font_size=10.0, x_offset=14.0, y_offset=8.0),
+            SpanInfo(text="x", font_size=10.0, x_offset=28.0, y_offset=8.0),
         )
         layout = LayoutHint(
             page=0, x=72.0, y=200.0, width=468.0, height=14.0,
@@ -977,13 +977,15 @@ class TestDocLensLayoutRender:
         sdb.create_edge(session, _contains(art_id, mb_id))
 
         view = lens.render_layout(sdb, session, art_id)
-        # Per-span <span> elements with individual font sizes.
+        # Per-span <span> elements with absolute positioning and font sizes.
+        assert "position: absolute" in view.content
         assert "font-size: 7.0pt" in view.content
+        assert "left: 6.0pt" in view.content
         assert "θ" in view.content
         assert "t+1" in view.content
 
     def test_render_layout_spans_vertical_offset(self) -> None:
-        """Spans with different y_offsets get relative vertical positioning."""
+        """Spans with different y_offsets get absolute vertical positioning."""
         import re
 
         sdb, session, lens = _setup()
@@ -996,8 +998,8 @@ class TestDocLensLayoutRender:
 
         # Base text at y_offset=8, subscript shifted down at y_offset=11
         spans = (
-            SpanInfo(text="θ", font_size=10.0, y_offset=8.0),
-            SpanInfo(text="t", font_size=7.0, y_offset=11.0),
+            SpanInfo(text="θ", font_size=10.0, x_offset=0.0, y_offset=8.0),
+            SpanInfo(text="t", font_size=7.0, x_offset=6.0, y_offset=11.0),
         )
         layout = LayoutHint(
             page=0, x=72.0, y=200.0, width=468.0, height=14.0,
@@ -1011,14 +1013,15 @@ class TestDocLensLayoutRender:
         sdb.create_edge(session, _contains(art_id, mb_id))
 
         view = lens.render_layout(sdb, session, art_id)
-        # The subscript span should have a per-span top offset style
-        # (distinct from the block's own absolute top: positioning).
+        # Each span should have position: absolute with top: for y placement.
         span_matches = re.findall(
             r'<span[^>]*style="([^"]*)"[^>]*>', view.content,
         )
-        has_offset = any("top:" in s for s in span_matches)
-        assert has_offset, (
-            f"No <span> with top: offset found. Span styles: {span_matches}"
+        has_top_8 = any("top: 8.0pt" in s for s in span_matches)
+        has_top_11 = any("top: 11.0pt" in s for s in span_matches)
+        assert has_top_8 and has_top_11, (
+            f"Expected spans with top: 8.0pt and top: 11.0pt. "
+            f"Span styles: {span_matches}"
         )
 
     def test_layout_node_no_rotation_for_horizontal(self) -> None:

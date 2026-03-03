@@ -523,12 +523,15 @@ class TestPdfRenderedLayout:
 
     def test_title_renders_with_font_size(self) -> None:
         """The title block must have a visible font-size in the rendered HTML."""
-        # Find the title block by its text content.
-        title_pattern = re.compile(
+        # The title may render as plain text or as absolutely-positioned
+        # <span> elements (small-caps).  Find the enclosing div by matching
+        # "YNAMIC" which appears either as bare text or inside a span.
+        block_pattern = re.compile(
             r'class="layout-block[^"]*"\s+style="([^"]*)">'
-            r"[^<]*DYNAMIC NESTED",
+            r".*?YNAMIC",
+            re.DOTALL,
         )
-        m = title_pattern.search(self.html)
+        m = block_pattern.search(self.html)
         assert m is not None, "Title block not found in rendered HTML"
         style = m.group(1)
         assert "font-size" in style, (
@@ -717,9 +720,14 @@ def _pdf_block_lines(substring: str) -> list[str]:
 def _html_lines_for_block(html: str, substring: str) -> list[str]:
     """Extract the text lines from the rendered layout-block containing *substring*.
 
-    The layout renderer uses ``<br>`` for line breaks, so we split on that.
-    HTML entities are decoded for comparison.
+    Handles two rendering modes:
+    1. **Inline text** — the renderer uses ``<br>`` for line breaks.
+    2. **Absolute-positioned spans** — each ``<span>`` has a ``top: Ypt``
+       style.  Spans with similar y-offsets (within 2pt) are grouped into
+       visual lines.
     """
+    from html import unescape
+
     # Find the div whose inner HTML contains the substring.
     pattern = re.compile(
         r'class="layout-block[^"]*"[^>]*>(.+?)</div>',
@@ -727,15 +735,41 @@ def _html_lines_for_block(html: str, substring: str) -> list[str]:
     )
     for m in pattern.finditer(html):
         inner = m.group(1)
-        # Strip any <span> wrappers (first-line bold) for text extraction.
+
+        # Check if this block uses absolute-positioned spans.
+        span_pattern = re.compile(
+            r'<span[^>]*style="[^"]*position:\s*absolute[^"]*top:\s*([\d.]+)pt[^"]*"[^>]*>'
+            r"(.*?)</span>",
+            re.DOTALL,
+        )
+        abs_spans = span_pattern.findall(inner)
+
+        if abs_spans:
+            # Group spans by y-offset (within 2pt tolerance).
+            text_only = "".join(unescape(txt) for _, txt in abs_spans)
+            if substring not in text_only:
+                continue
+            buckets: dict[float, list[str]] = {}
+            for y_str, txt in abs_spans:
+                y = float(y_str)
+                # Find an existing bucket within 2pt.
+                matched = False
+                for key in buckets:
+                    if abs(key - y) < 2.0:
+                        buckets[key].append(unescape(txt))
+                        matched = True
+                        break
+                if not matched:
+                    buckets[y] = [unescape(txt)]
+            return ["".join(parts) for _, parts in sorted(buckets.items())]
+
+        # Inline text mode: strip any <span> wrappers and split on <br>.
         text = re.sub(r"<span[^>]*>", "", inner)
         text = text.replace("</span>", "")
         if substring in text:
             lines = text.split("<br>")
-            # Decode HTML entities for comparison.
-            from html import unescape
-
             return [unescape(ln) for ln in lines]
+
     msg = f"No layout-block containing {substring!r}"
     raise ValueError(msg)
 
@@ -1170,6 +1204,68 @@ class TestPdfEquationFidelity:
                 f"should be base (~10pt), not subscript (~7pt). "
                 f"Source: {getattr(mb, 'source', '')[:50]}"
             )
+
+    def test_spans_have_x_offset(self) -> None:
+        """Equation 3 spans should include x_offset data for horizontal placement."""
+        eq3 = _find_block(self.page2, "arg min")
+        layout = eq3.meta.layout
+        assert layout is not None
+        assert layout.spans is not None
+        x_offsets = [s.x_offset for s in layout.spans if s.x_offset is not None]
+        assert len(x_offsets) > 1, (
+            "Equation 3 spans should have x_offset values for absolute positioning"
+        )
+        # x_offsets should vary (not all the same).
+        assert len(set(x_offsets)) > 1, (
+            f"Expected varying x_offsets, got {x_offsets}"
+        )
+
+    def test_paragraph_inline_math_has_spans(self) -> None:
+        """Paragraphs near section 2.3 with inline math should have spans.
+
+        The paragraph starting with the update rule (containing 'm' and 'l'
+        with subscripts) must preserve per-span metadata for inline math.
+        """
+        # Find a paragraph on page 2 that has spans (inline math).
+        para_with_spans = [
+            c for c in self.page2
+            if isinstance(c, Paragraph)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        assert len(para_with_spans) > 0, (
+            "Expected at least one paragraph with inline math spans on page 2"
+        )
+
+    def test_equation_number_x_offset_near_right_margin(self) -> None:
+        """The '(6)' equation number should have x_offset > 250pt (right margin)."""
+        # Equation 6 contains 'θ' (or similar math symbols) near section 2.3.
+        eq6_candidates = [
+            c for c in self.page2
+            if isinstance(c, MathBlock)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        found_eq_num = False
+        for mb in eq6_candidates:
+            layout = mb.meta.layout
+            assert layout is not None
+            assert layout.spans is not None
+            for span in layout.spans:
+                text = span.text.strip()
+                if text in ("(6)", "(5)", "(4)", "(3)"):
+                    assert span.x_offset is not None
+                    assert span.x_offset > 250.0, (
+                        f"Equation number '{text}' x_offset={span.x_offset} "
+                        f"should be > 250pt (right margin)"
+                    )
+                    found_eq_num = True
+                    break
+            if found_eq_num:
+                break
+        assert found_eq_num, (
+            "No equation number span found with x_offset in right margin"
+        )
 
     def test_uniform_body_paragraph_no_spans(self) -> None:
         """A body paragraph with uniform font (no inline math) has no spans."""
