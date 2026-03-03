@@ -267,8 +267,8 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # For blocks with per-span data, render each span with absolute
-        # positioning for sub/superscripts, equation numbers, and inline math.
+        # Blocks with per-span data (math sub/superscripts) use absolute
+        # positioning.  All other blocks use normal text rendering.
         if layout.spans:
             escaped = _format_spans(layout)
         else:

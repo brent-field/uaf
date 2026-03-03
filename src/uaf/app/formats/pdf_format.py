@@ -134,6 +134,16 @@ class PdfHandler:
 
                 span_list = _build_span_list(block)
 
+                # Detect math block: majority Computer Modern math fonts
+                is_math = _is_math_block(block)
+
+                # Detect small-caps: all-caps text with two font sizes at
+                # ~0.8 ratio (initial letters larger).  Clear per-span
+                # data so the block renders at a uniform dominant font
+                # size — no gaps from mixed-size spans.
+                if span_list and not is_math and _detect_small_caps(span_list):
+                    span_list = None
+
                 layout = LayoutHint(
                     page=page_num,
                     x=x0,
@@ -152,9 +162,6 @@ class PdfHandler:
                     line_height=line_ht,
                     spans=span_list,
                 )
-
-                # Detect math block: majority Computer Modern math fonts
-                is_math = _is_math_block(block)
 
                 # For math blocks, the character-weighted dominant font size
                 # can be wrong: dense subscripts/superscripts (7pt, 5pt) may
@@ -571,16 +578,70 @@ def _has_math_fonts(block: dict[str, Any]) -> bool:
     return False
 
 
+def _detect_small_caps(spans: tuple[SpanInfo, ...]) -> bool:
+    """Detect whether spans represent PDF small-caps text.
+
+    Small-caps PDFs render initial letters at a larger font size than the
+    rest of the word (e.g. "A" at 12pt + "BSTRACT" at 9.6pt).  Sizes may
+    vary slightly between PDF lines (e.g. 17.0 vs 17.2pt), so sizes are
+    clustered with a 1pt tolerance before checking for exactly two groups
+    at ~0.8 ratio.
+
+    Returns ``True`` when the pattern matches, so the caller can clear
+    per-span data and render at a uniform dominant font size.
+    """
+    if len(spans) < 2:
+        return False
+
+    sizes = sorted({s.font_size for s in spans if s.font_size is not None})
+    if len(sizes) < 2:
+        return False
+
+    # Cluster sizes: group values within 1pt of each other.
+    clusters: list[list[float]] = [[sizes[0]]]
+    for s in sizes[1:]:
+        if s - clusters[-1][-1] <= 1.0:
+            clusters[-1].append(s)
+        else:
+            clusters.append([s])
+
+    if len(clusters) != 2:
+        return False
+
+    small_avg = sum(clusters[0]) / len(clusters[0])
+    large_avg = sum(clusters[1]) / len(clusters[1])
+    if large_avg == 0:
+        return False
+    ratio = small_avg / large_avg
+    if not (0.70 <= ratio <= 0.85):
+        return False
+
+    # All alphabetic characters must be uppercase.
+    all_text = "".join(s.text for s in spans)
+    alpha = [c for c in all_text if c.isalpha()]
+    if not alpha or not all(c.isupper() for c in alpha):
+        return False
+
+    # Large-size spans should have at most 2 alpha chars (word initials).
+    large_sizes = set(clusters[1])
+    for span in spans:
+        if span.font_size in large_sizes:
+            span_alpha = sum(1 for c in span.text if c.isalpha())
+            if span_alpha > 2:
+                return False
+
+    return True
+
+
 def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
     """Build per-span font metadata from the raw PyMuPDF block.
 
     Returns ``None`` when all spans have uniform font properties (the
     block-level LayoutHint already captures everything needed).
 
-    Also returns ``None`` for non-math blocks even when font sizes vary
-    (e.g. small-caps headings like "ABSTRACT" where the initial letter
-    is larger).  Only blocks containing Computer Modern math fonts need
-    per-span metadata for sub/superscript positioning.
+    Spans are returned for any block with >2pt font-size spread.  The
+    caller decides how to handle them — e.g. small-caps blocks are
+    detected separately and have their spans cleared.
     """
     spans: list[SpanInfo] = []
     seen_sizes: set[float] = set()
@@ -624,15 +685,6 @@ def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
     # Only store spans when font sizes vary significantly (>2pt spread).
     # Tiny variations (9.9, 10.0, 10.1) are rounding noise.
     if len(seen_sizes) < 2 or (max(seen_sizes) - min(seen_sizes) < 2.0):
-        return None
-
-    # Only create spans for blocks that contain math fonts.  Non-math
-    # blocks with font size variation (e.g. small-caps headings where
-    # the initial letter is 12pt and the rest are 9.6pt) should render
-    # as plain text — the browser handles baseline alignment correctly
-    # for inline text with different font sizes, but absolute-positioned
-    # spans with bbox-based offsets misalign baselines.
-    if not _has_math_fonts(block):
         return None
 
     return tuple(spans)
