@@ -576,14 +576,16 @@ def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
             weight: str | None = "bold" if flags & (1 << 4) else None
             style: str | None = "italic" if flags & (1 << 1) else None
 
-            # Compute x/y offset from span origin relative to block bbox.
-            origin = span.get("origin")
+            # Compute x/y offset from span bbox relative to block bbox.
+            # Using bbox (glyph top-left) rather than origin (baseline)
+            # because CSS ``top:`` positions from the element's top edge.
+            span_bbox = span.get("bbox")
             block_bbox = block.get("bbox", (0.0, 0.0, 0.0, 0.0))
             x_off: float | None = None
             y_off: float | None = None
-            if origin is not None and len(origin) >= 2:
-                x_off = round(float(origin[0]) - float(block_bbox[0]), 1)
-                y_off = round(float(origin[1]) - float(block_bbox[1]), 1)
+            if span_bbox is not None and len(span_bbox) >= 4:
+                x_off = round(float(span_bbox[0]) - float(block_bbox[0]), 1)
+                y_off = round(float(span_bbox[1]) - float(block_bbox[1]), 1)
 
             spans.append(SpanInfo(
                 text=text,

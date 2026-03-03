@@ -723,7 +723,7 @@ def _html_lines_for_block(html: str, substring: str) -> list[str]:
     Handles two rendering modes:
     1. **Inline text** — the renderer uses ``<br>`` for line breaks.
     2. **Absolute-positioned spans** — each ``<span>`` has a ``top: Ypt``
-       style.  Spans with similar y-offsets (within 2pt) are grouped into
+       style.  Spans with similar y-offsets (within 4pt) are grouped into
        visual lines.
     """
     from html import unescape
@@ -745,17 +745,18 @@ def _html_lines_for_block(html: str, substring: str) -> list[str]:
         abs_spans = span_pattern.findall(inner)
 
         if abs_spans:
-            # Group spans by y-offset (within 2pt tolerance).
+            # Group spans by y-offset (within 4pt tolerance to handle
+            # small-caps and mixed font sizes on the same visual line).
             text_only = "".join(unescape(txt) for _, txt in abs_spans)
             if substring not in text_only:
                 continue
             buckets: dict[float, list[str]] = {}
             for y_str, txt in abs_spans:
                 y = float(y_str)
-                # Find an existing bucket within 2pt.
+                # Find an existing bucket within 4pt.
                 matched = False
                 for key in buckets:
-                    if abs(key - y) < 2.0:
+                    if abs(key - y) < 4.0:
                         buckets[key].append(unescape(txt))
                         matched = True
                         break
@@ -1265,6 +1266,70 @@ class TestPdfEquationFidelity:
                 break
         assert found_eq_num, (
             "No equation number span found with x_offset in right margin"
+        )
+
+    def test_topmost_span_near_block_top(self) -> None:
+        """The topmost span in equation 6 should start near the block's top edge.
+
+        PyMuPDF ``origin`` is the text baseline, but CSS ``top:`` positions
+        from the glyph top.  When y_offset is computed from the origin the
+        minimum y across spans is ~5.5pt (too far from the top).  Using the
+        span bbox gives ~0pt — glyph flush with the block boundary.
+        """
+        eq6 = None
+        for c in self.page2:
+            if (
+                isinstance(c, MathBlock)
+                and c.meta.layout
+                and c.meta.layout.spans
+                and any("(6)" in s.text for s in c.meta.layout.spans)
+            ):
+                eq6 = c
+                break
+        assert eq6 is not None, "Equation 6 not found on page 2"
+        layout = eq6.meta.layout
+        assert layout is not None and layout.spans is not None
+        min_y = min(
+            s.y_offset for s in layout.spans if s.y_offset is not None
+        )
+        assert min_y < 2.0, (
+            f"Topmost span y_offset={min_y} is too far from block top — "
+            f"y_offset should be computed from glyph bbox, not baseline origin"
+        )
+
+    def test_body_text_same_line_consistent_y(self) -> None:
+        """Body-text-sized spans on the same visual line should share a y_offset.
+
+        When y_offset uses the baseline ``origin``, PyMuPDF sometimes assigns
+        body text following a subscript to the subscript's line, shifting it
+        down ~1.5pt.  Using the span ``bbox`` top avoids this because bbox is
+        per-span and independent of PyMuPDF line grouping.
+        """
+        # The "where alpha controls plasticity..." paragraph is a single visual
+        # line with inline math (subscripts E_{t+1}, L_t, etc.).
+        para = _find_block(self.page2, "controls plasticity")
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.spans is not None
+        base_size = layout.font_size or 10.0
+        # Collect y_offsets of body-text-sized spans (within 1.5pt of base).
+        # Exclude whitespace-only spans whose bbox can be unreliable.
+        body_y = [
+            s.y_offset
+            for s in layout.spans
+            if s.font_size is not None
+            and abs(s.font_size - base_size) < 1.5
+            and s.y_offset is not None
+            and s.text.strip()
+        ]
+        assert len(body_y) >= 5, f"Expected >=5 body-text spans, got {len(body_y)}"
+        # On the first visual line, all body-text spans should align.
+        # Group by proximity (within 3pt) and check the largest group.
+        first_line_y = [y for y in body_y if abs(y - body_y[0]) < 3.0]
+        spread = max(first_line_y) - min(first_line_y)
+        assert spread < 1.0, (
+            f"Body-text y_offset spread on first line is {spread:.1f}pt "
+            f"(should be <1pt). Values: {first_line_y}"
         )
 
     def test_uniform_body_paragraph_no_spans(self) -> None:
