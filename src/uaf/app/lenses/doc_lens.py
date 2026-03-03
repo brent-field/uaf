@@ -695,9 +695,14 @@ def _format_spans(layout: LayoutHint) -> str:
     Each span gets ``position: absolute`` with ``left`` / ``top`` from its
     ``x_offset`` / ``y_offset``, enabling overlapping sub/superscripts and
     right-margin equation numbers.
+
+    Per-span ``font-family`` is emitted so that math symbols (e.g. CMSY10
+    mapped to Symbol) render with correct glyphs instead of inheriting the
+    block's dominant font family.
     """
     assert layout.spans is not None
     block_size = layout.font_size
+    block_family = layout.font_family
 
     parts: list[str] = []
     for span in layout.spans:
@@ -708,6 +713,9 @@ def _format_spans(layout: LayoutHint) -> str:
             css.append(f"top: {span.y_offset}pt")
         if span.font_size is not None and span.font_size != block_size:
             css.append(f"font-size: {span.font_size}pt")
+        if span.font_family and span.font_family != block_family:
+            safe_family = span.font_family.replace('"', "'")
+            css.append(f"font-family: {safe_family}")
         if span.font_style:
             css.append(f"font-style: {escape(span.font_style)}")
         if span.font_weight:

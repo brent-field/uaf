@@ -555,11 +555,32 @@ def _extract_equation_number(text: str) -> tuple[str, str | None]:
     return text, None
 
 
+def _has_math_fonts(block: dict[str, Any]) -> bool:
+    """Check whether a block contains any Computer Modern math font spans.
+
+    Returns ``True`` if at least one span uses a CM math font (CMMI, CMSY,
+    CMEX, CMR, CMB).  This is a weaker test than :func:`_is_math_block`
+    (which requires a *majority* of CM characters) and is used to decide
+    whether per-span metadata is needed for sub/superscript positioning.
+    """
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            font = span.get("font", "")
+            if any(font.startswith(p) for p in _CM_MATH_PREFIXES):
+                return True
+    return False
+
+
 def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
     """Build per-span font metadata from the raw PyMuPDF block.
 
     Returns ``None`` when all spans have uniform font properties (the
     block-level LayoutHint already captures everything needed).
+
+    Also returns ``None`` for non-math blocks even when font sizes vary
+    (e.g. small-caps headings like "ABSTRACT" where the initial letter
+    is larger).  Only blocks containing Computer Modern math fonts need
+    per-span metadata for sub/superscript positioning.
     """
     spans: list[SpanInfo] = []
     seen_sizes: set[float] = set()
@@ -603,6 +624,15 @@ def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
     # Only store spans when font sizes vary significantly (>2pt spread).
     # Tiny variations (9.9, 10.0, 10.1) are rounding noise.
     if len(seen_sizes) < 2 or (max(seen_sizes) - min(seen_sizes) < 2.0):
+        return None
+
+    # Only create spans for blocks that contain math fonts.  Non-math
+    # blocks with font size variation (e.g. small-caps headings where
+    # the initial letter is 12pt and the rest are 9.6pt) should render
+    # as plain text — the browser handles baseline alignment correctly
+    # for inline text with different font sizes, but absolute-positioned
+    # spans with bbox-based offsets misalign baselines.
+    if not _has_math_fonts(block):
         return None
 
     return tuple(spans)

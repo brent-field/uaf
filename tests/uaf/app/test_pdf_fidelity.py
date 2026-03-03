@@ -1344,3 +1344,196 @@ class TestPdfEquationFidelity:
         assert layout.spans is None, (
             "Uniform body paragraph should not have spans"
         )
+
+
+class TestSmallCapsNoSpans:
+    """Verify that small-caps text does not generate per-span metadata.
+
+    PDF small-caps renders the initial letter at a larger font size than the
+    rest (e.g. "A" at 12pt + "BSTRACT" at 9.6pt).  This produces a font
+    size spread > 2pt, but the text shares the same baseline and contains
+    no math fonts.  Generating ``position: absolute`` spans for small-caps
+    misaligns the baseline because CSS font metrics differ from PDF metrics
+    — the larger letter appears shifted vertically relative to the rest.
+
+    The fix: only generate spans for blocks that contain Computer Modern
+    math fonts.  Non-math blocks (small-caps headings, page headers) should
+    render as plain text with the browser handling baseline alignment.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        db, root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.db = db
+        self.root_id = root_id
+        self.children = children
+        self.page0 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 0
+        ]
+
+    def test_abstract_heading_no_spans(self) -> None:
+        """Small-caps 'ABSTRACT' heading must not get per-span metadata.
+
+        The heading has 'A' at 12pt and 'BSTRACT' at 9.6pt — both in
+        NimbusRomNo9L-Medi with the same baseline.  Spans would cause
+        absolute positioning that misaligns the 'A' letter.
+        """
+        abstract = _find_block(self.page0, "ABSTRACT")
+        layout = abstract.meta.layout
+        assert layout is not None
+        assert layout.spans is None, (
+            "Small-caps 'ABSTRACT' heading should not generate spans — "
+            "the font size variation (12pt 'A' + 9.6pt 'BSTRACT') is "
+            "small-caps, not math.  Spans cause baseline misalignment."
+        )
+
+    def test_page_header_no_spans(self) -> None:
+        """Small-caps 'A PREPRINT - NOVEMBER 20, 2025' must not get spans.
+
+        This repeating page header has the same small-caps pattern
+        ('A' at 10pt, 'PREPRINT' at 8pt) with no math fonts.
+        """
+        for child in self.children:
+            text = getattr(child, "text", "") or getattr(child, "source", "")
+            if "PREPRINT" in text and "NOVEMBER" in text:
+                layout = child.meta.layout
+                assert layout is not None
+                assert layout.spans is None, (
+                    "Small-caps page header should not generate spans"
+                )
+                return
+        pytest.fail("Could not find 'A PREPRINT - NOVEMBER 20, 2025' block")
+
+    def test_inline_math_paragraph_still_has_spans(self) -> None:
+        """Paragraphs with inline math (CM fonts) must keep spans.
+
+        The filter must NOT remove spans from blocks that contain
+        Computer Modern math fonts (CMSY, CMMI, CMR, etc.).
+        """
+        page2 = [
+            c for c in self.children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 2
+        ]
+        para = _find_block(page2, "each module")
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.spans is not None, (
+            "Paragraph with inline math (Computer Modern fonts) must "
+            "retain per-span metadata for sub/superscript positioning"
+        )
+        assert len(layout.spans) > 10, (
+            f"Expected many spans for paragraph with inline math, got "
+            f"{len(layout.spans)}"
+        )
+
+
+class TestMathSpanFontFamily:
+    """Verify that math span rendering includes per-span font-family CSS.
+
+    Math blocks and paragraphs with inline math contain spans from different
+    font families: CMSY10 → Symbol, CMMI10 → Times New Roman (italic), etc.
+    When rendering with ``position: absolute``, each span must include its
+    own ``font-family`` CSS to ensure correct glyph shapes and widths.
+
+    Without per-span font-family, a script-M (CMSY10 → Symbol) renders in
+    Times New Roman, producing a regular "M" with different width, which
+    distorts spacing relative to the PDF original.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        from uaf.app.lenses.doc_lens import DocLens
+        from uaf.security.auth import LocalAuthProvider
+        from uaf.security.secure_graph_db import SecureGraphDB
+
+        db, root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.children = children
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        session = sdb.system_session()
+        lens = DocLens()
+        self.view = lens.render_layout(sdb, session, root_id)
+        self.html = self.view.content
+        self.page2 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 2
+        ]
+
+    def test_symbol_font_in_math_span_css(self) -> None:
+        """Math spans with Symbol font family must include font-family CSS.
+
+        CMSY10 maps to 'Symbol, serif'.  The rendered <span> must include
+        ``font-family: Symbol, serif`` so math glyphs render correctly.
+        """
+        # Find a MathBlock with spans
+        math_blocks = [
+            c for c in self.page2
+            if isinstance(c, MathBlock)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        assert len(math_blocks) > 0, "No MathBlocks with spans found"
+
+        # Check that at least one span has a Symbol font family stored
+        found_symbol_font = False
+        for mb in math_blocks:
+            layout = mb.meta.layout
+            assert layout is not None and layout.spans is not None
+            for span in layout.spans:
+                if span.font_family and "Symbol" in span.font_family:
+                    found_symbol_font = True
+                    break
+            if found_symbol_font:
+                break
+        assert found_symbol_font, (
+            "Expected at least one math span with Symbol font family"
+        )
+
+    def test_rendered_math_spans_include_font_family(self) -> None:
+        """Rendered math span HTML must include font-family for each span.
+
+        When blocks have per-span data, the _format_spans renderer must
+        emit font-family on each span so different fonts (Symbol for
+        math symbols, Times for regular text) render with correct glyphs.
+        """
+        # Find spans with font-family in the HTML
+        span_pattern = re.compile(
+            r'<span\s+style="([^"]*position:\s*absolute[^"]*)">[^<]*</span>',
+        )
+        spans_with_family = 0
+        spans_total = 0
+        for m in span_pattern.finditer(self.html):
+            style = m.group(1)
+            spans_total += 1
+            if "font-family" in style:
+                spans_with_family += 1
+
+        assert spans_total > 0, "No absolute-positioned spans found in HTML"
+        assert spans_with_family > 0, (
+            f"Found {spans_total} absolute-positioned spans but none include "
+            f"font-family.  Math spans need per-span font-family CSS to "
+            f"render correct glyphs (e.g. Symbol for CMSY math symbols)."
+        )
+
+    def test_inline_math_m_has_symbol_font(self) -> None:
+        """The script-M glyph in inline math must render with Symbol font.
+
+        In the PDF, 'M' from CMSY10 is a calligraphic/script letter.
+        It must render in the Symbol font family (or equivalent), not
+        the block's dominant Times New Roman.
+        """
+        # Check span data for a paragraph containing "M" in Symbol font
+        para = _find_block(self.page2, "each module")
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.spans is not None
+
+        m_spans = [
+            s for s in layout.spans
+            if "M" in s.text and s.font_family and "Symbol" in s.font_family
+        ]
+        assert len(m_spans) > 0, (
+            "Expected at least one 'M' span with Symbol font family "
+            "in the 'each module' paragraph"
+        )
