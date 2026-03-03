@@ -1218,21 +1218,23 @@ class TestPdfEquationFidelity:
             f"Expected varying x_offsets, got {x_offsets}"
         )
 
-    def test_paragraph_inline_math_has_spans(self) -> None:
-        """Paragraphs near section 2.3 with inline math should have spans.
+    def test_paragraph_inline_math_no_spans(self) -> None:
+        """Paragraphs with inline math must NOT have spans.
 
-        The paragraph starting with the update rule (containing 'm' and 'l'
-        with subscripts) must preserve per-span metadata for inline math.
+        Absolute span positioning breaks normal text flow — browser font
+        metrics differ from PDF fonts, causing missing spaces before
+        equations and uneven gaps after subscripts.  Paragraphs render
+        as plain text flow; only math-majority blocks get spans.
         """
-        # Find a paragraph on page 2 that has spans (inline math).
         para_with_spans = [
             c for c in self.page2
             if isinstance(c, Paragraph)
             and c.meta.layout
             and c.meta.layout.spans
         ]
-        assert len(para_with_spans) > 0, (
-            "Expected at least one paragraph with inline math spans on page 2"
+        assert len(para_with_spans) == 0, (
+            "Paragraphs with inline math should NOT have spans — "
+            "absolute positioning breaks text flow spacing"
         )
 
     def test_equation_number_x_offset_near_right_margin(self) -> None:
@@ -1294,41 +1296,6 @@ class TestPdfEquationFidelity:
             f"y_offset should be computed from glyph bbox, not baseline origin"
         )
 
-    def test_body_text_same_line_consistent_y(self) -> None:
-        """Body-text-sized spans on the same visual line should share a y_offset.
-
-        When y_offset uses the baseline ``origin``, PyMuPDF sometimes assigns
-        body text following a subscript to the subscript's line, shifting it
-        down ~1.5pt.  Using the span ``bbox`` top avoids this because bbox is
-        per-span and independent of PyMuPDF line grouping.
-        """
-        # The "where alpha controls plasticity..." paragraph is a single visual
-        # line with inline math (subscripts E_{t+1}, L_t, etc.).
-        para = _find_block(self.page2, "controls plasticity")
-        layout = para.meta.layout
-        assert layout is not None
-        assert layout.spans is not None
-        base_size = layout.font_size or 10.0
-        # Collect y_offsets of body-text-sized spans (within 1.5pt of base).
-        # Exclude whitespace-only spans whose bbox can be unreliable.
-        body_y = [
-            s.y_offset
-            for s in layout.spans
-            if s.font_size is not None
-            and abs(s.font_size - base_size) < 1.5
-            and s.y_offset is not None
-            and s.text.strip()
-        ]
-        assert len(body_y) >= 5, f"Expected >=5 body-text spans, got {len(body_y)}"
-        # On the first visual line, all body-text spans should align.
-        # Group by proximity (within 3pt) and check the largest group.
-        first_line_y = [y for y in body_y if abs(y - body_y[0]) < 3.0]
-        spread = max(first_line_y) - min(first_line_y)
-        assert spread < 1.0, (
-            f"Body-text y_offset spread on first line is {spread:.1f}pt "
-            f"(should be <1pt). Values: {first_line_y}"
-        )
-
     def test_uniform_body_paragraph_no_spans(self) -> None:
         """A body paragraph with uniform font (no inline math) has no spans."""
         page0 = [
@@ -1343,17 +1310,13 @@ class TestPdfEquationFidelity:
         )
 
 
-class TestSmallCapsSpanClearing:
-    """Verify that small-caps text has spans cleared for uniform rendering.
+class TestNonMathBlocksNoSpans:
+    """Verify that non-math blocks do not have per-span data.
 
-    PDF small-caps renders the initial letter at a larger font size than the
-    rest (e.g. "A" at 12pt + "BSTRACT" at 9.6pt, or "D" at 17pt +
-    "YNAMIC" at 14pt in the title).  Per-span font-size rendering (absolute
-    or inline) creates visible gaps because browser font metrics differ from
-    the PDF's embedded fonts.
-
-    The correct approach: detect small-caps and clear per-span data so the
-    block renders at a uniform dominant font size — no gaps, clean text.
+    Only math-majority blocks (display equations) use absolute span
+    positioning for sub/superscript layout.  All other blocks — including
+    small-caps text and paragraphs with inline math — render as plain
+    text flow to preserve correct word spacing.
     """
 
     @pytest.fixture(autouse=True)
@@ -1414,32 +1377,35 @@ class TestSmallCapsSpanClearing:
         )
 
     def test_math_blocks_still_use_absolute_positioning(self) -> None:
-        """Math blocks with sub/superscripts must keep absolute positioning.
+        """Math-majority blocks must keep absolute positioning for spans.
 
-        Small-caps detection only applies to non-math blocks.  Math blocks
-        need absolute positioning for subscripts, superscripts, and
-        equation numbers at different vertical positions.
+        Display equations need per-span absolute positioning for
+        subscripts, superscripts, and equation numbers.
         """
         page2 = [
             c for c in self.children
             if hasattr(c, "meta") and c.meta.layout and c.meta.layout.page == 2
         ]
-        para = _find_block(page2, "each module")
-        layout = para.meta.layout
-        assert layout is not None
-        assert layout.spans is not None, (
-            "Inline math paragraph must have spans"
+        math_with_spans = [
+            c for c in page2
+            if isinstance(c, MathBlock)
+            and c.meta.layout
+            and c.meta.layout.spans
+        ]
+        assert len(math_with_spans) > 0, (
+            "Expected at least one MathBlock with spans on page 2"
         )
 
-        # Check that the rendered HTML for this block uses absolute spans
-        nid = para.meta.id
+        # Check that the rendered HTML uses absolute spans
+        mb = math_with_spans[0]
+        nid = mb.meta.id
         div_pattern = re.compile(
             rf'<div[^>]*data-node-id="{re.escape(str(nid))}"[^>]*>(.*?)</div>',
         )
         m = div_pattern.search(self.html)
-        assert m is not None, "Inline math div not found in rendered HTML"
+        assert m is not None, "MathBlock div not found in rendered HTML"
         inner = m.group(1)
         assert "position: absolute" in inner, (
-            "Inline math paragraph must use absolute positioning for "
+            "MathBlock must use absolute positioning for "
             "sub/superscript placement"
         )
