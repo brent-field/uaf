@@ -135,13 +135,19 @@ class PdfHandler:
                 # Detect math block: majority Computer Modern math fonts
                 is_math = _is_math_block(block)
 
-                # Only build per-span metadata for math-majority blocks
-                # (display equations).  Non-math blocks — including
-                # paragraphs with inline math and small-caps text —
-                # render as plain text to preserve normal word spacing.
-                # Absolute span positioning breaks text flow because
-                # browser font metrics differ from PDF fonts.
-                span_list = _build_span_list(block) if is_math else None
+                # Math-majority blocks (display equations) get full
+                # per-span metadata with absolute positioning for
+                # sub/superscripts.  Non-math blocks with some math
+                # fonts (inline math in paragraphs) get lightweight
+                # inline spans — font styling only, no positioning —
+                # so text flows naturally while math characters render
+                # with the correct font-family.
+                if is_math:
+                    span_list = _build_span_list(block)
+                elif _has_math_fonts(block):
+                    span_list = _build_inline_span_list(block)
+                else:
+                    span_list = None
 
                 layout = LayoutHint(
                     page=page_num,
@@ -631,6 +637,60 @@ def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
     if len(seen_sizes) < 2 or (max(seen_sizes) - min(seen_sizes) < 2.0):
         return None
 
+    return tuple(spans)
+
+
+def _build_inline_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
+    """Build per-span font metadata for inline math within a text paragraph.
+
+    Unlike :func:`_build_span_list` (used for display equations), this does
+    **not** record ``x_offset`` / ``y_offset``.  The resulting spans render
+    as inline ``<span>`` elements with ``font-family`` / ``font-style`` CSS
+    but no absolute positioning, so normal text flow is preserved.
+
+    Returns ``None`` when the block contains no spans with math fonts
+    (nothing to style differently from the block-level font).
+    """
+    spans: list[SpanInfo] = []
+    has_math = False
+    lines = block.get("lines", [])
+
+    for line_idx, line in enumerate(lines):
+        # Insert a line-break marker between lines so the renderer
+        # can emit ``<br>`` and preserve the original PDF line breaks.
+        if line_idx > 0:
+            spans.append(SpanInfo(text="\n"))
+
+        for span in line.get("spans", []):
+            text = span.get("text", "")
+            if not text:
+                continue
+            font = span.get("font", "")
+            family = _map_font_family(font) if font else None
+            size = (
+                round(float(span["size"]), 1)
+                if span.get("size") is not None
+                else None
+            )
+            flags = span.get("flags", 0)
+            weight: str | None = "bold" if flags & (1 << 4) else None
+            style: str | None = "italic" if flags & (1 << 1) else None
+
+            if any(font.startswith(p) for p in _CM_MATH_PREFIXES):
+                has_math = True
+
+            spans.append(SpanInfo(
+                text=text,
+                font_size=size,
+                font_family=family,
+                font_weight=weight,
+                font_style=style,
+                y_offset=None,
+                x_offset=None,
+            ))
+
+    if not has_math:
+        return None
     return tuple(spans)
 
 

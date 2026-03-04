@@ -267,10 +267,15 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # Blocks with per-span data (math sub/superscripts) use absolute
-        # positioning.  All other blocks use normal text rendering.
+        # Three rendering paths for block content:
+        # 1. Display equations (spans with x_offset) → absolute positioning
+        # 2. Inline math (spans without offsets) → inline font styling
+        # 3. Plain text → escaped text with line breaks
         if layout.spans:
-            escaped = _format_spans(layout)
+            if any(s.x_offset is not None for s in layout.spans):
+                escaped = _format_spans(layout)
+            else:
+                escaped = _format_inline_spans(layout)
         else:
             # For layout view, prefer the original PDF line-broken text
             # (display_text) so that line breaks match the source document,
@@ -724,5 +729,47 @@ def _format_spans(layout: LayoutHint) -> str:
         escaped_text = escape(span.text)
         style = "; ".join(css)
         parts.append(f'<span style="{style}">{escaped_text}</span>')
+
+    return "".join(parts)
+
+
+def _format_inline_spans(layout: LayoutHint) -> str:
+    """Render per-span HTML with inline font styling (no positioning).
+
+    Used for paragraphs that contain inline math — spans get
+    ``font-family`` and ``font-style`` CSS so math characters display
+    with the correct glyphs, but no ``position: absolute`` or
+    ``left``/``top``, so normal text flow is preserved.
+    """
+    assert layout.spans is not None
+    block_size = layout.font_size
+    block_family = layout.font_family
+    block_weight = layout.font_weight
+    block_style = layout.font_style
+
+    parts: list[str] = []
+    for span in layout.spans:
+        # Line-break markers inserted by _build_inline_span_list.
+        if span.text == "\n":
+            parts.append("<br>")
+            continue
+
+        css: list[str] = []
+        if span.font_size is not None and span.font_size != block_size:
+            css.append(f"font-size: {span.font_size}pt")
+        if span.font_family and span.font_family != block_family:
+            safe_family = span.font_family.replace('"', "'")
+            css.append(f"font-family: {safe_family}")
+        if span.font_style and span.font_style != block_style:
+            css.append(f"font-style: {escape(span.font_style)}")
+        if span.font_weight and span.font_weight != block_weight:
+            css.append(f"font-weight: {escape(span.font_weight)}")
+
+        escaped_text = escape(span.text)
+        if css:
+            style = "; ".join(css)
+            parts.append(f'<span style="{style}">{escaped_text}</span>')
+        else:
+            parts.append(escaped_text)
 
     return "".join(parts)
