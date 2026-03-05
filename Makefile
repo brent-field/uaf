@@ -1,10 +1,13 @@
-.PHONY: install test lint format check
+.PHONY: install test test-visual lint format check
 
 install:
 	uv sync
 
 test:
 	uv run pytest
+
+test-visual:
+	uv run pytest -m playwright -v
 
 lint:
 	uv run ruff check src tests
