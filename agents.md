@@ -26,6 +26,7 @@ point for AI agents and collaborators navigating the UAF project.
 | 006 | **Shapes Support** | [docs/plans/006-shapes-support.md](docs/plans/006-shapes-support.md) | Shape node types (lines, rectangles, circles, paths) for diagramming and annotation |
 | 007 | **Layout Fidelity Tests** | [docs/plans/007-layout-fidelity-tests.md](docs/plans/007-layout-fidelity-tests.md) | Ground-truth PDF fidelity test suite comparing extracted layout properties against known PDF structure |
 | 008 | **Layout Inspector UI** | [docs/plans/008-layout-inspector-ui.md](docs/plans/008-layout-inspector-ui.md) | Interactive typographic debugging — hover tooltips, click-to-inspect panel, keyboard shortcuts for the Layout view |
+| 009 | **Persistence** | [docs/plans/009-persistence.md](docs/plans/009-persistence.md) | JSONL journal persistence — JournaledGraphDB wrapper, SecurityStore, blob storage, dev-mode store delete, benchmarks |
 
 ---
 
@@ -53,6 +54,8 @@ point for AI agents and collaborators navigating the UAF project.
 | **Operation DAG** | Append-only Merkle DAG of operations — the source of truth | 002 §Phase 7 |
 | **EAVT Index** | Four covering indexes for O(log n) queries | 002 §Phase 9 |
 | **GraphDB** | Facade composing all database components | 002 §Phase 11 |
+| **JournaledGraphDB** | Persistence wrapper — write-ahead JSONL journal + replay on startup | 009 |
+| **SecurityStore** | Persist/replay security events (principals, ACLs, audit) | 009 |
 | **SecureGraphDB** | Security wrapper enforcing auth, ACLs, and audit | 003 §2 |
 | **Principal** | Authenticated identity (user or service account) | 003 §2 |
 | **ACL** | Per-artifact access control list mapping principals to roles | 003 §2 |
@@ -90,7 +93,7 @@ These connections span multiple documents:
 |------|---------|
 | [CLAUDE.md](CLAUDE.md) | AI agent instructions — project overview, tech stack, commands, coding conventions |
 | [pyproject.toml](pyproject.toml) | Python project config, dependencies, tool settings |
-| [Makefile](Makefile) | `make install`, `make test`, `make lint`, `make format`, `make check` |
+| [Makefile](Makefile) | `make install`, `make test`, `make lint`, `make format`, `make check`, `make bench`, `make reset-store` |
 | [.pre-commit-config.yaml](.pre-commit-config.yaml) | Pre-commit hooks (Ruff + Mypy) |
 
 ---

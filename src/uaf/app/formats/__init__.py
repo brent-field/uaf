@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
     from uaf.core.node_id import NodeId
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,11 +26,13 @@ class ComparisonResult:
 class FormatHandler(Protocol):
     """Protocol for import/export of a file format."""
 
-    def import_file(self, path: Path, db: GraphDB) -> NodeId:
+    def import_file(self, path: Path, db: GraphDB | JournaledGraphDB) -> NodeId:
         """Import a file into the graph. Returns the root Artifact ID."""
         ...
 
-    def export_file(self, db: GraphDB, root_id: NodeId, path: Path) -> None:
+    def export_file(
+        self, db: GraphDB | JournaledGraphDB, root_id: NodeId, path: Path
+    ) -> None:
         """Export an artifact from the graph to a file."""
         ...
 

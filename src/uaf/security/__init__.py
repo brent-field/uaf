@@ -19,6 +19,7 @@ from uaf.security.primitives import (
     Role,
 )
 from uaf.security.secure_graph_db import SecureGraphDB, Session
+from uaf.security.security_store import SecurityStore
 
 __all__ = [
     "ACL",
@@ -41,6 +42,7 @@ __all__ = [
     "PrincipalId",
     "Role",
     "SecureGraphDB",
+    "SecurityStore",
     "Session",
     "TokenCredentials",
 ]

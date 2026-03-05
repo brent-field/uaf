@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
 
 # Conversion factor: EMU (English Metric Units) to points.
 _EMU_TO_PT = 1.0 / 12700.0
@@ -33,7 +34,7 @@ _EMU_TO_PT = 1.0 / 12700.0
 class DocxHandler:
     """Import/export DOCX files via the UAF graph."""
 
-    def import_file(self, path: Path, db: GraphDB) -> NodeId:
+    def import_file(self, path: Path, db: GraphDB | JournaledGraphDB) -> NodeId:
         """Parse a DOCX file into UAF nodes (paragraphs, headings, tables)."""
         doc = Document(str(path))
 
@@ -59,7 +60,9 @@ class DocxHandler:
 
         return art_id
 
-    def export_file(self, db: GraphDB, root_id: NodeId, path: Path) -> None:
+    def export_file(
+        self, db: GraphDB | JournaledGraphDB, root_id: NodeId, path: Path
+    ) -> None:
         """Export a UAF artifact as a DOCX file."""
         from docx.enum.text import WD_ALIGN_PARAGRAPH
 
@@ -83,7 +86,7 @@ class DocxHandler:
         self,
         para: Any,
         parent_id: NodeId,
-        db: GraphDB,
+        db: GraphDB | JournaledGraphDB,
         *,
         reading_order: int = 0,
         content_width: float | None = None,
@@ -118,7 +121,8 @@ class DocxHandler:
         db.create_edge(_contains(parent_id, nid))
 
     def _import_table(
-        self, table: DocxTable, parent_id: NodeId, db: GraphDB,
+        self, table: DocxTable, parent_id: NodeId,
+        db: GraphDB | JournaledGraphDB,
     ) -> None:
         """Convert a python-docx table into a UAF Sheet + Cell nodes."""
         rows = table.rows
@@ -145,7 +149,9 @@ class DocxHandler:
                 cell_id = db.create_node(cell_node)
                 db.create_edge(_contains(sheet_id, cell_id))
 
-    def _export_table(self, db: GraphDB, sheet: Sheet, doc: Any) -> None:
+    def _export_table(
+        self, db: GraphDB | JournaledGraphDB, sheet: Sheet, doc: Any
+    ) -> None:
         """Export a Sheet node as a DOCX table."""
         cells = db.get_children(sheet.meta.id)
         grid: list[list[str]] = [[""] * sheet.cols for _ in range(sheet.rows)]

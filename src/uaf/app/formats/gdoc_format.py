@@ -19,12 +19,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
 
 
 class GdocHandler:
     """Import Google Docs JSON exports or .gdoc reference files."""
 
-    def import_file(self, path: Path, db: GraphDB) -> NodeId:
+    def import_file(self, path: Path, db: GraphDB | JournaledGraphDB) -> NodeId:
         """Parse a Google Docs JSON export into UAF nodes."""
         raw = path.read_text(encoding="utf-8")
         data: dict[str, Any] = json.loads(raw)
@@ -42,7 +43,9 @@ class GdocHandler:
 
         return art_id
 
-    def export_file(self, db: GraphDB, root_id: NodeId, path: Path) -> None:
+    def export_file(
+        self, db: GraphDB | JournaledGraphDB, root_id: NodeId, path: Path
+    ) -> None:
         """Export as Google Docs JSON format."""
         children = db.get_children(root_id)
         art = db.get_node(root_id)
@@ -62,7 +65,8 @@ class GdocHandler:
         path.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _import_structural_element(
-        self, element: dict[str, Any], parent_id: NodeId, db: GraphDB,
+        self, element: dict[str, Any], parent_id: NodeId,
+        db: GraphDB | JournaledGraphDB,
     ) -> None:
         """Convert a Google Docs structural element into UAF nodes."""
         para_data = element.get("paragraph")

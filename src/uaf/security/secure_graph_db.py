@@ -21,9 +21,12 @@ from uaf.security.audit import AuditAction, AuditEntry, AuditLog, AuditOutcome
 from uaf.security.primitives import SYSTEM, Permission, PrincipalId, Role
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from uaf.core.edges import Edge
     from uaf.core.node_id import EdgeId, NodeId
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
     from uaf.security.auth import AuthProvider, Credentials
     from uaf.security.primitives import Principal
 
@@ -44,11 +47,17 @@ class SecureGraphDB:
     All actions are logged to the audit trail.
     """
 
-    def __init__(self, db: GraphDB, auth: AuthProvider) -> None:
+    def __init__(
+        self,
+        db: GraphDB | JournaledGraphDB,
+        auth: AuthProvider,
+        on_security_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
         self._db = db
         self._auth = auth
         self._resolver = PermissionResolver()
         self._audit = AuditLog()
+        self._on_security_event = on_security_event
 
     # ------------------------------------------------------------------
     # Authentication
@@ -83,6 +92,10 @@ class SecureGraphDB:
         if isinstance(node, Artifact):
             self._do_create_node(session, node)
             self._resolver.register_artifact(node_id)
+            self._emit_security_event({
+                "type": "register_artifact",
+                "artifact_id": str(node_id.value),
+            })
             # Auto-create ACL with creator as OWNER
             acl = ACL(
                 artifact_id=node_id,
@@ -96,6 +109,21 @@ class SecureGraphDB:
                 ),
             )
             self._resolver.set_acl(acl)
+            self._emit_security_event({
+                "type": "set_acl",
+                "artifact_id": str(node_id.value),
+                "entries": [
+                    {
+                        "principal_id": e.principal_id.value,
+                        "role": e.role.value,
+                        "granted_at": e.granted_at.isoformat(),
+                        "granted_by": e.granted_by.value,
+                    }
+                    for e in acl.entries
+                ],
+                "default_role": acl.default_role,
+                "public_read": acl.public_read,
+            })
             self._record_audit(
                 session, AuditAction.CREATE_NODE, node_id, node_id, AuditOutcome.ALLOWED
             )
@@ -164,6 +192,11 @@ class SecureGraphDB:
         # Update the resolver's parent map for CONTAINS edges
         if edge.edge_type == EdgeType.CONTAINS:
             self._resolver.register_parent(edge.target, edge.source)
+            self._emit_security_event({
+                "type": "register_parent",
+                "child_id": str(edge.target.value),
+                "parent_id": str(edge.source.value),
+            })
         self._record_audit(
             session, AuditAction.CREATE_EDGE, edge.source, artifact_id, AuditOutcome.ALLOWED
         )
@@ -265,6 +298,21 @@ class SecureGraphDB:
                 public_read=acl.public_read,
             )
         self._resolver.set_acl(acl)
+        self._emit_security_event({
+            "type": "set_acl",
+            "artifact_id": str(artifact_id.value),
+            "entries": [
+                {
+                    "principal_id": e.principal_id.value,
+                    "role": e.role.value,
+                    "granted_at": e.granted_at.isoformat(),
+                    "granted_by": e.granted_by.value,
+                }
+                for e in acl.entries
+            ],
+            "default_role": acl.default_role,
+            "public_read": acl.public_read,
+        })
         self._record_audit(
             session, AuditAction.GRANT_PERMISSION, artifact_id, artifact_id, AuditOutcome.ALLOWED
         )
@@ -281,7 +329,9 @@ class SecureGraphDB:
         )
         acl = self._resolver.get_acl(artifact_id)
         if acl is not None:
-            entries = tuple(e for e in acl.entries if e.principal_id != target_principal)
+            entries = tuple(
+                e for e in acl.entries if e.principal_id != target_principal
+            )
             acl = ACL(
                 artifact_id=artifact_id,
                 entries=entries,
@@ -289,6 +339,21 @@ class SecureGraphDB:
                 public_read=acl.public_read,
             )
             self._resolver.set_acl(acl)
+            self._emit_security_event({
+                "type": "set_acl",
+                "artifact_id": str(artifact_id.value),
+                "entries": [
+                    {
+                        "principal_id": e.principal_id.value,
+                        "role": e.role.value,
+                        "granted_at": e.granted_at.isoformat(),
+                        "granted_by": e.granted_by.value,
+                    }
+                    for e in acl.entries
+                ],
+                "default_role": acl.default_role,
+                "public_read": acl.public_read,
+            })
         self._record_audit(
             session,
             AuditAction.REVOKE_PERMISSION,
@@ -366,14 +431,27 @@ class SecureGraphDB:
         outcome: AuditOutcome,
     ) -> None:
         """Record an audit entry."""
-        self._audit.record(
-            AuditEntry(
-                operation_id=None,
-                principal_id=session.principal.id,
-                timestamp=utc_now(),
-                action=action,
-                target_id=target_id,
-                artifact_id=artifact_id,
-                outcome=outcome,
-            )
+        entry = AuditEntry(
+            operation_id=None,
+            principal_id=session.principal.id,
+            timestamp=utc_now(),
+            action=action,
+            target_id=target_id,
+            artifact_id=artifact_id,
+            outcome=outcome,
         )
+        self._audit.record(entry)
+        self._emit_security_event({
+            "type": "audit",
+            "principal_id": session.principal.id.value,
+            "action": action.value,
+            "target_id": str(target_id.value),
+            "artifact_id": str(artifact_id.value) if artifact_id else None,
+            "outcome": outcome.value,
+            "timestamp": entry.timestamp.isoformat(),
+        })
+
+    def _emit_security_event(self, event: dict[str, Any]) -> None:
+        """Emit a security event if a callback is registered."""
+        if self._on_security_event is not None:
+            self._on_security_event(event)

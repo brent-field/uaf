@@ -24,12 +24,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
 
 
 class MarkdownHandler:
     """Import/export Markdown files via the UAF graph."""
 
-    def import_file(self, path: Path, db: GraphDB) -> NodeId:
+    def import_file(self, path: Path, db: GraphDB | JournaledGraphDB) -> NodeId:
         """Parse a Markdown file into UAF nodes and edges."""
         text = path.read_text(encoding="utf-8")
         md = mistune.create_markdown(renderer="ast")
@@ -43,7 +44,9 @@ class MarkdownHandler:
 
         return art_id
 
-    def export_file(self, db: GraphDB, root_id: NodeId, path: Path) -> None:
+    def export_file(
+        self, db: GraphDB | JournaledGraphDB, root_id: NodeId, path: Path
+    ) -> None:
         """Export a UAF artifact as a Markdown file."""
         children = db.get_children(root_id)
         parts: list[str] = []
@@ -57,7 +60,9 @@ class MarkdownHandler:
             text += "\n"
         path.write_text(text, encoding="utf-8")
 
-    def _import_token(self, token: dict[str, Any], parent_id: NodeId, db: GraphDB) -> None:
+    def _import_token(
+        self, token: dict[str, Any], parent_id: NodeId, db: GraphDB | JournaledGraphDB
+    ) -> None:
         """Convert a mistune AST token into a UAF node and attach it to the parent."""
         token_type = token.get("type", "")
 
