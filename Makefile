@@ -1,4 +1,4 @@
-.PHONY: install test test-visual lint format check
+.PHONY: install test test-visual lint format check bench reset-store
 
 install:
 	uv sync
@@ -18,3 +18,10 @@ format:
 	uv run ruff check --fix src tests
 
 check: lint test
+
+bench:
+	uv run pytest -m benchmark tests/ -v
+
+reset-store:
+	rm -rf $${UAF_STORE_DIR:-./uaf_store}
+	@echo "Store deleted."

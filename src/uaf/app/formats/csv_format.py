@@ -20,12 +20,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
 
 
 class CsvHandler:
     """Import/export CSV files via the UAF graph."""
 
-    def import_file(self, path: Path, db: GraphDB) -> NodeId:
+    def import_file(self, path: Path, db: GraphDB | JournaledGraphDB) -> NodeId:
         """Parse a CSV file into UAF Sheet/Cell nodes."""
         with path.open(encoding="utf-8", newline="") as f:
             reader = csv.reader(f)
@@ -57,7 +58,9 @@ class CsvHandler:
 
         return art_id
 
-    def export_file(self, db: GraphDB, root_id: NodeId, path: Path) -> None:
+    def export_file(
+        self, db: GraphDB | JournaledGraphDB, root_id: NodeId, path: Path
+    ) -> None:
         """Export a UAF artifact as a CSV file."""
         children = db.get_children(root_id)
         sheet = next((c for c in children if isinstance(c, Sheet)), None)

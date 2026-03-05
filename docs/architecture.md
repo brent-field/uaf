@@ -240,6 +240,32 @@ history  = db.get_history(doc_id)          # operation history
 
 V1 is in-memory. Scales comfortably to 100K nodes on any machine.
 
+### Persistence
+
+`JournaledGraphDB` wraps `GraphDB` with an append-only JSONL journal. On every mutation,
+the operation is written to disk **before** applying to in-memory state (write-ahead).
+On startup, the journal is replayed to rebuild the full in-memory graph.
+
+```
+JournaledGraphDB
+    |-- Store (operations.jsonl, blobs/, META.json)
+    +-- GraphDB (unchanged in-memory engine)
+```
+
+**Blobs** are stored as content-addressed files (`blobs/<sha256>`). **Security state**
+(principals, ACLs, audit entries) is persisted in a separate `security.jsonl` via the
+`SecurityStore` class.
+
+Crash safety: partial last lines in the journal are silently skipped on replay.
+
+| Metric | Value |
+|--------|-------|
+| Write overhead vs in-memory | ~1.7x |
+| Replay throughput | ~37-40K ops/sec |
+| Bytes per operation | ~373 |
+
+See [Plan 009](plans/009-persistence.md) for full design details.
+
 ---
 
 ## Security Layer

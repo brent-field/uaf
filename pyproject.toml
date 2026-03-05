@@ -83,6 +83,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+addopts = "-m 'not benchmark'"
 markers = [
     "playwright: visual fidelity tests requiring headless browser (playwright install chromium)",
+    "benchmark: persistence performance benchmarks (run with make bench)",
 ]

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
 
 # Threshold in points for header/footer detection (≈1 inch from edge).
 _HEADER_FOOTER_MARGIN = 72.0
@@ -69,7 +70,7 @@ _EQ_NUM_RE = re.compile(r"\((\d+(?:\.\d+)?|[A-Z](?:\.\d+)?)\)\s*$")
 class PdfHandler:
     """Import PDF files via the UAF graph (export as plain text)."""
 
-    def import_file(self, path: Path, db: GraphDB) -> NodeId:
+    def import_file(self, path: Path, db: GraphDB | JournaledGraphDB) -> NodeId:
         """Extract text blocks from a PDF and create nodes with layout metadata."""
         doc = fitz.open(str(path))
 
@@ -255,7 +256,9 @@ class PdfHandler:
 
         return art_id
 
-    def export_file(self, db: GraphDB, root_id: NodeId, path: Path) -> None:
+    def export_file(
+        self, db: GraphDB | JournaledGraphDB, root_id: NodeId, path: Path
+    ) -> None:
         """Export as plain text (PDF generation not supported)."""
         children = db.get_children(root_id)
         parts: list[str] = []
@@ -918,7 +921,7 @@ def _extract_rotation(block: dict[str, Any]) -> float | None:
 
 
 def _tag_headers_footers(
-    db: GraphDB,
+    db: GraphDB | JournaledGraphDB,
     records: list[tuple[NodeId, int, float, str, float]],
 ) -> None:
     """Detect repeating text near page edges and tag as header/footer.
