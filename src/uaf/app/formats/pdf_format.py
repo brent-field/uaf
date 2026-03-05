@@ -6,6 +6,7 @@ import dataclasses
 import math
 import re
 from collections import Counter
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import fitz
@@ -14,6 +15,7 @@ from uaf.core.edges import Edge, EdgeType
 from uaf.core.node_id import EdgeId, NodeId, utc_now
 from uaf.core.nodes import (
     Artifact,
+    FontAnnotation,
     Heading,
     LayoutHint,
     MathBlock,
@@ -41,6 +43,21 @@ _PAGE_NUM_RE = re.compile(r"\b\d+\b")
 # Detects a line-end hyphenation: a letter followed by a hyphen at end of line
 # where the next line starts with a lowercase letter.
 _HYPHEN_RE = re.compile(r"([a-zA-Z])-\n([a-z])")
+
+@dataclass(frozen=True, slots=True)
+class _FontSpan:
+    """Internal per-span data for building font annotations."""
+
+    text: str
+    css_family: str | None
+    font_style: str | None
+    pdf_font: str  # original PDF font name (e.g. "CMMI10")
+    font_size: float | None
+    font_weight: str | None
+    y_top: float | None  # top of span bbox (for sub/super detection)
+
+# Reusable 4-float bbox type alias (avoids N806 inside functions).
+_Bbox4 = tuple[float, float, float, float]
 
 # Computer Modern font prefixes that indicate mathematical content.
 _CM_MATH_PREFIXES = ("CMR", "CMMI", "CMSY", "CMEX", "CMB")
@@ -130,24 +147,28 @@ class PdfHandler:
                 if fl_weight and fl_weight != (block_weight or "normal"):
                     first_lw = fl_weight
 
-                line_ht = _compute_line_height(block)
+                line_ht = _compute_line_height(
+                    block, dominant_font_size=font.get("size"),
+                )
 
                 # Detect math block: majority Computer Modern math fonts
                 is_math = _is_math_block(block)
 
-                # Math-majority blocks (display equations) get full
-                # per-span metadata with absolute positioning for
-                # sub/superscripts.  Non-math blocks with some math
-                # fonts (inline math in paragraphs) get lightweight
-                # inline spans — font styling only, no positioning —
-                # so text flows naturally while math characters render
-                # with the correct font-family.
-                if is_math:
-                    span_list = _build_span_list(block)
-                elif _has_math_fonts(block):
-                    span_list = _build_inline_span_list(block)
-                else:
-                    span_list = None
+                # Math-majority blocks (display equations) get full per-span
+                # metadata with absolute positioning for sub/superscripts.
+                # Non-math blocks with some math fonts (inline math in
+                # paragraphs) get font annotations — lightweight markers
+                # on the display_text that tell the renderer which
+                # character ranges need math font styling.  This preserves
+                # the existing text flow (line breaks, white-space, spacing)
+                # while giving math characters their correct font-family.
+                span_list = _build_span_list(block) if is_math else None
+                font_annots: tuple[FontAnnotation, ...] | None = None
+                if not is_math and _has_math_fonts(block):
+                    font_annots = _build_font_annotations(
+                        block, font.get("family"),
+                        dominant_font_size=font.get("size"),
+                    )
 
                 layout = LayoutHint(
                     page=page_num,
@@ -166,6 +187,7 @@ class PdfHandler:
                     display_text=display_text,
                     line_height=line_ht,
                     spans=span_list,
+                    font_annotations=font_annots,
                 )
 
                 # For math blocks, the character-weighted dominant font size
@@ -362,25 +384,38 @@ def _same_baseline(
     return overlap / min_height > 0.5
 
 
-def _compute_line_height(block: dict[str, Any]) -> float | None:
+def _compute_line_height(
+    block: dict[str, Any],
+    dominant_font_size: float | None = None,
+) -> float | None:
     """Compute inter-line spacing from PDF block data.
 
-    Returns the average top-to-top distance between consecutive *visual*
-    lines (after merging same-baseline segments).  Returns ``None`` for
-    single-line blocks where line-height is not meaningful.
+    Returns the median top-to-top distance between consecutive *visual*
+    lines (after merging same-baseline segments).  Uses median instead
+    of average to resist outliers from subscript/superscript pseudo-lines.
+    Sub-line spacings (less than 60% of the dominant font size) are
+    filtered out.  Returns ``None`` for single-line blocks.
     """
     lines = block.get("lines", [])
     if not lines:
         return None
 
     # Collect the y-top of each visual line group.
-    visual_tops: list[float] = [float(lines[0].get("bbox", (0, 0, 0, 0))[1])]
+    visual_tops: list[float] = [
+        float(lines[0].get("bbox", (0, 0, 0, 0))[1]),
+    ]
     raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
-    prev_bbox = (float(raw_bb[0]), float(raw_bb[1]), float(raw_bb[2]), float(raw_bb[3]))
+    prev_bbox = (
+        float(raw_bb[0]), float(raw_bb[1]),
+        float(raw_bb[2]), float(raw_bb[3]),
+    )
 
     for line in lines[1:]:
         raw = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
-        bbox = (float(raw[0]), float(raw[1]), float(raw[2]), float(raw[3]))
+        bbox = (
+            float(raw[0]), float(raw[1]),
+            float(raw[2]), float(raw[3]),
+        )
         if not _same_baseline(prev_bbox, bbox):
             visual_tops.append(bbox[1])
         prev_bbox = bbox
@@ -388,9 +423,29 @@ def _compute_line_height(block: dict[str, Any]) -> float | None:
     if len(visual_tops) < 2:
         return None
 
-    spacings = [visual_tops[i + 1] - visual_tops[i] for i in range(len(visual_tops) - 1)]
-    avg = sum(spacings) / len(spacings)
-    return round(avg, 1)
+    spacings = [
+        visual_tops[i + 1] - visual_tops[i]
+        for i in range(len(visual_tops) - 1)
+    ]
+
+    # Filter out sub-line spacings from subscript/superscript fragments.
+    dom_size = dominant_font_size or 10.0
+    min_spacing = dom_size * 0.6
+    normal_spacings = [s for s in spacings if s >= min_spacing]
+
+    if not normal_spacings:
+        # All spacings were sub-line; fall back to unfiltered
+        normal_spacings = spacings
+
+    # Use median instead of average to resist remaining outliers.
+    normal_spacings.sort()
+    mid = len(normal_spacings) // 2
+    if len(normal_spacings) % 2 == 0 and len(normal_spacings) >= 2:
+        median = (normal_spacings[mid - 1] + normal_spacings[mid]) / 2
+    else:
+        median = normal_spacings[mid]
+
+    return round(median, 1)
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:
@@ -503,7 +558,7 @@ _FONT_MAP: list[tuple[str, str]] = [
     ("CMTT", '"Courier New", Courier, monospace'),
     ("CMSS", "Helvetica, Arial, sans-serif"),  # CM Sans-Serif
     ("CMR", '"Times New Roman", Times, serif'),  # CM Roman
-    ("CMSY", "Symbol, serif"),  # CM Symbols
+    ("CMSY", '"Cambria Math", "Apple Symbols", Symbol, serif'),  # CM Symbols
     ("CMMI", '"Times New Roman", Times, serif'),  # CM Math Italic
     ("CMEX", "Symbol, serif"),  # CM Extension (large brackets, integrals)
     ("CMB", '"Times New Roman", Times, serif'),  # CM Bold
@@ -640,58 +695,178 @@ def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
     return tuple(spans)
 
 
-def _build_inline_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
-    """Build per-span font metadata for inline math within a text paragraph.
+def _is_math_font(pdf_font: str) -> bool:
+    """Check if a PDF font name is a Computer Modern math font."""
+    return any(pdf_font.startswith(p) for p in _CM_MATH_PREFIXES)
 
-    Unlike :func:`_build_span_list` (used for display equations), this does
-    **not** record ``x_offset`` / ``y_offset``.  The resulting spans render
-    as inline ``<span>`` elements with ``font-family`` / ``font-style`` CSS
-    but no absolute positioning, so normal text flow is preserved.
 
-    Returns ``None`` when the block contains no spans with math fonts
-    (nothing to style differently from the block-level font).
+def _detect_vertical_align(
+    span: _FontSpan,
+    dominant_size: float | None,
+    dominant_y: float | None,
+) -> str | None:
+    """Detect sub/superscript from font size and vertical position.
+
+    A span is a subscript if its font_size is significantly smaller than
+    the dominant size AND its y_top is below the dominant baseline.
+    A span is a superscript if its y_top is above the dominant line top.
     """
-    spans: list[SpanInfo] = []
-    has_math = False
+    if dominant_size is None or span.font_size is None:
+        return None
+    if dominant_y is None or span.y_top is None:
+        return None
+
+    size_ratio = span.font_size / dominant_size
+    if size_ratio > 0.85:
+        return None  # same size, not sub/super
+
+    y_diff = span.y_top - dominant_y
+    # Positive y_diff = below dominant top = subscript territory
+    # Negative y_diff = above dominant top = superscript territory
+    threshold = dominant_size * 0.15
+    if y_diff > threshold:
+        return "sub"
+    if y_diff < -threshold:
+        return "super"
+    return None
+
+
+def _build_font_annotations(
+    block: dict[str, Any],
+    dominant_family: str | None,
+    dominant_font_size: float | None = None,
+) -> tuple[FontAnnotation, ...] | None:
+    """Build font annotations for inline math characters in a text block.
+
+    Uses the same baseline-merging logic as :func:`_merge_visual_lines`
+    to walk through the block in visual-line order.  For each span that
+    uses a Computer Modern math font (regardless of CSS mapping), a
+    :class:`FontAnnotation` records the character range in ``display_text``
+    along with font size, weight, and vertical alignment.
+
+    The character offsets are computed by reconstructing the same text that
+    :func:`_extract_raw_block_text` produces, ensuring perfect alignment.
+
+    Returns ``None`` if no math-font spans are found.
+    """
     lines = block.get("lines", [])
+    if not lines:
+        return None
 
-    for line_idx, line in enumerate(lines):
-        # Insert a line-break marker between lines so the renderer
-        # can emit ``<br>`` and preserve the original PDF line breaks.
-        if line_idx > 0:
-            spans.append(SpanInfo(text="\n"))
-
+    # Build per-line data with full font metadata per span.
+    line_entries: list[tuple[list[_FontSpan], _Bbox4]] = []
+    for line in lines:
+        spans_data: list[_FontSpan] = []
         for span in line.get("spans", []):
             text = span.get("text", "")
             if not text:
                 continue
             font = span.get("font", "")
             family = _map_font_family(font) if font else None
-            size = (
-                round(float(span["size"]), 1)
-                if span.get("size") is not None
-                else None
-            )
             flags = span.get("flags", 0)
-            weight: str | None = "bold" if flags & (1 << 4) else None
             style: str | None = "italic" if flags & (1 << 1) else None
-
-            if any(font.startswith(p) for p in _CM_MATH_PREFIXES):
-                has_math = True
-
-            spans.append(SpanInfo(
-                text=text,
-                font_size=size,
-                font_family=family,
-                font_weight=weight,
-                font_style=style,
-                y_offset=None,
-                x_offset=None,
+            weight: str | None = (
+                "bold" if flags & (1 << 4) else None
+            )
+            size: float | None = (
+                round(float(span["size"]), 1) if span.get("size") else None
+            )
+            span_bbox = span.get("bbox")
+            y_top: float | None = None
+            if span_bbox and len(span_bbox) >= 2:
+                y_top = float(span_bbox[1])
+            spans_data.append(_FontSpan(
+                text=text, css_family=family, font_style=style,
+                pdf_font=font, font_size=size, font_weight=weight,
+                y_top=y_top,
             ))
+        raw_bbox = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        bbox: _Bbox4 = (
+            float(raw_bbox[0]), float(raw_bbox[1]),
+            float(raw_bbox[2]), float(raw_bbox[3]),
+        )
+        line_entries.append((spans_data, bbox))
 
-    if not has_math:
+    if not line_entries:
         return None
-    return tuple(spans)
+
+    # Compute dominant y-top from non-math spans for sub/super detection.
+    non_math_tops: list[float] = []
+    for span_list, _bbox in line_entries:
+        for span in span_list:
+            if not _is_math_font(span.pdf_font) and span.y_top is not None:
+                non_math_tops.append(span.y_top)
+
+    dominant_y: float | None = None
+    if non_math_tops:
+        sorted_tops = sorted(non_math_tops)
+        dominant_y = sorted_tops[len(sorted_tops) // 2]
+
+    # Group lines by visual baseline (mirrors _merge_visual_lines) and
+    # collect annotations.
+    annotations: list[FontAnnotation] = []
+    offset = 0  # character position in display_text
+    is_first_visual_line = True
+
+    # Pending spans for the current visual line (accumulated across
+    # same-baseline PDF lines, with space separators between merges).
+    pending: list[_FontSpan] = list(line_entries[0][0])
+    prev_bbox = line_entries[0][1]
+
+    def _flush(spans: list[_FontSpan], char_offset: int) -> int:
+        """Emit annotations for a merged visual line."""
+        for span in spans:
+            end = char_offset + len(span.text)
+            # Annotate if: CSS family differs OR it's a CM math font
+            family_differs = (
+                span.css_family
+                and span.css_family != dominant_family
+            )
+            is_math = bool(span.pdf_font) and _is_math_font(
+                span.pdf_font,
+            )
+            if family_differs or is_math:
+                valign = _detect_vertical_align(
+                    span, dominant_font_size, dominant_y,
+                )
+                annotations.append(FontAnnotation(
+                    start=char_offset, end=end,
+                    font_family=span.css_family or "",
+                    font_style=span.font_style,
+                    font_size=span.font_size,
+                    font_weight=span.font_weight,
+                    vertical_align=valign,
+                ))
+            char_offset = end
+        return char_offset
+
+    for idx in range(1, len(line_entries)):
+        spans_data, bbox = line_entries[idx]
+        if _same_baseline(prev_bbox, bbox):
+            # Same visual line — add space separator then spans.
+            pending.append(_FontSpan(
+                text=" ", css_family=None, font_style=None,
+                pdf_font="", font_size=None, font_weight=None,
+                y_top=None,
+            ))
+            pending.extend(spans_data)
+        else:
+            # New visual line — flush pending.
+            if not is_first_visual_line:
+                offset += 1  # skip \n between visual lines
+            offset = _flush(pending, offset)
+            is_first_visual_line = False
+            pending = list(spans_data)
+        prev_bbox = bbox
+
+    # Flush last visual line.
+    if not is_first_visual_line:
+        offset += 1
+    _flush(pending, offset)
+
+    if not annotations:
+        return None
+    return tuple(annotations)
 
 
 def _heading_level_from_size(font_size: float) -> int:

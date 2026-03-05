@@ -1218,13 +1218,13 @@ class TestPdfEquationFidelity:
             f"Expected varying x_offsets, got {x_offsets}"
         )
 
-    def test_paragraph_inline_math_has_inline_spans(self) -> None:
-        """Paragraphs with inline math get spans for font styling.
+    def test_paragraph_inline_math_no_spans(self) -> None:
+        """Paragraphs with inline math must NOT have absolute-positioned spans.
 
-        Inline math spans have ``x_offset=None`` and ``y_offset=None``
-        so they render as inline ``<span>`` elements (no absolute
-        positioning).  This preserves normal text flow while giving
-        math characters their correct font-family.
+        Absolute span positioning breaks normal text flow — browser font
+        metrics differ from PDF fonts, causing missing spaces before
+        equations and uneven gaps after subscripts.  Paragraphs render
+        as plain text flow; only math-majority blocks get spans.
         """
         para_with_spans = [
             c for c in self.page2
@@ -1232,20 +1232,106 @@ class TestPdfEquationFidelity:
             and c.meta.layout
             and c.meta.layout.spans
         ]
-        assert len(para_with_spans) > 0, (
-            "Paragraphs with inline math should have spans for font styling"
+        assert len(para_with_spans) == 0, (
+            "Paragraphs with inline math should NOT have spans — "
+            "absolute positioning breaks text flow spacing"
         )
-        # Inline math spans must NOT have positioning offsets.
-        for para in para_with_spans:
-            assert para.meta.layout is not None
-            assert para.meta.layout.spans is not None
-            for span in para.meta.layout.spans:
-                assert span.x_offset is None, (
-                    f"Inline math span should not have x_offset: {span.text!r}"
+
+    def test_paragraph_inline_math_has_font_annotations(self) -> None:
+        """Paragraphs with inline math get font annotations for styling.
+
+        Font annotations mark character ranges in display_text that use
+        math fonts (e.g. Symbol for ·, CM Math Italic for Greek letters),
+        enabling inline <span> wrappers without restructuring the text.
+        """
+        para_with_annots = [
+            c for c in self.page2
+            if isinstance(c, Paragraph)
+            and c.meta.layout
+            and c.meta.layout.font_annotations
+        ]
+        assert len(para_with_annots) > 0, (
+            "Section 2.3 paragraphs with inline math should have "
+            "font_annotations for math character styling"
+        )
+        # Annotations must have valid character ranges.
+        for para in para_with_annots:
+            layout = para.meta.layout
+            assert layout is not None
+            assert layout.font_annotations is not None
+            dt = layout.display_text or para.text
+            for ann in layout.font_annotations:
+                assert 0 <= ann.start < ann.end <= len(dt), (
+                    f"Invalid annotation range [{ann.start}:{ann.end}] "
+                    f"for text of length {len(dt)}"
                 )
-                assert span.y_offset is None, (
-                    f"Inline math span should not have y_offset: {span.text!r}"
-                )
+
+    def test_inline_math_annotation_coverage(self) -> None:
+        """Total annotated chars across page 2 should be substantial.
+
+        Before the fix, only 3-5 of 44+ math spans were annotated because
+        CMMI/CMR/CMBX mapped to the same CSS family as body text.
+        """
+        para_with_annots = [
+            c for c in self.page2
+            if isinstance(c, Paragraph)
+            and c.meta.layout
+            and c.meta.layout.font_annotations
+        ]
+        total_annot_chars = 0
+        for para in para_with_annots:
+            layout = para.meta.layout
+            assert layout is not None
+            assert layout.font_annotations is not None
+            total_annot_chars += sum(
+                a.end - a.start for a in layout.font_annotations
+            )
+        # Page 2 has many paragraphs with inline math — total annotated
+        # characters across all of them should be substantial.
+        assert total_annot_chars >= 50, (
+            f"Only {total_annot_chars} total characters annotated "
+            "across page 2 — most math fonts are likely skipped"
+        )
+
+    def test_font_annotations_have_font_size(self) -> None:
+        """Font annotations should include font_size for sub/superscript."""
+        para_with_annots = [
+            c for c in self.page2
+            if isinstance(c, Paragraph)
+            and c.meta.layout
+            and c.meta.layout.font_annotations
+        ]
+        for para in para_with_annots:
+            layout = para.meta.layout
+            assert layout is not None
+            assert layout.font_annotations is not None
+            with_size = [
+                a for a in layout.font_annotations
+                if a.font_size is not None
+            ]
+            assert len(with_size) > 0, (
+                "Font annotations should include font_size data"
+            )
+
+    def test_font_annotations_have_vertical_align(self) -> None:
+        """At least some annotations should detect sub/superscripts."""
+        all_annots: list[object] = []
+        for c in self.page2:
+            if (
+                isinstance(c, Paragraph)
+                and c.meta.layout
+                and c.meta.layout.font_annotations
+            ):
+                all_annots.extend(c.meta.layout.font_annotations)
+
+        valigned = [
+            a for a in all_annots
+            if hasattr(a, "vertical_align") and a.vertical_align  # type: ignore[union-attr]
+        ]
+        assert len(valigned) > 0, (
+            "Section 2.3 has subscripts/superscripts — at least some "
+            "annotations should have vertical_align set"
+        )
 
     def test_equation_number_x_offset_near_right_margin(self) -> None:
         """The '(6)' equation number should have x_offset > 250pt (right margin)."""
