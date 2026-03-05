@@ -21,7 +21,13 @@ import fitz
 import pytest
 
 from tests.uaf.app._pdf_fidelity_helpers import _find_block, _import_pdf
-from uaf.core.nodes import Artifact, MathBlock, Paragraph, Shape
+from uaf.core.nodes import (
+    Artifact,
+    FontAnnotation,
+    MathBlock,
+    Paragraph,
+    Shape,
+)
 
 
 class TestPdfFidelity2511:
@@ -679,6 +685,17 @@ class TestPdfRenderedLayout:
                 )
 
 
+def test_cm_fonts_map_to_latin_modern() -> None:
+    """Computer Modern fonts should map to Latin Modern Math."""
+    from uaf.app.formats.pdf_format import _map_font_family
+
+    for prefix in ("CMMI10", "CMR10", "CMSY10", "CMEX10", "CMBX10"):
+        result = _map_font_family(prefix)
+        assert "Latin Modern Math" in result, (
+            f"{prefix} should map to Latin Modern Math, got: {result}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Helpers for line-break fidelity tests
 # ---------------------------------------------------------------------------
@@ -933,6 +950,81 @@ class TestPdfParagraphSpacing:
         assert layout is not None
         # Single-line blocks don't need line_height.
         assert layout.line_height is None
+
+
+class TestPdfInlineMathLineHeight:
+    """Verify line_height accuracy for paragraphs containing inline math.
+
+    ``_compute_line_height()`` must use baseline-to-baseline distances
+    (from span ``origin`` data) rather than top-to-top bounding-box
+    distances.  Top-to-top is distorted when lines contain subscripts
+    or superscripts that change the bounding-box height.
+
+    The document's nominal baseline spacing is ~10.9pt.  Blocks whose
+    math content doesn't force TeX to increase spacing should still
+    produce ~10.9pt, not inflated or deflated values from bbox noise.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        _db, _root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.page2 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout
+            and c.meta.layout.page == 2
+        ]
+
+    def test_frequency_modulation_line_height_not_collapsed(self) -> None:
+        """Frequency Modulation paragraph must not have collapsed spacing.
+
+        Top-to-top measurement produces ~9.5pt because superscript
+        bounding boxes push line tops closer together.  The actual PDF
+        baseline spacing is ~10.9pt.
+        """
+        para = _find_block(self.page2, "Frequency Modulation")
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.line_height is not None
+        assert layout.line_height >= 10.4, (
+            f"line_height={layout.line_height}pt is collapsed by "
+            f"superscript bbox distortion — should be ~10.9pt"
+        )
+
+    def test_where_y_line_height_not_inflated(self) -> None:
+        """'where y(l)' paragraph must not have inflated spacing.
+
+        Top-to-top measurement produces ~14pt because subscript
+        bounding boxes push line bottoms apart.  The actual PDF
+        baseline spacing is ~10.9pt.
+        """
+        para = _find_block(
+            self.page2, "is a scaling factor",
+        )
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.line_height is not None
+        assert layout.line_height < 12.0, (
+            f"line_height={layout.line_height}pt is inflated by "
+            f"subscript bbox distortion — should be ~10.9pt"
+        )
+
+    def test_inline_math_blocks_consistent_with_body_spacing(self) -> None:
+        """Most multi-line blocks on page 2 should have ~10.9pt spacing.
+
+        Blocks where TeX didn't increase the baselineskip (i.e. the
+        inline math fits within normal line height) should produce the
+        same ~10.9pt spacing as plain body text on page 0.
+        """
+        para = _find_block(
+            self.page2, "denotes composition",
+        )
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.line_height is not None
+        assert layout.line_height == pytest.approx(10.9, abs=0.5), (
+            f"line_height={layout.line_height}pt — should match "
+            f"document nominal spacing ~10.9pt"
+        )
 
 
 class TestPdfParagraphSpacingCss:
@@ -1315,7 +1407,7 @@ class TestPdfEquationFidelity:
 
     def test_font_annotations_have_vertical_align(self) -> None:
         """At least some annotations should detect sub/superscripts."""
-        all_annots: list[object] = []
+        all_annots: list[FontAnnotation] = []
         for c in self.page2:
             if (
                 isinstance(c, Paragraph)
@@ -1326,12 +1418,18 @@ class TestPdfEquationFidelity:
 
         valigned = [
             a for a in all_annots
-            if hasattr(a, "vertical_align") and a.vertical_align  # type: ignore[union-attr]
+            if a.vertical_align is not None
         ]
         assert len(valigned) > 0, (
             "Section 2.3 has subscripts/superscripts — at least some "
             "annotations should have vertical_align set"
         )
+        # Verify values are numeric, not old strings.
+        for a in valigned:
+            assert isinstance(a.vertical_align, float), (
+                f"vertical_align should be float, got "
+                f"{type(a.vertical_align)}"
+            )
 
     def test_equation_number_x_offset_near_right_margin(self) -> None:
         """The '(6)' equation number should have x_offset > 250pt (right margin)."""

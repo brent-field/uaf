@@ -60,7 +60,7 @@ class _FontSpan:
 _Bbox4 = tuple[float, float, float, float]
 
 # Computer Modern font prefixes that indicate mathematical content.
-_CM_MATH_PREFIXES = ("CMR", "CMMI", "CMSY", "CMEX", "CMB")
+_CM_MATH_PREFIXES = ("CMR", "CMMI", "CMSY", "CMEX", "CMB", "MSBM")
 
 # Pattern to detect equation numbers like "(3)", "(2.1)", "(A.3)".
 _EQ_NUM_RE = re.compile(r"\((\d+(?:\.\d+)?|[A-Z](?:\.\d+)?)\)\s*$")
@@ -384,26 +384,48 @@ def _same_baseline(
     return overlap / min_height > 0.5
 
 
+def _extract_baselines(line: dict[str, Any]) -> list[float]:
+    """Extract baseline y-coordinates from all spans in a PDF line."""
+    baselines: list[float] = []
+    for span in line.get("spans", []):
+        origin = span.get("origin")
+        if origin is not None and len(origin) >= 2:
+            baselines.append(float(origin[1]))
+    return baselines
+
+
+def _median(values: list[float]) -> float:
+    """Return the median of a sorted list of floats."""
+    values.sort()
+    mid = len(values) // 2
+    if len(values) % 2 == 0 and len(values) >= 2:
+        return (values[mid - 1] + values[mid]) / 2
+    return values[mid]
+
+
 def _compute_line_height(
     block: dict[str, Any],
     dominant_font_size: float | None = None,
 ) -> float | None:
     """Compute inter-line spacing from PDF block data.
 
-    Returns the median top-to-top distance between consecutive *visual*
-    lines (after merging same-baseline segments).  Uses median instead
-    of average to resist outliers from subscript/superscript pseudo-lines.
-    Sub-line spacings (less than 60% of the dominant font size) are
-    filtered out.  Returns ``None`` for single-line blocks.
+    Returns the median baseline-to-baseline distance between consecutive
+    *visual* lines (after merging same-baseline segments).  Uses span
+    ``origin`` data for accurate baselines instead of bounding-box tops,
+    which are distorted by subscript/superscript content.
+
+    Uses median instead of average to resist outliers from
+    subscript/superscript pseudo-lines.  Sub-line spacings (less than
+    60% of the dominant font size) are filtered out.  Returns ``None``
+    for single-line blocks.
     """
     lines = block.get("lines", [])
     if not lines:
         return None
 
-    # Collect the y-top of each visual line group.
-    visual_tops: list[float] = [
-        float(lines[0].get("bbox", (0, 0, 0, 0))[1]),
-    ]
+    # Group lines by visual baseline and collect per-group baselines.
+    groups: list[list[float]] = []
+    current_bls = _extract_baselines(lines[0])
     raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
     prev_bbox = (
         float(raw_bb[0]), float(raw_bb[1]),
@@ -416,16 +438,26 @@ def _compute_line_height(
             float(raw[0]), float(raw[1]),
             float(raw[2]), float(raw[3]),
         )
-        if not _same_baseline(prev_bbox, bbox):
-            visual_tops.append(bbox[1])
+        if _same_baseline(prev_bbox, bbox):
+            current_bls.extend(_extract_baselines(line))
+        else:
+            groups.append(current_bls)
+            current_bls = _extract_baselines(line)
         prev_bbox = bbox
+    groups.append(current_bls)
 
-    if len(visual_tops) < 2:
+    # Compute median baseline y for each visual line group.
+    group_baselines: list[float] = []
+    for g in groups:
+        if g:
+            group_baselines.append(_median(list(g)))
+
+    if len(group_baselines) < 2:
         return None
 
     spacings = [
-        visual_tops[i + 1] - visual_tops[i]
-        for i in range(len(visual_tops) - 1)
+        group_baselines[i + 1] - group_baselines[i]
+        for i in range(len(group_baselines) - 1)
     ]
 
     # Filter out sub-line spacings from subscript/superscript fragments.
@@ -438,14 +470,7 @@ def _compute_line_height(
         normal_spacings = spacings
 
     # Use median instead of average to resist remaining outliers.
-    normal_spacings.sort()
-    mid = len(normal_spacings) // 2
-    if len(normal_spacings) % 2 == 0 and len(normal_spacings) >= 2:
-        median = (normal_spacings[mid - 1] + normal_spacings[mid]) / 2
-    else:
-        median = normal_spacings[mid]
-
-    return round(median, 1)
+    return round(_median(normal_spacings), 1)
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:
@@ -553,15 +578,28 @@ _FONT_MAP: list[tuple[str, str]] = [
     ("Helvetica", "Helvetica, Arial, sans-serif"),
     ("Courier", '"Courier New", Courier, monospace'),
     ("Arial", "Arial, Helvetica, sans-serif"),
-    # Computer Modern (TeX) families
+    # Computer Modern (TeX) — Latin Modern Math web font + fallbacks
     ("SFTT", '"Courier New", Courier, monospace'),  # CM Typewriter
     ("CMTT", '"Courier New", Courier, monospace'),
     ("CMSS", "Helvetica, Arial, sans-serif"),  # CM Sans-Serif
-    ("CMR", '"Times New Roman", Times, serif'),  # CM Roman
-    ("CMSY", '"Cambria Math", "Apple Symbols", Symbol, serif'),  # CM Symbols
-    ("CMMI", '"Times New Roman", Times, serif'),  # CM Math Italic
-    ("CMEX", "Symbol, serif"),  # CM Extension (large brackets, integrals)
-    ("CMB", '"Times New Roman", Times, serif'),  # CM Bold
+    ("CMR",
+     '"Latin Modern Math", "STIX Two Math", '
+     '"Cambria Math", "Times New Roman", serif'),
+    ("CMSY",
+     '"Latin Modern Math", "STIX Two Math", '
+     '"Cambria Math", Symbol, serif'),
+    ("CMMI",
+     '"Latin Modern Math", "STIX Two Math", '
+     '"Cambria Math", "Times New Roman", serif'),
+    ("CMEX",
+     '"Latin Modern Math", "STIX Two Math", '
+     '"Cambria Math", Symbol, serif'),
+    ("CMB",
+     '"Latin Modern Math", "STIX Two Math", '
+     '"Cambria Math", "Times New Roman", serif'),
+    ("MSBM",  # AMS Blackboard Bold (e.g. R for reals)
+     '"Latin Modern Math", "STIX Two Math", '
+     '"Cambria Math", serif'),
     # Liberation (metric-compatible with MS core fonts)
     ("LiberationSerif", '"Times New Roman", Times, serif'),
     ("LiberationSans", "Arial, Helvetica, sans-serif"),
@@ -704,12 +742,12 @@ def _detect_vertical_align(
     span: _FontSpan,
     dominant_size: float | None,
     dominant_y: float | None,
-) -> str | None:
-    """Detect sub/superscript from font size and vertical position.
+) -> float | None:
+    """Detect sub/superscript offset from font size and vertical position.
 
-    A span is a subscript if its font_size is significantly smaller than
-    the dominant size AND its y_top is below the dominant baseline.
-    A span is a superscript if its y_top is above the dominant line top.
+    Returns the y-offset in points relative to the dominant baseline.
+    Positive = below (subscript), negative = above (superscript).
+    Returns ``None`` for same-size spans (not sub/super).
     """
     if dominant_size is None or span.font_size is None:
         return None
@@ -721,14 +759,11 @@ def _detect_vertical_align(
         return None  # same size, not sub/super
 
     y_diff = span.y_top - dominant_y
-    # Positive y_diff = below dominant top = subscript territory
-    # Negative y_diff = above dominant top = superscript territory
-    threshold = dominant_size * 0.15
-    if y_diff > threshold:
-        return "sub"
-    if y_diff < -threshold:
-        return "super"
-    return None
+    threshold = dominant_size * 0.10
+    if abs(y_diff) <= threshold:
+        return None
+
+    return round(y_diff, 1)
 
 
 def _build_font_annotations(

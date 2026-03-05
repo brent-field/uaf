@@ -153,6 +153,10 @@ def _annot_to_dict(annot: FontAnnotation) -> dict[str, Any]:
 
 
 def _annot_from_dict(d: dict[str, Any]) -> FontAnnotation:
+    va = d.get("vertical_align")
+    # Backwards compat: old data stored "sub"/"super" strings.
+    if isinstance(va, str):
+        va = None
     return FontAnnotation(
         start=d["start"],
         end=d["end"],
@@ -160,7 +164,7 @@ def _annot_from_dict(d: dict[str, Any]) -> FontAnnotation:
         font_style=d.get("font_style"),
         font_size=d.get("font_size"),
         font_weight=d.get("font_weight"),
-        vertical_align=d.get("vertical_align"),
+        vertical_align=va,
     )
 
 

@@ -61,7 +61,7 @@ class FontAnnotation:
     font_style: str | None = None
     font_size: float | None = None
     font_weight: str | None = None
-    vertical_align: str | None = None  # "sub" | "super" | None
+    vertical_align: float | None = None  # pt offset (>0=sub, <0=super)
 
 
 @dataclass(frozen=True, slots=True)

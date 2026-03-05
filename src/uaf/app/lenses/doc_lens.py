@@ -730,10 +730,10 @@ def _format_annotated_text(
             css.append(f"font-size: {ann.font_size}pt")
         if ann.font_weight:
             css.append(f"font-weight: {escape(ann.font_weight)}")
-        if ann.vertical_align:
-            css.append(
-                f"vertical-align: {escape(ann.vertical_align)}",
-            )
+        if ann.vertical_align is not None:
+            # Negate: CSS positive = up, PDF positive = down.
+            css_offset = -ann.vertical_align
+            css.append(f"vertical-align: {css_offset}pt")
         style = "; ".join(css)
         parts.append(
             f'<span style="{style}">'

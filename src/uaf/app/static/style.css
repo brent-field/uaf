@@ -1,5 +1,14 @@
 /* UAF HTMX Frontend — Minimal CSS */
 
+/* Latin Modern Math — Computer Modern successor for PDF math rendering */
+@font-face {
+    font-family: "Latin Modern Math";
+    src: url("fonts/latinmodern-math.woff2") format("woff2");
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
 :root {
     --bg: #fff;
     --bg-alt: #f7f8fa;

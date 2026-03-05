@@ -227,10 +227,10 @@ class TestInlineMathComputedStyles:
         # Subscript spans should compute to a smaller pixel size.
         sub_spans = [
             s for s in self.span_details
-            if s.get("inlineVerticalAlign") in ("sub", "super")
+            if s.get("inlineVerticalAlign")
         ]
         if not sub_spans:
-            pytest.skip("No sub/super spans found")
+            pytest.skip("No vertically aligned spans found")
         for span in sub_spans:
             size_str = span.get("computedFontSize", "")
             if not size_str:
@@ -244,14 +244,15 @@ class TestInlineMathComputedStyles:
             )
 
     def test_some_spans_have_vertical_align(self) -> None:
-        """Sub/superscript spans should have vertical-align CSS."""
+        """Sub/superscript spans should have numeric vertical-align."""
         valign_spans = [
             s for s in self.span_details
-            if s.get("inlineVerticalAlign") in ("sub", "super")
+            if s.get("inlineVerticalAlign")
+            and "pt" in str(s.get("inlineVerticalAlign"))
         ]
         assert len(valign_spans) > 0, (
             "Expected sub/superscript spans with vertical-align "
-            "CSS. Section 2.3 has subscripts/superscripts."
+            "pt values. Section 2.3 has subscripts/superscripts."
         )
 
     def test_surrounding_text_preserves_spacing(self) -> None:
