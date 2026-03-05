@@ -1266,6 +1266,73 @@ class TestPdfEquationFidelity:
                     f"for text of length {len(dt)}"
                 )
 
+    def test_inline_math_annotation_coverage(self) -> None:
+        """Total annotated chars across page 2 should be substantial.
+
+        Before the fix, only 3-5 of 44+ math spans were annotated because
+        CMMI/CMR/CMBX mapped to the same CSS family as body text.
+        """
+        para_with_annots = [
+            c for c in self.page2
+            if isinstance(c, Paragraph)
+            and c.meta.layout
+            and c.meta.layout.font_annotations
+        ]
+        total_annot_chars = 0
+        for para in para_with_annots:
+            layout = para.meta.layout
+            assert layout is not None
+            assert layout.font_annotations is not None
+            total_annot_chars += sum(
+                a.end - a.start for a in layout.font_annotations
+            )
+        # Page 2 has many paragraphs with inline math — total annotated
+        # characters across all of them should be substantial.
+        assert total_annot_chars >= 50, (
+            f"Only {total_annot_chars} total characters annotated "
+            "across page 2 — most math fonts are likely skipped"
+        )
+
+    def test_font_annotations_have_font_size(self) -> None:
+        """Font annotations should include font_size for sub/superscript."""
+        para_with_annots = [
+            c for c in self.page2
+            if isinstance(c, Paragraph)
+            and c.meta.layout
+            and c.meta.layout.font_annotations
+        ]
+        for para in para_with_annots:
+            layout = para.meta.layout
+            assert layout is not None
+            assert layout.font_annotations is not None
+            with_size = [
+                a for a in layout.font_annotations
+                if a.font_size is not None
+            ]
+            assert len(with_size) > 0, (
+                "Font annotations should include font_size data"
+            )
+
+    def test_font_annotations_have_vertical_align(self) -> None:
+        """At least some annotations should detect sub/superscripts."""
+        all_annots: list[object] = []
+        for c in self.page2:
+            if (
+                isinstance(c, Paragraph)
+                and c.meta.layout
+                and c.meta.layout.font_annotations
+            ):
+                all_annots.extend(c.meta.layout.font_annotations)
+
+        valigned = [
+            a for a in all_annots
+            if hasattr(a, "vertical_align") and a.vertical_align  # type: ignore[union-attr]
+        ]
+        assert len(valigned) > 0, (
+            "Section 2.3 has subscripts/superscripts — at least some "
+            "annotations should have vertical_align set"
+        )
+
     def test_equation_number_x_offset_near_right_margin(self) -> None:
         """The '(6)' equation number should have x_offset > 250pt (right margin)."""
         # Equation 6 contains 'θ' (or similar math symbols) near section 2.3.

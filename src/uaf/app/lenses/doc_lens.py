@@ -726,6 +726,14 @@ def _format_annotated_text(
         css.append(f"font-family: {safe_family}")
         if ann.font_style:
             css.append(f"font-style: {escape(ann.font_style)}")
+        if ann.font_size is not None:
+            css.append(f"font-size: {ann.font_size}pt")
+        if ann.font_weight:
+            css.append(f"font-weight: {escape(ann.font_weight)}")
+        if ann.vertical_align:
+            css.append(
+                f"vertical-align: {escape(ann.vertical_align)}",
+            )
         style = "; ".join(css)
         parts.append(
             f'<span style="{style}">'

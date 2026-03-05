@@ -143,6 +143,12 @@ def _annot_to_dict(annot: FontAnnotation) -> dict[str, Any]:
     }
     if annot.font_style is not None:
         d["font_style"] = annot.font_style
+    if annot.font_size is not None:
+        d["font_size"] = annot.font_size
+    if annot.font_weight is not None:
+        d["font_weight"] = annot.font_weight
+    if annot.vertical_align is not None:
+        d["vertical_align"] = annot.vertical_align
     return d
 
 
@@ -152,6 +158,9 @@ def _annot_from_dict(d: dict[str, Any]) -> FontAnnotation:
         end=d["end"],
         font_family=d["font_family"],
         font_style=d.get("font_style"),
+        font_size=d.get("font_size"),
+        font_weight=d.get("font_weight"),
+        vertical_align=d.get("vertical_align"),
     )
 
 

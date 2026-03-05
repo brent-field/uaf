@@ -59,6 +59,9 @@ class FontAnnotation:
     end: int
     font_family: str
     font_style: str | None = None
+    font_size: float | None = None
+    font_weight: str | None = None
+    vertical_align: str | None = None  # "sub" | "super" | None
 
 
 @dataclass(frozen=True, slots=True)
