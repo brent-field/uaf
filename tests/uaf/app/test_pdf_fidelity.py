@@ -1218,13 +1218,13 @@ class TestPdfEquationFidelity:
             f"Expected varying x_offsets, got {x_offsets}"
         )
 
-    def test_paragraph_inline_math_has_inline_spans(self) -> None:
-        """Paragraphs with inline math get spans for font styling.
+    def test_paragraph_inline_math_no_spans(self) -> None:
+        """Paragraphs with inline math must NOT have absolute-positioned spans.
 
-        Inline math spans have ``x_offset=None`` and ``y_offset=None``
-        so they render as inline ``<span>`` elements (no absolute
-        positioning).  This preserves normal text flow while giving
-        math characters their correct font-family.
+        Absolute span positioning breaks normal text flow — browser font
+        metrics differ from PDF fonts, causing missing spaces before
+        equations and uneven gaps after subscripts.  Paragraphs render
+        as plain text flow; only math-majority blocks get spans.
         """
         para_with_spans = [
             c for c in self.page2
@@ -1232,19 +1232,38 @@ class TestPdfEquationFidelity:
             and c.meta.layout
             and c.meta.layout.spans
         ]
-        assert len(para_with_spans) > 0, (
-            "Paragraphs with inline math should have spans for font styling"
+        assert len(para_with_spans) == 0, (
+            "Paragraphs with inline math should NOT have spans — "
+            "absolute positioning breaks text flow spacing"
         )
-        # Inline math spans must NOT have positioning offsets.
-        for para in para_with_spans:
-            assert para.meta.layout is not None
-            assert para.meta.layout.spans is not None
-            for span in para.meta.layout.spans:
-                assert span.x_offset is None, (
-                    f"Inline math span should not have x_offset: {span.text!r}"
-                )
-                assert span.y_offset is None, (
-                    f"Inline math span should not have y_offset: {span.text!r}"
+
+    def test_paragraph_inline_math_has_font_annotations(self) -> None:
+        """Paragraphs with inline math get font annotations for styling.
+
+        Font annotations mark character ranges in display_text that use
+        math fonts (e.g. Symbol for ·, CM Math Italic for Greek letters),
+        enabling inline <span> wrappers without restructuring the text.
+        """
+        para_with_annots = [
+            c for c in self.page2
+            if isinstance(c, Paragraph)
+            and c.meta.layout
+            and c.meta.layout.font_annotations
+        ]
+        assert len(para_with_annots) > 0, (
+            "Section 2.3 paragraphs with inline math should have "
+            "font_annotations for math character styling"
+        )
+        # Annotations must have valid character ranges.
+        for para in para_with_annots:
+            layout = para.meta.layout
+            assert layout is not None
+            assert layout.font_annotations is not None
+            dt = layout.display_text or para.text
+            for ann in layout.font_annotations:
+                assert 0 <= ann.start < ann.end <= len(dt), (
+                    f"Invalid annotation range [{ann.start}:{ann.end}] "
+                    f"for text of length {len(dt)}"
                 )
 
     def test_equation_number_x_offset_near_right_margin(self) -> None:

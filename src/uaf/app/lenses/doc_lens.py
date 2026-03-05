@@ -20,6 +20,7 @@ from uaf.core.node_id import EdgeId, utc_now
 from uaf.core.nodes import (
     Artifact,
     CodeBlock,
+    FontAnnotation,
     Heading,
     Image,
     LayoutHint,
@@ -267,21 +268,21 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # Three rendering paths for block content:
-        # 1. Display equations (spans with x_offset) → absolute positioning
-        # 2. Inline math (spans without offsets) → inline font styling
+        # Three rendering paths:
+        # 1. Display equations (spans) → absolute positioning per glyph
+        # 2. Inline math (font_annotations) → normal text flow with
+        #    <span> wrappers for math-font character ranges
         # 3. Plain text → escaped text with line breaks
         if layout.spans:
-            if any(s.x_offset is not None for s in layout.spans):
-                escaped = _format_spans(layout)
-            else:
-                escaped = _format_inline_spans(layout)
+            escaped = _format_spans(layout)
         else:
-            # For layout view, prefer the original PDF line-broken text
-            # (display_text) so that line breaks match the source document,
-            # including end-of-line hyphenation.
             render_text = layout.display_text if layout.display_text else text
-            escaped = _format_layout_text(render_text, layout)
+            if layout.font_annotations:
+                escaped = _format_annotated_text(
+                    render_text, layout.font_annotations, layout,
+                )
+            else:
+                escaped = _format_layout_text(render_text, layout)
         return (
             f'  <div {data_attr_str} class="{css_class}"'
             f' style="{style}">{escaped}</div>'
@@ -694,6 +695,78 @@ def _format_layout_text(text: str, layout: LayoutHint) -> str:
     return escape(text).replace("\n", "<br>")
 
 
+def _format_annotated_text(
+    text: str,
+    annotations: tuple[FontAnnotation, ...],
+    layout: LayoutHint,
+) -> str:
+    """Format text with inline ``<span>`` wrappers for font annotations.
+
+    Preserves the same text flow as :func:`_format_layout_text` (line
+    breaks, first-line bold) but wraps annotated character ranges in
+    ``<span style="font-family: ...">`` elements so math characters
+    render with the correct glyphs.
+
+    Annotations are character ranges in the *unescaped* ``text``.
+    """
+    # Build the annotated string by walking through the text and
+    # inserting <span> wrappers at annotation boundaries.
+    # Sort annotations by start position.
+    sorted_anns = sorted(annotations, key=lambda a: a.start)
+
+    parts: list[str] = []
+    pos = 0
+    for ann in sorted_anns:
+        # Emit text before this annotation.
+        if ann.start > pos:
+            parts.append(escape(text[pos:ann.start]))
+        # Emit the annotated range.
+        css: list[str] = []
+        safe_family = ann.font_family.replace('"', "'")
+        css.append(f"font-family: {safe_family}")
+        if ann.font_style:
+            css.append(f"font-style: {escape(ann.font_style)}")
+        style = "; ".join(css)
+        parts.append(
+            f'<span style="{style}">'
+            f"{escape(text[ann.start:ann.end])}</span>"
+        )
+        pos = ann.end
+
+    # Emit remaining text after last annotation.
+    if pos < len(text):
+        parts.append(escape(text[pos:]))
+
+    result = "".join(parts)
+
+    # Apply the same line-break and first-line-bold logic as
+    # _format_layout_text, but on the already-annotated HTML.
+    # Line breaks: \n was escaped to \n by escape() — no, escape()
+    # doesn't escape \n.  The raw \n characters are still in the
+    # output from escape().
+    result = result.replace("\n", "<br>")
+
+    # First-line bold: wrap content before first <br> in a bold span.
+    flw = layout.first_line_weight
+    block_w = layout.font_weight or "normal"
+    if flw and flw != block_w:
+        br_pos = result.find("<br>")
+        if br_pos >= 0:
+            first = result[:br_pos]
+            rest = result[br_pos:]  # includes the <br>
+            result = (
+                f'<span style="font-weight: {escape(flw)}">'
+                f"{first}</span>{rest}"
+            )
+        else:
+            result = (
+                f'<span style="font-weight: {escape(flw)}">'
+                f"{result}</span>"
+            )
+
+    return result
+
+
 def _format_spans(layout: LayoutHint) -> str:
     """Render per-span HTML with absolute positioning within the block.
 
@@ -729,47 +802,5 @@ def _format_spans(layout: LayoutHint) -> str:
         escaped_text = escape(span.text)
         style = "; ".join(css)
         parts.append(f'<span style="{style}">{escaped_text}</span>')
-
-    return "".join(parts)
-
-
-def _format_inline_spans(layout: LayoutHint) -> str:
-    """Render per-span HTML with inline font styling (no positioning).
-
-    Used for paragraphs that contain inline math — spans get
-    ``font-family`` and ``font-style`` CSS so math characters display
-    with the correct glyphs, but no ``position: absolute`` or
-    ``left``/``top``, so normal text flow is preserved.
-    """
-    assert layout.spans is not None
-    block_size = layout.font_size
-    block_family = layout.font_family
-    block_weight = layout.font_weight
-    block_style = layout.font_style
-
-    parts: list[str] = []
-    for span in layout.spans:
-        # Line-break markers inserted by _build_inline_span_list.
-        if span.text == "\n":
-            parts.append("<br>")
-            continue
-
-        css: list[str] = []
-        if span.font_size is not None and span.font_size != block_size:
-            css.append(f"font-size: {span.font_size}pt")
-        if span.font_family and span.font_family != block_family:
-            safe_family = span.font_family.replace('"', "'")
-            css.append(f"font-family: {safe_family}")
-        if span.font_style and span.font_style != block_style:
-            css.append(f"font-style: {escape(span.font_style)}")
-        if span.font_weight and span.font_weight != block_weight:
-            css.append(f"font-weight: {escape(span.font_weight)}")
-
-        escaped_text = escape(span.text)
-        if css:
-            style = "; ".join(css)
-            parts.append(f'<span style="{style}">{escaped_text}</span>')
-        else:
-            parts.append(escaped_text)
 
     return "".join(parts)

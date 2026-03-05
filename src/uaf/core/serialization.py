@@ -15,6 +15,7 @@ from uaf.core.nodes import (
     ArtifactACL,
     Cell,
     CodeBlock,
+    FontAnnotation,
     FormulaCell,
     Heading,
     Image,
@@ -129,12 +130,39 @@ def _layout_to_dict(layout: LayoutHint) -> dict[str, Any]:
         d["line_height"] = layout.line_height
     if layout.spans is not None:
         d["spans"] = [_span_to_dict(s) for s in layout.spans]
+    if layout.font_annotations is not None:
+        d["font_annotations"] = [_annot_to_dict(a) for a in layout.font_annotations]
     return d
+
+
+def _annot_to_dict(annot: FontAnnotation) -> dict[str, Any]:
+    d: dict[str, Any] = {
+        "start": annot.start,
+        "end": annot.end,
+        "font_family": annot.font_family,
+    }
+    if annot.font_style is not None:
+        d["font_style"] = annot.font_style
+    return d
+
+
+def _annot_from_dict(d: dict[str, Any]) -> FontAnnotation:
+    return FontAnnotation(
+        start=d["start"],
+        end=d["end"],
+        font_family=d["font_family"],
+        font_style=d.get("font_style"),
+    )
 
 
 def _layout_from_dict(d: dict[str, Any]) -> LayoutHint:
     raw_spans = d.get("spans")
     spans = tuple(_span_from_dict(s) for s in raw_spans) if raw_spans is not None else None
+    raw_annots = d.get("font_annotations")
+    annots = (
+        tuple(_annot_from_dict(a) for a in raw_annots)
+        if raw_annots is not None else None
+    )
     return LayoutHint(
         page=d.get("page"),
         x=d.get("x"),
@@ -153,6 +181,7 @@ def _layout_from_dict(d: dict[str, Any]) -> LayoutHint:
         display_text=d.get("display_text"),
         line_height=d.get("line_height"),
         spans=spans,
+        font_annotations=annots,
     )
 
 

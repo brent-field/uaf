@@ -47,6 +47,21 @@ class SpanInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class FontAnnotation:
+    """Marks a character range in display_text that uses a non-default font.
+
+    Used for inline math in paragraphs — the display_text preserves correct
+    line breaks, and annotations mark which character ranges need math font
+    styling without restructuring the text into spans.
+    """
+
+    start: int
+    end: int
+    font_family: str
+    font_style: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LayoutHint:
     """Optional layout metadata for preserving visual fidelity on import/export."""
 
@@ -67,6 +82,7 @@ class LayoutHint:
     display_text: str | None = None
     line_height: float | None = None
     spans: tuple[SpanInfo, ...] | None = None
+    font_annotations: tuple[FontAnnotation, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
