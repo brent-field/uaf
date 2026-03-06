@@ -388,6 +388,12 @@ PDF and DOCX import populates `LayoutHint` on each node with spatial coordinates
 font properties, page numbers, and text rotation. PDF import also detects repeating
 headers/footers via heuristic analysis and tags them with `layout.header_footer = True`.
 
+PDF text positioning follows ISO 32000 §9.4.2 — line spacing is **per-line** (each `Td`
+operator specifies an independent offset), not uniform like CSS `line-height`. UAF
+captures per-line baseline offsets in `LayoutHint.line_baselines` for exact rendering.
+See [docs/standards/pdf-text-positioning.md](standards/pdf-text-positioning.md) for the
+full specification reference.
+
 ### Text Storage: Semantic Form Requirement
 
 Nodes store text in **semantic/logical form**, not display form. When a source format

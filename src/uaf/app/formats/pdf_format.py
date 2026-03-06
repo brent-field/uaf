@@ -147,7 +147,7 @@ class PdfHandler:
                 if fl_weight and fl_weight != (block_weight or "normal"):
                     first_lw = fl_weight
 
-                line_ht = _compute_line_height(
+                line_ht, line_bases = _compute_line_metrics(
                     block, dominant_font_size=font.get("size"),
                 )
 
@@ -186,6 +186,7 @@ class PdfHandler:
                     first_line_weight=first_lw,
                     display_text=display_text,
                     line_height=line_ht,
+                    line_baselines=line_bases,
                     spans=span_list,
                     font_annotations=font_annots,
                 )
@@ -403,25 +404,29 @@ def _median(values: list[float]) -> float:
     return values[mid]
 
 
-def _compute_line_height(
+def _compute_line_metrics(
     block: dict[str, Any],
     dominant_font_size: float | None = None,
-) -> float | None:
-    """Compute inter-line spacing from PDF block data.
+) -> tuple[float | None, tuple[float, ...] | None]:
+    """Compute inter-line spacing and per-line baselines from PDF block data.
 
-    Returns the median baseline-to-baseline distance between consecutive
-    *visual* lines (after merging same-baseline segments).  Uses span
-    ``origin`` data for accurate baselines instead of bounding-box tops,
-    which are distorted by subscript/superscript content.
+    Returns a ``(median_line_height, relative_baselines)`` tuple.
 
-    Uses median instead of average to resist outliers from
-    subscript/superscript pseudo-lines.  Sub-line spacings (less than
-    60% of the dominant font size) are filtered out.  Returns ``None``
-    for single-line blocks.
+    ``median_line_height`` is the median baseline-to-baseline distance
+    between consecutive *visual* lines (after merging same-baseline
+    segments).  Uses span ``origin`` data for accurate baselines instead
+    of bounding-box tops, which are distorted by subscript/superscript
+    content.  ``None`` for single-line blocks.
+
+    ``relative_baselines`` is a tuple of per-visual-line y-offsets
+    relative to the **first** line's baseline (index 0 is always 0.0).
+    These come directly from the PDF text matrix (``Tm``/``Td``
+    operators) via PyMuPDF's span ``origin`` data — see ISO 32000
+    §9.4.2.  ``None`` for single-line blocks.
     """
     lines = block.get("lines", [])
     if not lines:
-        return None
+        return None, None
 
     # Group lines by visual baseline and collect per-group baselines.
     groups: list[list[float]] = []
@@ -453,7 +458,13 @@ def _compute_line_height(
             group_baselines.append(_median(list(g)))
 
     if len(group_baselines) < 2:
-        return None
+        return None, None
+
+    # Per-line offsets relative to the first baseline.
+    base0 = group_baselines[0]
+    relative = tuple(
+        round(b - base0, 2) for b in group_baselines
+    )
 
     spacings = [
         group_baselines[i + 1] - group_baselines[i]
@@ -470,7 +481,20 @@ def _compute_line_height(
         normal_spacings = spacings
 
     # Use median instead of average to resist remaining outliers.
-    return round(_median(normal_spacings), 1)
+    median_lh = round(_median(normal_spacings), 1)
+    return median_lh, relative
+
+
+def _compute_line_height(
+    block: dict[str, Any],
+    dominant_font_size: float | None = None,
+) -> float | None:
+    """Return the median baseline-to-baseline line spacing for *block*.
+
+    Thin wrapper around :func:`_compute_line_metrics` for callers that
+    only need the scalar line height.
+    """
+    return _compute_line_metrics(block, dominant_font_size)[0]
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:

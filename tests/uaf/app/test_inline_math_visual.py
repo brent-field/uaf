@@ -124,7 +124,9 @@ class TestInlineMathComputedStyles:
                     if (!block.textContent ||
                         !block.textContent.includes(substring))
                         continue;
-                    const spans = block.querySelectorAll('span');
+                    const spans = block.querySelectorAll(
+                        'span:not(.layout-line)'
+                    );
                     const results = [];
                     for (const span of spans) {
                         const cs = getComputedStyle(span);
@@ -295,10 +297,17 @@ class TestLineCountPreservation:
                     if (page !== '2' && page !== '3') continue;
                     const text = block.textContent || '';
                     if (text.trim().length < 10) continue;
-                    const html = block.innerHTML;
-                    const brCount =
-                        (html.match(/<br>/g) || []).length;
-                    const htmlLines = brCount + 1;
+                    const layoutLines =
+                        block.querySelectorAll('.layout-line');
+                    let htmlLines;
+                    if (layoutLines.length > 0) {
+                        htmlLines = layoutLines.length;
+                    } else {
+                        const html = block.innerHTML;
+                        const brCount =
+                            (html.match(/<br>/g) || []).length;
+                        htmlLines = brCount + 1;
+                    }
                     results.push({
                         ident: text.substring(0, 30).trim(),
                         htmlLines: htmlLines,

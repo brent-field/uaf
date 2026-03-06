@@ -84,6 +84,7 @@ class LayoutHint:
     header_footer: bool = False
     display_text: str | None = None
     line_height: float | None = None
+    line_baselines: tuple[float, ...] | None = None  # per-line y-offsets from 1st baseline
     spans: tuple[SpanInfo, ...] | None = None
     font_annotations: tuple[FontAnnotation, ...] | None = None
 

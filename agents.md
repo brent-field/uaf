@@ -69,6 +69,16 @@ point for AI agents and collaborators navigating the UAF project.
 
 ---
 
+## Standards & Specifications
+
+External standards that inform UAF's format handling and rendering fidelity.
+
+| Document | Path | Summary |
+|----------|------|---------|
+| **PDF Text Positioning** | [docs/standards/pdf-text-positioning.md](docs/standards/pdf-text-positioning.md) | ISO 32000 text operators, baseline positioning, line spacing — why PDF uses per-line `Td` offsets, not uniform leading. Covers `Tm`/`Td`/`TD`/`T*`/`TL` operators, PyMuPDF span `origin` mapping, and how UAF's `line_baselines` field reproduces exact PDF line positions |
+
+---
+
 ## Cross-References
 
 These connections span multiple documents:
