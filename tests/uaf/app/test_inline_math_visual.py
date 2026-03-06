@@ -452,3 +452,150 @@ class TestMathBlockLineHeight:
                 for b in collapsed
             )
         )
+
+
+# Pages to check for overlap (0-indexed).  Page 2 covers section 2.x
+# body text including the "Level Addition" paragraph with the inline
+# fraction that triggered the envelope tracking fix.  Pages 0-1 are
+# excluded because dense math subscripts and graph-notation formulas
+# cause bounding-box overlaps unrelated to the fraction-split fix.
+_OVERLAP_TEST_PAGES = [2]
+
+# Conversion factor from CSS px to PDF pt.
+_PX_TO_PT = 72.0 / 96.0
+
+
+@pytest.mark.playwright
+class TestNoLayoutLineOverlap:
+    """Verify that adjacent layout-line spans do not visually overlap.
+
+    When ``_same_baseline()`` incorrectly splits an inline fraction
+    (numerator/denominator), the resulting visual lines can overlap because
+    one line's content extends above or below its anchor position.
+
+    This test measures the bounding boxes of adjacent ``.layout-line``
+    spans within each block and asserts that no line's bottom extends
+    past the next line's top by more than a small tolerance.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        html = _build_layout_html()
+        p = sync_playwright().start()
+        try:
+            browser = p.chromium.launch()
+        except Exception:
+            p.stop()
+            pytest.skip("Chromium not installed — run: playwright install chromium")
+            return  # unreachable but keeps mypy happy
+
+        page = browser.new_page()
+        page.set_content(html, wait_until="load")
+
+        # For each block with layout-line spans on the test pages,
+        # measure bounding boxes and check for overlap.
+        self.overlap_data: list[dict[str, Any]] = page.evaluate(
+            """(testPages) => {
+                const results = [];
+                const pageContainers = document.querySelectorAll(
+                    '.layout-page'
+                );
+                for (let pi = 0; pi < pageContainers.length; pi++) {
+                    if (!testPages.includes(pi)) continue;
+                    const pageEl = pageContainers[pi];
+                    const blocks = pageEl.querySelectorAll(
+                        '.layout-block'
+                    );
+                    for (const block of blocks) {
+                        const lineSpans = block.querySelectorAll(
+                            '.layout-line'
+                        );
+                        if (lineSpans.length < 2) continue;
+
+                        const text =
+                            (block.textContent || '').trim();
+                        const rects = [];
+                        for (const span of lineSpans) {
+                            const r = span.getBoundingClientRect();
+                            rects.push({
+                                top: r.top,
+                                bottom: r.bottom,
+                                height: r.height,
+                                text: span.textContent
+                                    .substring(0, 40),
+                            });
+                        }
+
+                        // Check consecutive pairs for overlap.
+                        // Tolerance: 25px (~19pt). Blocks with
+                        // inline math sub/superscripts naturally
+                        // have 12-20px bounding-box overlap from
+                        // vertical-align CSS. The fraction-split
+                        // bug caused 30+ px overlap.
+                        const overlaps = [];
+                        for (
+                            let i = 0; i < rects.length - 1; i++
+                        ) {
+                            const overlapPx =
+                                rects[i].bottom -
+                                rects[i + 1].top;
+                            if (overlapPx > 25.0) {
+                                overlaps.push({
+                                    lineA: i,
+                                    lineB: i + 1,
+                                    overlapPx: overlapPx,
+                                    textA: rects[i].text,
+                                    textB: rects[i + 1].text,
+                                    bottomA: rects[i].bottom,
+                                    topB: rects[i + 1].top,
+                                });
+                            }
+                        }
+
+                        if (overlaps.length > 0) {
+                            results.push({
+                                blockText: text.substring(0, 40),
+                                lineCount: lineSpans.length,
+                                overlaps: overlaps,
+                            });
+                        }
+                    }
+                }
+                return results;
+            }""",
+            _OVERLAP_TEST_PAGES,
+        )
+
+        browser.close()
+        p.stop()
+
+    def test_no_overlapping_lines(self) -> None:
+        """No adjacent layout-line spans should have severe overlapping bounds.
+
+        Tolerance: 25px (~19pt).  Blocks with inline math sub/superscripts
+        naturally have 12-20px bounding-box overlap from vertical-align CSS.
+        The ``prev_bbox`` drift bug caused 30+ px visual overlap in the
+        "Level Addition" block's formula line.
+        """
+        if not self.overlap_data:
+            return  # No overlaps found — test passes
+
+        errors: list[str] = []
+        for block in self.overlap_data:
+            for ov in block["overlaps"]:
+                overlap_pt = ov["overlapPx"] * _PX_TO_PT
+                errors.append(
+                    f"  Block {block['blockText']!r}:\n"
+                    f"    line {ov['lineA']} ({ov['textA']!r}) "
+                    f"bottom={ov['bottomA']:.1f}px\n"
+                    f"    line {ov['lineB']} ({ov['textB']!r}) "
+                    f"top={ov['topB']:.1f}px\n"
+                    f"    overlap={ov['overlapPx']:.1f}px "
+                    f"({overlap_pt:.1f}pt)"
+                )
+
+        assert not errors, (
+            f"{len(errors)} layout-line overlap(s) found "
+            "(adjacent lines' bounding boxes intersect):\n"
+            + "\n".join(errors)
+        )

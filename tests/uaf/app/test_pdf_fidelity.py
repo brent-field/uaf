@@ -750,10 +750,14 @@ def _extract_visual_line_baselines(block: dict[str, Any]) -> list[float]:
     if not lines:
         return []
 
+    # Use group envelope tracking (matching production code) so that
+    # small sub-fragments (e.g. fraction numerator/denominator) are
+    # compared against the full group extent, not just the previous
+    # raw line.
     groups: list[list[float]] = []
     current_bls = _extract_baselines(lines[0])
     raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
-    prev_bbox = (
+    group_bbox = (
         float(raw_bb[0]), float(raw_bb[1]),
         float(raw_bb[2]), float(raw_bb[3]),
     )
@@ -764,12 +768,18 @@ def _extract_visual_line_baselines(block: dict[str, Any]) -> list[float]:
             float(raw[0]), float(raw[1]),
             float(raw[2]), float(raw[3]),
         )
-        if _same_baseline(prev_bbox, bbox):
+        if _same_baseline(group_bbox, bbox):
             current_bls.extend(_extract_baselines(line))
+            group_bbox = (
+                min(group_bbox[0], bbox[0]),
+                min(group_bbox[1], bbox[1]),
+                max(group_bbox[2], bbox[2]),
+                max(group_bbox[3], bbox[3]),
+            )
         else:
             groups.append(current_bls)
             current_bls = _extract_baselines(line)
-        prev_bbox = bbox
+            group_bbox = bbox
     groups.append(current_bls)
 
     result: list[float] = []
@@ -1851,4 +1861,131 @@ class TestNonMathBlocksNoSpans:
         assert "position: absolute" in inner, (
             "MathBlock must use absolute positioning for "
             "sub/superscript placement"
+        )
+
+
+class TestBaselineMergingFractions:
+    """Verify that inline fractions (numerator/denominator) stay merged.
+
+    The "Level Addition" paragraph on page 2 contains an inline fraction
+    ``1/Lt`` as part of a summation formula.  PyMuPDF reports the numerator
+    "1" and denominator "Lt" as separate "lines" with non-overlapping
+    y-ranges.  Without group envelope tracking, ``_same_baseline()``
+    compares each new raw line against only the *previous* raw line's bbox
+    rather than the visual line group's bounding-box envelope.
+
+    This causes the fraction to be split into two visual lines:
+    - VL1: lines 1-6 (formula text + numerator "1")
+    - VL2: lines 7-11 (denominator "Lt" + summation + "and parameters")
+
+    VL2 is positioned at the denominator's y-top (423.2pt) but contains
+    fragments (lines 8-9) whose y-tops are at 414.6pt -- well above VL2's
+    recorded position.  The browser renders VL2's content extending upward
+    into VL1's space and downward into the next line, causing visible
+    overlap.
+
+    The correct merge should produce 3 visual lines (not 4):
+    - VL0: "Level Addition: New levels are added..."
+    - VL1: "Formally, if ... 1/Lt Sigma f(l)t and parameters"
+    - VL2: "initialized via Hebbian-like rules [19]:"
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        from uaf.app.formats.pdf_format import (
+            _compute_line_metrics,
+            _merge_visual_lines,
+        )
+
+        doc = fitz.open(_PDF_PATH)
+        page = doc[2]  # 0-indexed -- section 2.3 is on page 3
+        raw: dict[str, Any] = page.get_text("dict")
+
+        self.level_addition_block: dict[str, Any] | None = None
+        for block in raw.get("blocks", []):
+            if block.get("type", 0) != 0:
+                continue
+            lines = block.get("lines", [])
+            if not lines:
+                continue
+            first_text = "".join(
+                s.get("text", "") for s in lines[0].get("spans", [])
+            )
+            if "Level Addition" in first_text:
+                self.level_addition_block = block
+                break
+
+        doc.close()
+        assert self.level_addition_block is not None, (
+            "Could not find 'Level Addition' block on page 2"
+        )
+
+        self.visual_lines = _merge_visual_lines(self.level_addition_block)
+        _line_ht, self.baselines = _compute_line_metrics(
+            self.level_addition_block,
+        )
+
+    def test_visual_line_count(self) -> None:
+        """Level Addition block should produce 3 visual lines, not 4.
+
+        The inline fraction 1/Lt must not split the formula line in two.
+        Mac Preview and Adobe Acrobat render this as 3 visual lines.
+        """
+        assert len(self.visual_lines) == 3, (
+            f"Expected 3 visual lines (formula stays on one line), "
+            f"got {len(self.visual_lines)}:\n"
+            + "\n".join(
+                f"  VL{i}: {vl[:60]!r}"
+                for i, vl in enumerate(self.visual_lines)
+            )
+        )
+
+    def test_fraction_denominator_not_separate_line(self) -> None:
+        """No visual line should start with the fraction denominator 'Lt'.
+
+        When ``_same_baseline`` uses ``prev_bbox`` drift, the denominator
+        "Lt" starts a new visual line.  It should be merged into the
+        preceding formula line.
+        """
+        for i, vl in enumerate(self.visual_lines):
+            stripped = vl.strip()
+            assert not stripped.startswith("Lt"), (
+                f"Visual line {i} starts with 'Lt' (fraction denominator "
+                f"incorrectly split into separate line): {stripped[:60]!r}"
+            )
+
+    def test_baselines_count_matches_visual_lines(self) -> None:
+        """baselines tuple length should equal the visual line count."""
+        assert self.baselines is not None, (
+            "Level Addition block should have baselines (multi-line block)"
+        )
+        assert len(self.baselines) == len(self.visual_lines), (
+            f"baselines has {len(self.baselines)} entries but "
+            f"visual_lines has {len(self.visual_lines)}"
+        )
+
+    def test_line_gaps_not_smaller_than_font_size(self) -> None:
+        """Gap between consecutive baselines should be >= 60% of 10pt.
+
+        When the fraction splits incorrectly, VL2 (denominator "Lt") has
+        its top just 8.6pt after VL1, and VL3 is only 6.7pt after VL2 --
+        far too tight for 10pt body text, causing overlap.  With correct
+        merging, all gaps should be ~10-11pt (normal body text spacing).
+        """
+        assert self.baselines is not None
+        min_gap = 10.0 * 0.6  # 60% of 10pt body text
+        tight_gaps: list[str] = []
+        for i in range(len(self.baselines) - 1):
+            gap = self.baselines[i + 1] - self.baselines[i]
+            if gap < min_gap:
+                tight_gaps.append(
+                    f"  gap {i}-{i + 1}: {gap:.1f}pt "
+                    f"(baselines: {self.baselines[i]:.1f}, "
+                    f"{self.baselines[i + 1]:.1f})"
+                )
+
+        assert not tight_gaps, (
+            f"Baseline gaps smaller than {min_gap:.1f}pt found -- "
+            f"likely caused by incorrect fraction splitting:\n"
+            + "\n".join(tight_gaps)
         )

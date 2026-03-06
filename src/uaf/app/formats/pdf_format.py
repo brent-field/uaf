@@ -151,6 +151,7 @@ class PdfHandler:
                 line_ht, line_bases = _compute_line_metrics(
                     block, dominant_font_size=font.get("size"),
                 )
+                line_left_offsets = _compute_line_lefts(block, x0)
 
                 # Detect math block: majority Computer Modern math fonts
                 is_math = _is_math_block(block)
@@ -165,10 +166,13 @@ class PdfHandler:
                 # while giving math characters their correct font-family.
                 span_list = _build_span_list(block) if is_math else None
                 font_annots: tuple[FontAnnotation, ...] | None = None
-                if not is_math and _has_math_fonts(block):
+                if not is_math and (
+                    _has_math_fonts(block) or _has_mixed_weight(block)
+                ):
                     font_annots = _build_font_annotations(
                         block, font.get("family"),
                         dominant_font_size=font.get("size"),
+                        dominant_weight=font.get("weight"),
                     )
 
                 layout = LayoutHint(
@@ -188,6 +192,7 @@ class PdfHandler:
                     display_text=display_text,
                     line_height=line_ht,
                     line_baselines=line_bases,
+                    line_lefts=line_left_offsets,
                     spans=span_list,
                     font_annotations=font_annots,
                 )
@@ -354,16 +359,26 @@ def _merge_visual_lines(block: dict[str, Any]) -> list[str]:
         line_data.append((text, (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))))
 
     # Group consecutive lines that share the same baseline.
+    # Track the *group envelope* bbox (union of all bboxes in the current
+    # visual line) so that small sub-fragments (e.g. fraction numerator
+    # and denominator) are compared against the full group extent, not
+    # just the previous raw line.
     visual: list[str] = [line_data[0][0]]
-    prev_bbox = line_data[0][1]
+    group_bbox = line_data[0][1]
 
     for text, bbox in line_data[1:]:
-        if _same_baseline(prev_bbox, bbox):
-            # Same visual line — append with space.
+        if _same_baseline(group_bbox, bbox):
+            # Same visual line — append with space and expand envelope.
             visual[-1] = visual[-1] + " " + text
+            group_bbox = (
+                min(group_bbox[0], bbox[0]),
+                min(group_bbox[1], bbox[1]),
+                max(group_bbox[2], bbox[2]),
+                max(group_bbox[3], bbox[3]),
+            )
         else:
             visual.append(text)
-        prev_bbox = bbox
+            group_bbox = bbox
 
     return visual
 
@@ -432,10 +447,13 @@ def _compute_line_metrics(
         return None, None
 
     # Group lines by visual baseline and collect per-group baselines.
+    # Track the group envelope bbox so that small sub-fragments (e.g.
+    # fraction numerator/denominator) are compared against the full
+    # group extent, not just the previous raw line.
     groups: list[list[float]] = []
     current_bls = _extract_baselines(lines[0])
     raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
-    prev_bbox = (
+    group_bbox = (
         float(raw_bb[0]), float(raw_bb[1]),
         float(raw_bb[2]), float(raw_bb[3]),
     )
@@ -446,12 +464,18 @@ def _compute_line_metrics(
             float(raw[0]), float(raw[1]),
             float(raw[2]), float(raw[3]),
         )
-        if _same_baseline(prev_bbox, bbox):
+        if _same_baseline(group_bbox, bbox):
             current_bls.extend(_extract_baselines(line))
+            group_bbox = (
+                min(group_bbox[0], bbox[0]),
+                min(group_bbox[1], bbox[1]),
+                max(group_bbox[2], bbox[2]),
+                max(group_bbox[3], bbox[3]),
+            )
         else:
             groups.append(current_bls)
             current_bls = _extract_baselines(line)
-        prev_bbox = bbox
+            group_bbox = bbox
     groups.append(current_bls)
 
     # Compute median baseline y for each visual line group.
@@ -498,6 +522,58 @@ def _compute_line_height(
     only need the scalar line height.
     """
     return _compute_line_metrics(block, dominant_font_size)[0]
+
+
+def _compute_line_lefts(
+    block: dict[str, Any],
+    block_x0: float,
+) -> tuple[float, ...] | None:
+    """Compute per-visual-line x-offsets relative to block left edge.
+
+    Uses the same baseline-merging logic as :func:`_merge_visual_lines`
+    with group envelope tracking.  Returns ``None`` for single-line
+    blocks or when all lines share the same x-offset.
+    """
+    lines = block.get("lines", [])
+    if not lines:
+        return None
+
+    raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
+    group_bbox = (
+        float(raw_bb[0]), float(raw_bb[1]),
+        float(raw_bb[2]), float(raw_bb[3]),
+    )
+    cur_min_x: float = group_bbox[0]
+    lefts: list[float] = []
+
+    for line in lines[1:]:
+        lb = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        cur_bbox = (
+            float(lb[0]), float(lb[1]),
+            float(lb[2]), float(lb[3]),
+        )
+        if not _same_baseline(group_bbox, cur_bbox):
+            lefts.append(round(cur_min_x - block_x0, 1))
+            group_bbox = cur_bbox
+            cur_min_x = cur_bbox[0]
+        else:
+            group_bbox = (
+                min(group_bbox[0], cur_bbox[0]),
+                min(group_bbox[1], cur_bbox[1]),
+                max(group_bbox[2], cur_bbox[2]),
+                max(group_bbox[3], cur_bbox[3]),
+            )
+            cur_min_x = min(cur_min_x, cur_bbox[0])
+
+    lefts.append(round(cur_min_x - block_x0, 1))
+
+    if len(lefts) < 2:
+        return None
+
+    # Only return if at least one line has a non-zero offset.
+    if not any(x > 0.5 for x in lefts):
+        return None
+    return tuple(lefts)
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:
@@ -703,6 +779,28 @@ def _has_math_fonts(block: dict[str, Any]) -> bool:
     return False
 
 
+def _has_mixed_weight(block: dict[str, Any]) -> bool:
+    """Check whether a block contains spans with different font weights.
+
+    Returns ``True`` if the block has both bold and non-bold spans,
+    indicating inline bold labels (e.g. "Level Pruning:" in a paragraph).
+    """
+    has_bold = False
+    has_normal = False
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            if not span.get("text", ""):
+                continue
+            flags = span.get("flags", 0)
+            if flags & (1 << 4):
+                has_bold = True
+            else:
+                has_normal = True
+            if has_bold and has_normal:
+                return True
+    return False
+
+
 def _build_span_list(block: dict[str, Any]) -> tuple[SpanInfo, ...] | None:
     """Build per-span font metadata from the raw PyMuPDF block.
 
@@ -797,19 +895,22 @@ def _build_font_annotations(
     block: dict[str, Any],
     dominant_family: str | None,
     dominant_font_size: float | None = None,
+    dominant_weight: str | None = None,
 ) -> tuple[FontAnnotation, ...] | None:
-    """Build font annotations for inline math characters in a text block.
+    """Build font annotations for character ranges that differ from the block default.
 
     Uses the same baseline-merging logic as :func:`_merge_visual_lines`
-    to walk through the block in visual-line order.  For each span that
-    uses a Computer Modern math font (regardless of CSS mapping), a
-    :class:`FontAnnotation` records the character range in ``display_text``
-    along with font size, weight, and vertical alignment.
+    to walk through the block in visual-line order.  Annotations are
+    created for spans that:
+
+    - use a Computer Modern math font,
+    - have a different CSS font-family than the dominant, or
+    - have a different font-weight than the dominant (e.g. bold labels).
 
     The character offsets are computed by reconstructing the same text that
     :func:`_extract_raw_block_text` produces, ensuring perfect alignment.
 
-    Returns ``None`` if no math-font spans are found.
+    Returns ``None`` if no annotatable spans are found.
     """
     lines = block.get("lines", [])
     if not lines:
@@ -872,14 +973,19 @@ def _build_font_annotations(
 
     # Pending spans for the current visual line (accumulated across
     # same-baseline PDF lines, with space separators between merges).
+    # Track the group envelope bbox so that small sub-fragments are
+    # compared against the full group extent, not just the previous
+    # raw line.
     pending: list[_FontSpan] = list(line_entries[0][0])
-    prev_bbox = line_entries[0][1]
+    group_bbox = line_entries[0][1]
 
     def _flush(spans: list[_FontSpan], char_offset: int) -> int:
         """Emit annotations for a merged visual line."""
+        dom_w = dominant_weight or "normal"
         for span in spans:
             end = char_offset + len(span.text)
-            # Annotate if: CSS family differs OR it's a CM math font
+            # Annotate if: CSS family differs, it's a CM math font,
+            # or font weight differs from the block dominant.
             family_differs = (
                 span.css_family
                 and span.css_family != dominant_family
@@ -887,7 +993,11 @@ def _build_font_annotations(
             is_math = bool(span.pdf_font) and _is_math_font(
                 span.pdf_font,
             )
-            if family_differs or is_math:
+            weight_differs = (
+                span.font_weight is not None
+                and span.font_weight != dom_w
+            )
+            if family_differs or is_math or weight_differs:
                 valign = _detect_vertical_align(
                     span, dominant_font_size, dominant_y,
                 )
@@ -904,7 +1014,7 @@ def _build_font_annotations(
 
     for idx in range(1, len(line_entries)):
         spans_data, bbox = line_entries[idx]
-        if _same_baseline(prev_bbox, bbox):
+        if _same_baseline(group_bbox, bbox):
             # Same visual line — add space separator then spans.
             pending.append(_FontSpan(
                 text=" ", css_family=None, font_style=None,
@@ -912,6 +1022,12 @@ def _build_font_annotations(
                 y_top=None,
             ))
             pending.extend(spans_data)
+            group_bbox = (
+                min(group_bbox[0], bbox[0]),
+                min(group_bbox[1], bbox[1]),
+                max(group_bbox[2], bbox[2]),
+                max(group_bbox[3], bbox[3]),
+            )
         else:
             # New visual line — flush pending.
             if not is_first_visual_line:
@@ -919,7 +1035,7 @@ def _build_font_annotations(
             offset = _flush(pending, offset)
             is_first_visual_line = False
             pending = list(spans_data)
-        prev_bbox = bbox
+            group_bbox = bbox
 
     # Flush last visual line.
     if not is_first_visual_line:

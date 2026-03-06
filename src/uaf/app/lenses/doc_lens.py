@@ -237,14 +237,18 @@ class DocLens:
             style_parts.append(f"width: {layout.width}pt")
         # When child elements use absolute positioning the parent
         # collapses to zero height — set explicit height from the PDF bbox.
-        if (layout.spans or layout.line_baselines) and layout.height is not None:
+        has_abs_children = bool(layout.spans) or bool(layout.line_baselines)
+        if has_abs_children and layout.height is not None:
             style_parts.append(f"height: {layout.height}pt")
         if layout.reading_order is not None:
             style_parts.append(f"z-index: {1000 - layout.reading_order}")
         if layout.rotation is not None:
             style_parts.append(f"transform: rotate({layout.rotation}deg)")
             style_parts.append("transform-origin: top left")
-        style_parts.extend(_font_style_parts(layout))
+        # Skip line-height when per-line positioning handles spacing.
+        style_parts.extend(_font_style_parts(
+            layout, skip_line_height=has_abs_children,
+        ))
 
         css_class = "layout-block"
         if layout.header_footer:
@@ -655,7 +659,11 @@ def _render_layout_shape(node: Shape) -> str:
     return f'  <div {data_attr_str} class="{css_class}" style="{style}"></div>'
 
 
-def _font_style_parts(layout: LayoutHint) -> list[str]:
+def _font_style_parts(
+    layout: LayoutHint,
+    *,
+    skip_line_height: bool = False,
+) -> list[str]:
     """Build CSS style parts from LayoutHint font properties."""
     parts: list[str] = []
     if layout.font_family:
@@ -666,9 +674,7 @@ def _font_style_parts(layout: LayoutHint) -> list[str]:
         parts.append(f"font-family: {safe_family}")
     if layout.font_size is not None:
         parts.append(f"font-size: {layout.font_size}pt")
-    if layout.line_height is not None and not layout.line_baselines:
-        # Skip uniform line-height when per-line baselines are available;
-        # the renderer will position each line individually instead.
+    if layout.line_height is not None and not skip_line_height:
         parts.append(f"line-height: {layout.line_height}pt")
     if layout.font_weight:
         parts.append(f"font-weight: {escape(layout.font_weight)}")
@@ -688,11 +694,12 @@ def _format_per_line_text(
 
     Each visual line is wrapped in a ``<span>`` with ``position: absolute``
     and ``top: {baseline}pt``, giving exact control over each line's
-    vertical placement.  This replaces the ``<br>``-based approach used
-    by :func:`_format_layout_text` when per-line baseline data from the
-    PDF is available (see ISO 32000 §9.4.2).
+    vertical placement.  When ``line_lefts`` is available, a ``left: Xpt``
+    offset is also applied (e.g. for centered equations within a paragraph
+    block).
     """
     raw_lines = text.split("\n")
+    line_lefts = layout.line_lefts
 
     # First-line bold handling.
     flw = layout.first_line_weight
@@ -701,6 +708,7 @@ def _format_per_line_text(
     parts: list[str] = []
     for i, raw_line in enumerate(raw_lines):
         top = baselines[i] if i < len(baselines) else baselines[-1]
+        left = line_lefts[i] if line_lefts and i < len(line_lefts) else None
         escaped_line = escape(raw_line)
 
         # Apply first-line bold if needed.
@@ -710,10 +718,14 @@ def _format_per_line_text(
                 f"{escaped_line}</span>"
             )
 
+        css = "display: block; position: absolute; white-space: nowrap"
+        css += f"; top: {top}pt"
+        if left is not None and left > 0.5:
+            css += f"; left: {left}pt"
+
         parts.append(
-            f'<span class="layout-line" style="display: block;'
-            f" position: absolute; top: {top}pt;"
-            f' white-space: nowrap">{escaped_line}</span>'
+            f'<span class="layout-line" style="{css}">'
+            f"{escaped_line}</span>"
         )
     return "".join(parts)
 
@@ -727,12 +739,13 @@ def _format_per_line_annotated_text(
     """Format annotated text with per-line absolute positioning.
 
     Combines font annotations (inline math styling) with per-line
-    baseline positioning.  Each visual line is rendered as an absolutely
-    positioned ``<span>``, and within each line, font annotations
-    provide ``<span>`` wrappers for math-font character ranges.
+    baseline positioning.  Each visual line is positioned at its exact
+    PDF y-offset and x-offset, and annotations within that line are
+    rendered as inline ``<span>`` elements.
     """
     raw_lines = text.split("\n")
     sorted_anns = sorted(annotations, key=lambda a: a.start)
+    line_lefts = layout.line_lefts
 
     flw = layout.first_line_weight
     block_w = layout.font_weight or "normal"
@@ -743,6 +756,7 @@ def _format_per_line_annotated_text(
     for i, raw_line in enumerate(raw_lines):
         line_end = line_start + len(raw_line)
         top = baselines[i] if i < len(baselines) else baselines[-1]
+        left = line_lefts[i] if line_lefts and i < len(line_lefts) else None
 
         # Collect annotations that overlap this line's character range.
         line_parts: list[str] = []
@@ -788,10 +802,14 @@ def _format_per_line_annotated_text(
                 f"{line_html}</span>"
             )
 
+        line_css = "display: block; position: absolute; white-space: nowrap"
+        line_css += f"; top: {top}pt"
+        if left is not None and left > 0.5:
+            line_css += f"; left: {left}pt"
+
         parts.append(
-            f'<span class="layout-line" style="display: block;'
-            f" position: absolute; top: {top}pt;"
-            f' white-space: nowrap">{line_html}</span>'
+            f'<span class="layout-line" style="{line_css}">'
+            f"{line_html}</span>"
         )
         # +1 for the \n separator.
         line_start = line_end + 1
