@@ -361,16 +361,26 @@ def _merge_visual_lines(block: dict[str, Any]) -> list[str]:
         line_data.append((text, (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))))
 
     # Group consecutive lines that share the same baseline.
+    # Track the *group envelope* bbox (union of all bboxes in the current
+    # visual line) so that small sub-fragments (e.g. fraction numerator
+    # and denominator) are compared against the full group extent, not
+    # just the previous raw line.
     visual: list[str] = [line_data[0][0]]
-    prev_bbox = line_data[0][1]
+    group_bbox = line_data[0][1]
 
     for text, bbox in line_data[1:]:
-        if _same_baseline(prev_bbox, bbox):
-            # Same visual line — append with space.
+        if _same_baseline(group_bbox, bbox):
+            # Same visual line — append with space and expand envelope.
             visual[-1] = visual[-1] + " " + text
+            group_bbox = (
+                min(group_bbox[0], bbox[0]),
+                min(group_bbox[1], bbox[1]),
+                max(group_bbox[2], bbox[2]),
+                max(group_bbox[3], bbox[3]),
+            )
         else:
             visual.append(text)
-        prev_bbox = bbox
+            group_bbox = bbox
 
     return visual
 
@@ -412,11 +422,14 @@ def _compute_line_height(
         return None
 
     # Collect the y-top of each visual line group.
+    # Track the group envelope bbox so that small sub-fragments (e.g.
+    # fraction numerator/denominator) are compared against the full
+    # group extent, not just the previous raw line.
     visual_tops: list[float] = [
         float(lines[0].get("bbox", (0, 0, 0, 0))[1]),
     ]
     raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
-    prev_bbox = (
+    group_bbox = (
         float(raw_bb[0]), float(raw_bb[1]),
         float(raw_bb[2]), float(raw_bb[3]),
     )
@@ -427,9 +440,16 @@ def _compute_line_height(
             float(raw[0]), float(raw[1]),
             float(raw[2]), float(raw[3]),
         )
-        if not _same_baseline(prev_bbox, bbox):
+        if not _same_baseline(group_bbox, bbox):
             visual_tops.append(bbox[1])
-        prev_bbox = bbox
+            group_bbox = bbox
+        else:
+            group_bbox = (
+                min(group_bbox[0], bbox[0]),
+                min(group_bbox[1], bbox[1]),
+                max(group_bbox[2], bbox[2]),
+                max(group_bbox[3], bbox[3]),
+            )
 
     if len(visual_tops) < 2:
         return None
@@ -480,13 +500,17 @@ def _compute_line_positions(
         return None, None
 
     raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
-    prev_bbox = (
+    group_bbox = (
         float(raw_bb[0]), float(raw_bb[1]),
         float(raw_bb[2]), float(raw_bb[3]),
     )
-    tops: list[float] = [round(prev_bbox[1] - block_y0, 1)]
+    # Track the minimum y0 across all raw lines in the group so the
+    # visual line's top reflects the true content extent (not just
+    # the first raw line's y0).
+    group_min_y: float = group_bbox[1]
+    tops: list[float] = [round(group_min_y - block_y0, 1)]
     # Track min x per visual line group for x-offset.
-    cur_min_x: float = prev_bbox[0]
+    cur_min_x: float = group_bbox[0]
     lefts: list[float] = []
 
     for line in lines[1:]:
@@ -495,14 +519,24 @@ def _compute_line_positions(
             float(lb[0]), float(lb[1]),
             float(lb[2]), float(lb[3]),
         )
-        if not _same_baseline(prev_bbox, cur_bbox):
+        if not _same_baseline(group_bbox, cur_bbox):
             # Finish previous visual line group.
             lefts.append(round(cur_min_x - block_x0, 1))
-            tops.append(round(cur_bbox[1] - block_y0, 1))
+            # Start new group.
+            group_bbox = cur_bbox
+            group_min_y = cur_bbox[1]
+            tops.append(round(group_min_y - block_y0, 1))
             cur_min_x = cur_bbox[0]
         else:
+            # Expand group envelope and update min y/x.
+            group_bbox = (
+                min(group_bbox[0], cur_bbox[0]),
+                min(group_bbox[1], cur_bbox[1]),
+                max(group_bbox[2], cur_bbox[2]),
+                max(group_bbox[3], cur_bbox[3]),
+            )
+            group_min_y = min(group_min_y, cur_bbox[1])
             cur_min_x = min(cur_min_x, cur_bbox[0])
-        prev_bbox = cur_bbox
 
     # Finish last visual line group.
     lefts.append(round(cur_min_x - block_x0, 1))

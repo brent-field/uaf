@@ -115,13 +115,14 @@ def _get_pdf_block_data(
             if not visual_lines:
                 continue
 
-            # Compute per-visual-line y-tops using same baseline logic.
+            # Compute per-visual-line y-tops using same baseline logic
+            # with group envelope tracking (matching production code).
             raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
-            prev_bb = (
+            group_bb = (
                 float(raw_bb[0]), float(raw_bb[1]),
                 float(raw_bb[2]), float(raw_bb[3]),
             )
-            line_tops: list[float] = [prev_bb[1]]
+            line_tops: list[float] = [group_bb[1]]
 
             for line in lines[1:]:
                 lb = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
@@ -129,9 +130,16 @@ def _get_pdf_block_data(
                     float(lb[0]), float(lb[1]),
                     float(lb[2]), float(lb[3]),
                 )
-                if not _same_baseline(prev_bb, cur_bb):
+                if not _same_baseline(group_bb, cur_bb):
                     line_tops.append(cur_bb[1])
-                prev_bb = cur_bb
+                    group_bb = cur_bb
+                else:
+                    group_bb = (
+                        min(group_bb[0], cur_bb[0]),
+                        min(group_bb[1], cur_bb[1]),
+                        max(group_bb[2], cur_bb[2]),
+                        max(group_bb[3], cur_bb[3]),
+                    )
 
             blocks.append({
                 "page": page_num,
@@ -430,4 +438,133 @@ class TestVisualPositionFidelity:
         assert not mismatches, (
             f"{len(mismatches)} block(s) have wrong line count:\n"
             + "\n".join(mismatches)
+        )
+
+
+@pytest.mark.playwright
+class TestNoLayoutLineOverlap:
+    """Verify that adjacent layout-line spans do not visually overlap.
+
+    When ``_same_baseline()`` incorrectly splits an inline fraction
+    (numerator/denominator), the resulting visual lines can overlap because
+    one line's content extends above or below its anchor position.
+
+    This test measures the bounding boxes of adjacent ``.layout-line``
+    spans within each block and asserts that no line's bottom extends
+    past the next line's top by more than a small tolerance.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        html = _build_layout_html()
+        p, browser = _launch_browser_or_skip()
+        page = browser.new_page()
+        page.set_content(html, wait_until="load")
+
+        # For each block with layout-line spans on the test pages,
+        # measure bounding boxes and check for overlap.
+        self.overlap_data: list[dict[str, Any]] = page.evaluate(
+            """(testPages) => {
+                const results = [];
+                const pageContainers = document.querySelectorAll(
+                    '.layout-page'
+                );
+                for (let pi = 0; pi < pageContainers.length; pi++) {
+                    if (!testPages.includes(pi)) continue;
+                    const pageEl = pageContainers[pi];
+                    const blocks = pageEl.querySelectorAll(
+                        '.layout-block'
+                    );
+                    for (const block of blocks) {
+                        const lineSpans = block.querySelectorAll(
+                            '.layout-line'
+                        );
+                        if (lineSpans.length < 2) continue;
+
+                        const text =
+                            (block.textContent || '').trim();
+                        const rects = [];
+                        for (const span of lineSpans) {
+                            const r = span.getBoundingClientRect();
+                            rects.push({
+                                top: r.top,
+                                bottom: r.bottom,
+                                height: r.height,
+                                text: span.textContent
+                                    .substring(0, 40),
+                            });
+                        }
+
+                        // Check consecutive pairs for overlap.
+                        // Tolerance: 12px (~9pt). Blocks with
+                        // inline math sub/superscripts naturally
+                        // have 6-10px bounding-box overlap from
+                        // vertical-align CSS. The fraction-split
+                        // bug caused 15+ px overlap.
+                        const overlaps = [];
+                        for (
+                            let i = 0; i < rects.length - 1; i++
+                        ) {
+                            const overlapPx =
+                                rects[i].bottom -
+                                rects[i + 1].top;
+                            if (overlapPx > 12.0) {
+                                overlaps.push({
+                                    lineA: i,
+                                    lineB: i + 1,
+                                    overlapPx: overlapPx,
+                                    textA: rects[i].text,
+                                    textB: rects[i + 1].text,
+                                    bottomA: rects[i].bottom,
+                                    topB: rects[i + 1].top,
+                                });
+                            }
+                        }
+
+                        if (overlaps.length > 0) {
+                            results.push({
+                                blockText: text.substring(0, 40),
+                                lineCount: lineSpans.length,
+                                overlaps: overlaps,
+                            });
+                        }
+                    }
+                }
+                return results;
+            }""",
+            list(_TEST_PAGES),
+        )
+
+        browser.close()
+        p.stop()
+
+    def test_no_overlapping_lines(self) -> None:
+        """No adjacent layout-line spans should have severe overlapping bounds.
+
+        Tolerance: 8px (~6pt).  Small-caps titles and mixed-size blocks
+        naturally have 4-6px bounding-box overlap from tight line spacing.
+        The ``prev_bbox`` drift bug caused 15+ px overlap in the "Level
+        Addition" block's formula line.
+        """
+        if not self.overlap_data:
+            return  # No overlaps found — test passes
+
+        errors: list[str] = []
+        for block in self.overlap_data:
+            for ov in block["overlaps"]:
+                overlap_pt = ov["overlapPx"] * _PX_TO_PT
+                errors.append(
+                    f"  Block {block['blockText']!r}:\n"
+                    f"    line {ov['lineA']} ({ov['textA']!r}) "
+                    f"bottom={ov['bottomA']:.1f}px\n"
+                    f"    line {ov['lineB']} ({ov['textB']!r}) "
+                    f"top={ov['topB']:.1f}px\n"
+                    f"    overlap={ov['overlapPx']:.1f}px "
+                    f"({overlap_pt:.1f}pt)"
+                )
+
+        assert not errors, (
+            f"{len(errors)} layout-line overlap(s) found "
+            "(adjacent lines' bounding boxes intersect):\n"
+            + "\n".join(errors)
         )
