@@ -124,7 +124,9 @@ class TestInlineMathComputedStyles:
                     if (!block.textContent ||
                         !block.textContent.includes(substring))
                         continue;
-                    const spans = block.querySelectorAll('span');
+                    const spans = block.querySelectorAll(
+                        'span:not(.layout-line)'
+                    );
                     const results = [];
                     for (const span of spans) {
                         const cs = getComputedStyle(span);
@@ -227,10 +229,10 @@ class TestInlineMathComputedStyles:
         # Subscript spans should compute to a smaller pixel size.
         sub_spans = [
             s for s in self.span_details
-            if s.get("inlineVerticalAlign") in ("sub", "super")
+            if s.get("inlineVerticalAlign")
         ]
         if not sub_spans:
-            pytest.skip("No sub/super spans found")
+            pytest.skip("No vertically aligned spans found")
         for span in sub_spans:
             size_str = span.get("computedFontSize", "")
             if not size_str:
@@ -244,14 +246,15 @@ class TestInlineMathComputedStyles:
             )
 
     def test_some_spans_have_vertical_align(self) -> None:
-        """Sub/superscript spans should have vertical-align CSS."""
+        """Sub/superscript spans should have numeric vertical-align."""
         valign_spans = [
             s for s in self.span_details
-            if s.get("inlineVerticalAlign") in ("sub", "super")
+            if s.get("inlineVerticalAlign")
+            and "pt" in str(s.get("inlineVerticalAlign"))
         ]
         assert len(valign_spans) > 0, (
             "Expected sub/superscript spans with vertical-align "
-            "CSS. Section 2.3 has subscripts/superscripts."
+            "pt values. Section 2.3 has subscripts/superscripts."
         )
 
     def test_surrounding_text_preserves_spacing(self) -> None:
@@ -294,10 +297,17 @@ class TestLineCountPreservation:
                     if (page !== '2' && page !== '3') continue;
                     const text = block.textContent || '';
                     if (text.trim().length < 10) continue;
-                    const html = block.innerHTML;
-                    const brCount =
-                        (html.match(/<br>/g) || []).length;
-                    const htmlLines = brCount + 1;
+                    const layoutLines =
+                        block.querySelectorAll('.layout-line');
+                    let htmlLines;
+                    if (layoutLines.length > 0) {
+                        htmlLines = layoutLines.length;
+                    } else {
+                        const html = block.innerHTML;
+                        const brCount =
+                            (html.match(/<br>/g) || []).length;
+                        htmlLines = brCount + 1;
+                    }
                     results.push({
                         ident: text.substring(0, 30).trim(),
                         htmlLines: htmlLines,

@@ -235,9 +235,9 @@ class DocLens:
             style_parts.append(f"top: {layout.y}pt")
         if layout.width is not None:
             style_parts.append(f"width: {layout.width}pt")
-        # When spans use absolute positioning the parent collapses to
-        # zero height, so we must set an explicit height from the PDF bbox.
-        if layout.spans and layout.height is not None:
+        # When child elements use absolute positioning the parent
+        # collapses to zero height — set explicit height from the PDF bbox.
+        if (layout.spans or layout.line_baselines) and layout.height is not None:
             style_parts.append(f"height: {layout.height}pt")
         if layout.reading_order is not None:
             style_parts.append(f"z-index: {1000 - layout.reading_order}")
@@ -268,16 +268,27 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # Three rendering paths:
+        # Four rendering paths:
         # 1. Display equations (spans) → absolute positioning per glyph
-        # 2. Inline math (font_annotations) → normal text flow with
+        # 2. Per-line baselines → each line absolutely positioned
+        # 3. Inline math (font_annotations) → normal text flow with
         #    <span> wrappers for math-font character ranges
-        # 3. Plain text → escaped text with line breaks
+        # 4. Plain text → escaped text with line breaks
         if layout.spans:
             escaped = _format_spans(layout)
         else:
             render_text = layout.display_text if layout.display_text else text
-            if layout.font_annotations:
+            if layout.line_baselines:
+                if layout.font_annotations:
+                    escaped = _format_per_line_annotated_text(
+                        render_text, layout.font_annotations,
+                        layout.line_baselines, layout,
+                    )
+                else:
+                    escaped = _format_per_line_text(
+                        render_text, layout.line_baselines, layout,
+                    )
+            elif layout.font_annotations:
                 escaped = _format_annotated_text(
                     render_text, layout.font_annotations, layout,
                 )
@@ -655,7 +666,9 @@ def _font_style_parts(layout: LayoutHint) -> list[str]:
         parts.append(f"font-family: {safe_family}")
     if layout.font_size is not None:
         parts.append(f"font-size: {layout.font_size}pt")
-    if layout.line_height is not None:
+    if layout.line_height is not None and not layout.line_baselines:
+        # Skip uniform line-height when per-line baselines are available;
+        # the renderer will position each line individually instead.
         parts.append(f"line-height: {layout.line_height}pt")
     if layout.font_weight:
         parts.append(f"font-weight: {escape(layout.font_weight)}")
@@ -664,6 +677,126 @@ def _font_style_parts(layout: LayoutHint) -> list[str]:
     if layout.color:
         parts.append(f"color: {escape(layout.color)}")
     return parts
+
+
+def _format_per_line_text(
+    text: str,
+    baselines: tuple[float, ...],
+    layout: LayoutHint,
+) -> str:
+    """Format text with per-line absolute positioning.
+
+    Each visual line is wrapped in a ``<span>`` with ``position: absolute``
+    and ``top: {baseline}pt``, giving exact control over each line's
+    vertical placement.  This replaces the ``<br>``-based approach used
+    by :func:`_format_layout_text` when per-line baseline data from the
+    PDF is available (see ISO 32000 §9.4.2).
+    """
+    raw_lines = text.split("\n")
+
+    # First-line bold handling.
+    flw = layout.first_line_weight
+    block_w = layout.font_weight or "normal"
+
+    parts: list[str] = []
+    for i, raw_line in enumerate(raw_lines):
+        top = baselines[i] if i < len(baselines) else baselines[-1]
+        escaped_line = escape(raw_line)
+
+        # Apply first-line bold if needed.
+        if i == 0 and flw and flw != block_w:
+            escaped_line = (
+                f'<span style="font-weight: {escape(flw)}">'
+                f"{escaped_line}</span>"
+            )
+
+        parts.append(
+            f'<span class="layout-line" style="display: block;'
+            f" position: absolute; top: {top}pt;"
+            f' white-space: nowrap">{escaped_line}</span>'
+        )
+    return "".join(parts)
+
+
+def _format_per_line_annotated_text(
+    text: str,
+    annotations: tuple[FontAnnotation, ...],
+    baselines: tuple[float, ...],
+    layout: LayoutHint,
+) -> str:
+    """Format annotated text with per-line absolute positioning.
+
+    Combines font annotations (inline math styling) with per-line
+    baseline positioning.  Each visual line is rendered as an absolutely
+    positioned ``<span>``, and within each line, font annotations
+    provide ``<span>`` wrappers for math-font character ranges.
+    """
+    raw_lines = text.split("\n")
+    sorted_anns = sorted(annotations, key=lambda a: a.start)
+
+    flw = layout.first_line_weight
+    block_w = layout.font_weight or "normal"
+
+    parts: list[str] = []
+    # Track cumulative character offset through the unsplit text.
+    line_start = 0
+    for i, raw_line in enumerate(raw_lines):
+        line_end = line_start + len(raw_line)
+        top = baselines[i] if i < len(baselines) else baselines[-1]
+
+        # Collect annotations that overlap this line's character range.
+        line_parts: list[str] = []
+        pos = line_start
+        for ann in sorted_anns:
+            if ann.end <= line_start or ann.start >= line_end:
+                continue  # annotation doesn't overlap this line
+            a_start = max(ann.start, line_start)
+            a_end = min(ann.end, line_end)
+            # Emit text before this annotation (within this line).
+            if a_start > pos:
+                line_parts.append(escape(text[pos:a_start]))
+            # Emit the annotated range.
+            css: list[str] = []
+            safe_family = ann.font_family.replace('"', "'")
+            css.append(f"font-family: {safe_family}")
+            if ann.font_style:
+                css.append(f"font-style: {escape(ann.font_style)}")
+            if ann.font_size is not None:
+                css.append(f"font-size: {ann.font_size}pt")
+            if ann.font_weight:
+                css.append(f"font-weight: {escape(ann.font_weight)}")
+            if ann.vertical_align is not None:
+                css_offset = -ann.vertical_align
+                css.append(f"vertical-align: {css_offset}pt")
+            style = "; ".join(css)
+            line_parts.append(
+                f'<span style="{style}">'
+                f"{escape(text[a_start:a_end])}</span>"
+            )
+            pos = a_end
+
+        # Remaining unannotated text on this line.
+        if pos < line_end:
+            line_parts.append(escape(text[pos:line_end]))
+
+        line_html = "".join(line_parts)
+
+        # Apply first-line bold if needed.
+        if i == 0 and flw and flw != block_w:
+            line_html = (
+                f'<span style="font-weight: {escape(flw)}">'
+                f"{line_html}</span>"
+            )
+
+        parts.append(
+            f'<span class="layout-line" style="display: block;'
+            f" position: absolute; top: {top}pt;"
+            f' white-space: nowrap">{line_html}</span>'
+        )
+        # +1 for the \n separator.
+        line_start = line_end + 1
+
+    return "".join(parts)
 
 
 def _format_layout_text(text: str, layout: LayoutHint) -> str:
@@ -730,10 +863,10 @@ def _format_annotated_text(
             css.append(f"font-size: {ann.font_size}pt")
         if ann.font_weight:
             css.append(f"font-weight: {escape(ann.font_weight)}")
-        if ann.vertical_align:
-            css.append(
-                f"vertical-align: {escape(ann.vertical_align)}",
-            )
+        if ann.vertical_align is not None:
+            # Negate: CSS positive = up, PDF positive = down.
+            css_offset = -ann.vertical_align
+            css.append(f"vertical-align: {css_offset}pt")
         style = "; ".join(css)
         parts.append(
             f'<span style="{style}">'

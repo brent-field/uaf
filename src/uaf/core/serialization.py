@@ -128,6 +128,8 @@ def _layout_to_dict(layout: LayoutHint) -> dict[str, Any]:
         d["display_text"] = layout.display_text
     if layout.line_height is not None:
         d["line_height"] = layout.line_height
+    if layout.line_baselines is not None:
+        d["line_baselines"] = list(layout.line_baselines)
     if layout.spans is not None:
         d["spans"] = [_span_to_dict(s) for s in layout.spans]
     if layout.font_annotations is not None:
@@ -153,6 +155,10 @@ def _annot_to_dict(annot: FontAnnotation) -> dict[str, Any]:
 
 
 def _annot_from_dict(d: dict[str, Any]) -> FontAnnotation:
+    va = d.get("vertical_align")
+    # Backwards compat: old data stored "sub"/"super" strings.
+    if isinstance(va, str):
+        va = None
     return FontAnnotation(
         start=d["start"],
         end=d["end"],
@@ -160,7 +166,7 @@ def _annot_from_dict(d: dict[str, Any]) -> FontAnnotation:
         font_style=d.get("font_style"),
         font_size=d.get("font_size"),
         font_weight=d.get("font_weight"),
-        vertical_align=d.get("vertical_align"),
+        vertical_align=va,
     )
 
 
@@ -189,6 +195,11 @@ def _layout_from_dict(d: dict[str, Any]) -> LayoutHint:
         header_footer=bool(d.get("header_footer", False)),
         display_text=d.get("display_text"),
         line_height=d.get("line_height"),
+        line_baselines=(
+            tuple(float(v) for v in raw_lb)
+            if (raw_lb := d.get("line_baselines")) is not None
+            else None
+        ),
         spans=spans,
         font_annotations=annots,
     )

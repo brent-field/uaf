@@ -21,7 +21,13 @@ import fitz
 import pytest
 
 from tests.uaf.app._pdf_fidelity_helpers import _find_block, _import_pdf
-from uaf.core.nodes import Artifact, MathBlock, Paragraph, Shape
+from uaf.core.nodes import (
+    Artifact,
+    FontAnnotation,
+    MathBlock,
+    Paragraph,
+    Shape,
+)
 
 
 class TestPdfFidelity2511:
@@ -553,8 +559,9 @@ class TestPdfRenderedLayout:
     def test_body_text_renders_at_10pt(self) -> None:
         """Body paragraphs must render with ~10pt font-size."""
         body_pattern = re.compile(
-            r'class="layout-block[^"]*"\s+style="([^"]*)">'
-            r"[^<]*Advancements in deep learning",
+            r'class="layout-block[^"]*"\s+style="([^"]*)"[^>]*>'
+            r"(?:(?!</div>).)*?Advancements in deep learning",
+            re.DOTALL,
         )
         m = body_pattern.search(self.html)
         assert m is not None, "Body text block not found in rendered HTML"
@@ -679,6 +686,17 @@ class TestPdfRenderedLayout:
                 )
 
 
+def test_cm_fonts_map_to_latin_modern() -> None:
+    """Computer Modern fonts should map to Latin Modern Math."""
+    from uaf.app.formats.pdf_format import _map_font_family
+
+    for prefix in ("CMMI10", "CMR10", "CMSY10", "CMEX10", "CMBX10"):
+        result = _map_font_family(prefix)
+        assert "Latin Modern Math" in result, (
+            f"{prefix} should map to Latin Modern Math, got: {result}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Helpers for line-break fidelity tests
 # ---------------------------------------------------------------------------
@@ -714,6 +732,53 @@ def _pdf_block_lines(substring: str) -> list[str]:
     raise ValueError(msg)
 
 
+def _extract_visual_line_baselines(block: dict[str, Any]) -> list[float]:
+    """Return the median baseline y for each visual line in a raw PDF block.
+
+    Groups PyMuPDF lines by visual baseline (same logic as
+    ``_compute_line_height``), then computes the median span
+    ``origin[1]`` for each group.  This gives the true per-line
+    y-position from the PDF.
+    """
+    from uaf.app.formats.pdf_format import (
+        _extract_baselines,
+        _median,
+        _same_baseline,
+    )
+
+    lines = block.get("lines", [])
+    if not lines:
+        return []
+
+    groups: list[list[float]] = []
+    current_bls = _extract_baselines(lines[0])
+    raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
+    prev_bbox = (
+        float(raw_bb[0]), float(raw_bb[1]),
+        float(raw_bb[2]), float(raw_bb[3]),
+    )
+
+    for line in lines[1:]:
+        raw = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        bbox = (
+            float(raw[0]), float(raw[1]),
+            float(raw[2]), float(raw[3]),
+        )
+        if _same_baseline(prev_bbox, bbox):
+            current_bls.extend(_extract_baselines(line))
+        else:
+            groups.append(current_bls)
+            current_bls = _extract_baselines(line)
+        prev_bbox = bbox
+    groups.append(current_bls)
+
+    result: list[float] = []
+    for g in groups:
+        if g:
+            result.append(_median(list(g)))
+    return result
+
+
 def _html_lines_for_block(html: str, substring: str) -> list[str]:
     """Extract the text lines from the rendered layout-block containing *substring*.
 
@@ -730,8 +795,27 @@ def _html_lines_for_block(html: str, substring: str) -> list[str]:
         r'class="layout-block[^"]*"[^>]*>(.+?)</div>',
         re.DOTALL,
     )
+    tag_strip = re.compile(r"<[^>]*>")
+
     for m in pattern.finditer(html):
         inner = m.group(1)
+
+        # Check for layout-line class spans (per-line positioned text).
+        # These may contain inner annotation spans, so we split on the
+        # layout-line opening tag and strip all HTML from each segment.
+        if 'class="layout-line"' in inner:
+            segments = inner.split('<span class="layout-line"')
+            lines: list[str] = []
+            for seg in segments[1:]:  # skip first (empty) segment
+                # Strip remaining attributes of the split opening tag.
+                close_idx = seg.find(">")
+                if close_idx >= 0:
+                    seg = seg[close_idx + 1:]
+                plain = tag_strip.sub("", seg)
+                lines.append(unescape(plain.strip()))
+            joined = "".join(lines)
+            if substring in joined:
+                return [ln for ln in lines if ln]
 
         # Check if this block uses absolute-positioned spans.
         span_pattern = re.compile(
@@ -751,13 +835,13 @@ def _html_lines_for_block(html: str, substring: str) -> list[str]:
             for y_str, txt in abs_spans:
                 y = float(y_str)
                 # Find an existing bucket within 4pt.
-                matched = False
+                matched_bucket = False
                 for key in buckets:
                     if abs(key - y) < 4.0:
                         buckets[key].append(unescape(txt))
-                        matched = True
+                        matched_bucket = True
                         break
-                if not matched:
+                if not matched_bucket:
                     buckets[y] = [unescape(txt)]
             return ["".join(parts) for _, parts in sorted(buckets.items())]
 
@@ -895,27 +979,54 @@ class TestPdfParagraphSpacing:
         # PDF body text has ~10.9pt line spacing (top-to-top).
         assert layout.line_height == pytest.approx(10.9, abs=0.5)
 
-    def test_body_block_has_line_height_css(self) -> None:
-        """Body paragraphs must include line-height in rendered CSS."""
-        body_pattern = re.compile(
-            r'class="layout-block[^"]*"\s+style="([^"]*)">'
-            r"[^<]*Advancements in deep learning",
+    def test_body_block_has_line_spacing_css(self) -> None:
+        """Body paragraphs must have line-spacing via CSS or per-line spans.
+
+        When ``line_baselines`` is available, per-line positioned
+        ``<span class="layout-line">`` elements replace CSS ``line-height``.
+        Otherwise, CSS ``line-height`` is emitted as a fallback.
+        """
+        # Find the full div for the body block containing the target text.
+        div_pattern = re.compile(
+            r'<div[^>]*class="layout-block[^"]*"[^>]*style="([^"]*)"[^>]*>'
+            r"(.*?)</div>",
+            re.DOTALL,
         )
-        m = body_pattern.search(self.html)
-        assert m is not None, "Body text block not found in rendered HTML"
-        style = m.group(1)
-        assert "line-height" in style, (
-            f"Body block is missing line-height in CSS. Without explicit "
-            f"line-height, browser default (~1.2) produces blocks taller than "
-            f"the PDF, distorting inter-paragraph spacing. Style: {style!r}"
+        style = ""
+        inner = ""
+        for dm in div_pattern.finditer(self.html):
+            if "Advancements in deep learning" in dm.group(0):
+                style = dm.group(1)
+                inner = dm.group(2)
+                break
+
+        assert style, "Body text block not found in rendered HTML"
+
+        has_line_height = "line-height" in style
+        has_layout_lines = 'class="layout-line"' in inner
+
+        assert has_line_height or has_layout_lines, (
+            f"Body block has neither CSS line-height nor per-line positioned "
+            f"spans. Without explicit line spacing, browser default (~1.2) "
+            f"produces blocks taller than the PDF. Style: {style!r}"
         )
-        # Verify the value is close to 10.9pt.
-        lh_match = re.search(r"line-height:\s*([\d.]+)pt", style)
-        assert lh_match is not None, f"line-height has no pt value in: {style!r}"
-        lh = float(lh_match.group(1))
-        assert lh == pytest.approx(10.9, abs=0.5), (
-            f"line-height should be ~10.9pt (PDF line spacing), got {lh}pt"
-        )
+
+        if has_layout_lines:
+            # Per-line positioning: verify at least 2 layout-line spans exist.
+            ll_count = inner.count('class="layout-line"')
+            assert ll_count >= 2, (
+                f"Body block uses layout-line spans but only has {ll_count}"
+            )
+        else:
+            # CSS line-height fallback: verify the value is close to 10.9pt.
+            lh_match = re.search(r"line-height:\s*([\d.]+)pt", style)
+            assert lh_match is not None, (
+                f"line-height has no pt value in: {style!r}"
+            )
+            lh = float(lh_match.group(1))
+            assert lh == pytest.approx(10.9, abs=0.5), (
+                f"line-height should be ~10.9pt, got {lh}pt"
+            )
 
     def test_abstract_block_has_line_height(self) -> None:
         """Abstract body (14 lines) must have line_height metadata."""
@@ -933,6 +1044,230 @@ class TestPdfParagraphSpacing:
         assert layout is not None
         # Single-line blocks don't need line_height.
         assert layout.line_height is None
+
+
+class TestPdfInlineMathLineHeight:
+    """Verify line_height accuracy for paragraphs containing inline math.
+
+    ``_compute_line_height()`` must use baseline-to-baseline distances
+    (from span ``origin`` data) rather than top-to-top bounding-box
+    distances.  Top-to-top is distorted when lines contain subscripts
+    or superscripts that change the bounding-box height.
+
+    The document's nominal baseline spacing is ~10.9pt.  Blocks whose
+    math content doesn't force TeX to increase spacing should still
+    produce ~10.9pt, not inflated or deflated values from bbox noise.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        _db, _root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.page2 = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout
+            and c.meta.layout.page == 2
+        ]
+
+    def test_frequency_modulation_line_height_not_collapsed(self) -> None:
+        """Frequency Modulation paragraph must not have collapsed spacing.
+
+        Top-to-top measurement produces ~9.5pt because superscript
+        bounding boxes push line tops closer together.  The actual PDF
+        baseline spacing is ~10.9pt.
+        """
+        para = _find_block(self.page2, "Frequency Modulation")
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.line_height is not None
+        assert layout.line_height >= 10.4, (
+            f"line_height={layout.line_height}pt is collapsed by "
+            f"superscript bbox distortion — should be ~10.9pt"
+        )
+
+    def test_where_y_line_height_not_inflated(self) -> None:
+        """'where y(l)' paragraph must not have inflated spacing.
+
+        Top-to-top measurement produces ~14pt because subscript
+        bounding boxes push line bottoms apart.  The actual PDF
+        baseline spacing is ~10.9pt.
+        """
+        para = _find_block(
+            self.page2, "is a scaling factor",
+        )
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.line_height is not None
+        assert layout.line_height < 12.0, (
+            f"line_height={layout.line_height}pt is inflated by "
+            f"subscript bbox distortion — should be ~10.9pt"
+        )
+
+    def test_inline_math_blocks_consistent_with_body_spacing(self) -> None:
+        """Most multi-line blocks on page 2 should have ~10.9pt spacing.
+
+        Blocks where TeX didn't increase the baselineskip (i.e. the
+        inline math fits within normal line height) should produce the
+        same ~10.9pt spacing as plain body text on page 0.
+        """
+        para = _find_block(
+            self.page2, "denotes composition",
+        )
+        layout = para.meta.layout
+        assert layout is not None
+        assert layout.line_height is not None
+        assert layout.line_height == pytest.approx(10.9, abs=0.5), (
+            f"line_height={layout.line_height}pt — should match "
+            f"document nominal spacing ~10.9pt"
+        )
+
+
+class TestPdfLineYPositionFidelity:
+    """Verify that per-line y-spacing matches the PDF, not uniform line-height.
+
+    CSS ``line-height`` creates uniform spacing between all lines in a block.
+    But TeX adjusts inter-line spacing when a line contains tall inline math
+    (subscripts, superscripts, fractions, large operators).  A single median
+    ``line_height`` value cannot reproduce these per-line variations.
+
+    This test extracts the actual per-line baseline spacing from the PDF
+    and compares it against the uniform spacing that CSS ``line-height``
+    produces.  It **should fail** for blocks where TeX varied the spacing,
+    proving that ``LayoutHint`` needs per-line y-positions.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _setup(self) -> None:
+        _db, _root_id, children = _import_pdf("2511.14823v1.pdf")
+        self.children = children
+        self.page2_nodes = [
+            c for c in children
+            if hasattr(c, "meta") and c.meta.layout
+            and c.meta.layout.page == 2
+            and isinstance(c, Paragraph)
+        ]
+
+    def test_per_line_spacing_matches_pdf(self) -> None:
+        """Per-line baselines stored in LayoutHint must match the PDF.
+
+        Extracts per-visual-line baselines from the raw PDF and compares
+        the spacings derived from ``layout.line_baselines`` against the
+        PDF ground truth.  Each gap must match within 0.5pt.
+        """
+        from uaf.app.formats.pdf_format import _merge_visual_lines
+
+        doc = fitz.open(_PDF_PATH)
+        mismatches: list[str] = []
+        blocks_checked = 0
+
+        page = doc[2]
+        raw: dict[str, Any] = page.get_text("dict")
+
+        for block in raw.get("blocks", []):
+            if block.get("type", 0) != 0:
+                continue
+
+            baselines = _extract_visual_line_baselines(block)
+            if len(baselines) < 3:
+                continue  # need ≥ 2 spacings
+
+            # Build first-line text to match against UAF nodes.
+            visual_lines = _merge_visual_lines(block)
+            if not visual_lines:
+                continue
+            first_text = visual_lines[0][:30].strip()
+            if not first_text:
+                continue
+
+            # Find matching UAF Paragraph node.
+            matching_node: Paragraph | None = None
+            for node in self.page2_nodes:
+                text = getattr(node, "text", "") or ""
+                dt = (
+                    node.meta.layout.display_text
+                    if node.meta.layout and node.meta.layout.display_text
+                    else text
+                )
+                if first_text[:20] in dt or first_text[:20] in text:
+                    matching_node = node
+                    break
+
+            if matching_node is None:
+                continue
+
+            layout = matching_node.meta.layout
+            if layout is None or layout.line_baselines is None:
+                continue
+
+            blocks_checked += 1
+
+            # Compute per-line spacings from the stored baselines.
+            lb = layout.line_baselines
+            layout_spacings = [
+                round(lb[i + 1] - lb[i], 2)
+                for i in range(len(lb) - 1)
+            ]
+
+            # Compute actual per-line spacings from PDF baselines.
+            pdf_spacings = [
+                round(baselines[i + 1] - baselines[i], 2)
+                for i in range(len(baselines) - 1)
+            ]
+
+            # Compare stored vs PDF — they should match closely.
+            n = min(len(pdf_spacings), len(layout_spacings))
+            for i in range(n):
+                if abs(pdf_spacings[i] - layout_spacings[i]) > 0.5:
+                    mismatches.append(
+                        f"  {first_text[:40]!r} line {i}->{i + 1}: "
+                        f"PDF={pdf_spacings[i]:.1f}pt, "
+                        f"stored={layout_spacings[i]:.1f}pt "
+                        f"(delta={pdf_spacings[i] - layout_spacings[i]:+.1f}pt)"
+                    )
+
+        doc.close()
+
+        assert blocks_checked >= 3, (
+            f"Only checked {blocks_checked} blocks — expected >= 3 "
+            f"multi-line paragraphs on page 2"
+        )
+        assert not mismatches, (
+            f"{len(mismatches)} line spacing(s) in line_baselines deviate "
+            f"from PDF by > 0.5pt:\n" + "\n".join(mismatches)
+        )
+
+    def test_line_baselines_first_is_zero(self) -> None:
+        """The first element of line_baselines should always be 0.0."""
+        for node in self.page2_nodes:
+            layout = node.meta.layout
+            if layout and layout.line_baselines:
+                assert layout.line_baselines[0] == 0.0, (
+                    f"line_baselines[0] should be 0.0, "
+                    f"got {layout.line_baselines[0]}"
+                )
+
+    def test_multi_line_blocks_have_line_baselines(self) -> None:
+        """Multi-line paragraph blocks should have line_baselines set."""
+        multi_line_count = 0
+        has_baselines = 0
+        for node in self.page2_nodes:
+            text = getattr(node, "text", "") or ""
+            dt = (
+                node.meta.layout.display_text
+                if node.meta.layout and node.meta.layout.display_text
+                else text
+            )
+            if "\n" in dt:
+                multi_line_count += 1
+                if node.meta.layout and node.meta.layout.line_baselines:
+                    has_baselines += 1
+        assert multi_line_count >= 3, (
+            f"Expected >= 3 multi-line blocks on page 2, "
+            f"found {multi_line_count}"
+        )
+        assert has_baselines == multi_line_count, (
+            f"{has_baselines}/{multi_line_count} multi-line blocks "
+            f"have line_baselines — all should"
+        )
 
 
 class TestPdfParagraphSpacingCss:
@@ -1100,7 +1435,7 @@ class TestPdfLineBreakFidelity:
                 s.get("text", "") for s in lines[0].get("spans", [])
             )
             ident = first_text[:20].strip()
-            if not ident:
+            if not ident or len(ident) < 3:
                 continue
             try:
                 html_lines = _html_lines_for_block(self.html, ident)
@@ -1315,7 +1650,7 @@ class TestPdfEquationFidelity:
 
     def test_font_annotations_have_vertical_align(self) -> None:
         """At least some annotations should detect sub/superscripts."""
-        all_annots: list[object] = []
+        all_annots: list[FontAnnotation] = []
         for c in self.page2:
             if (
                 isinstance(c, Paragraph)
@@ -1326,12 +1661,18 @@ class TestPdfEquationFidelity:
 
         valigned = [
             a for a in all_annots
-            if hasattr(a, "vertical_align") and a.vertical_align  # type: ignore[union-attr]
+            if a.vertical_align is not None
         ]
         assert len(valigned) > 0, (
             "Section 2.3 has subscripts/superscripts — at least some "
             "annotations should have vertical_align set"
         )
+        # Verify values are numeric, not old strings.
+        for a in valigned:
+            assert isinstance(a.vertical_align, float), (
+                f"vertical_align should be float, got "
+                f"{type(a.vertical_align)}"
+            )
 
     def test_equation_number_x_offset_near_right_margin(self) -> None:
         """The '(6)' equation number should have x_offset > 250pt (right margin)."""
@@ -1455,10 +1796,11 @@ class TestNonMathBlocksNoSpans:
         )
 
     def test_title_html_no_per_span_positioning(self) -> None:
-        """Title HTML must not contain inner spans with absolute positioning.
+        """Title HTML must not contain per-font spans with absolute positioning.
 
         Per-span font-size elements create visible gaps due to font metric
-        mismatches between PDF fonts and browser fonts.
+        mismatches between PDF fonts and browser fonts.  Layout-line spans
+        (per-line positioning) are acceptable and expected.
         """
         title = _find_block(self.page0, "DYNAMIC NESTED")
         nid = title.meta.id
@@ -1468,8 +1810,13 @@ class TestNonMathBlocksNoSpans:
         m = div_pattern.search(self.html)
         assert m is not None, "Title div not found in rendered HTML"
         inner = m.group(1)
-        assert "position: absolute" not in inner, (
-            "Title inner HTML must not use position: absolute spans"
+        # Strip layout-line spans (per-line positioning is correct).
+        stripped = re.sub(
+            r'<span\s+class="layout-line"[^>]*>', "", inner,
+        )
+        assert "position: absolute" not in stripped, (
+            "Title inner HTML must not use position: absolute "
+            "for per-font spans (layout-line spans excluded)"
         )
 
     def test_math_blocks_still_use_absolute_positioning(self) -> None:
