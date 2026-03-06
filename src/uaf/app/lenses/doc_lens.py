@@ -245,7 +245,10 @@ class DocLens:
         if layout.rotation is not None:
             style_parts.append(f"transform: rotate({layout.rotation}deg)")
             style_parts.append("transform-origin: top left")
-        style_parts.extend(_font_style_parts(layout))
+        # Skip line-height when per-line positioning handles spacing.
+        style_parts.extend(_font_style_parts(
+            layout, skip_line_height=has_abs_children,
+        ))
 
         css_class = "layout-block"
         if layout.header_footer:
@@ -652,7 +655,11 @@ def _render_layout_shape(node: Shape) -> str:
     return f'  <div {data_attr_str} class="{css_class}" style="{style}"></div>'
 
 
-def _font_style_parts(layout: LayoutHint) -> list[str]:
+def _font_style_parts(
+    layout: LayoutHint,
+    *,
+    skip_line_height: bool = False,
+) -> list[str]:
     """Build CSS style parts from LayoutHint font properties."""
     parts: list[str] = []
     if layout.font_family:
@@ -663,7 +670,7 @@ def _font_style_parts(layout: LayoutHint) -> list[str]:
         parts.append(f"font-family: {safe_family}")
     if layout.font_size is not None:
         parts.append(f"font-size: {layout.font_size}pt")
-    if layout.line_height is not None:
+    if layout.line_height is not None and not skip_line_height:
         parts.append(f"line-height: {layout.line_height}pt")
     if layout.font_weight:
         parts.append(f"font-weight: {escape(layout.font_weight)}")
@@ -708,12 +715,13 @@ def _format_per_line_text(text: str, layout: LayoutHint) -> str:
 
     Each visual line gets its own ``<span class="layout-line">`` with
     ``position: absolute; top: Ypt`` matching the PDF's per-line y-offset.
-    This replaces the ``<br>`` + ``line-height`` approach for multi-line
-    blocks, eliminating cumulative spacing errors.
+    When ``line_lefts`` is available, a ``left: Xpt`` offset is also
+    applied (e.g. for centered equations within a paragraph block).
     """
     assert layout.line_tops is not None
     lines = text.split("\n")
     line_tops = layout.line_tops
+    line_lefts = layout.line_lefts
 
     flw = layout.first_line_weight
     block_w = layout.font_weight or "normal"
@@ -721,9 +729,12 @@ def _format_per_line_text(text: str, layout: LayoutHint) -> str:
     parts: list[str] = []
     for i, line_text in enumerate(lines):
         top = line_tops[i] if i < len(line_tops) else None
+        left = line_lefts[i] if line_lefts and i < len(line_lefts) else None
         css = "position: absolute; white-space: nowrap"
         if top is not None:
             css += f"; top: {top}pt"
+        if left is not None and left > 0.5:
+            css += f"; left: {left}pt"
 
         content = escape(line_text)
         if i == 0 and flw and flw != block_w:
@@ -748,12 +759,13 @@ def _format_per_line_annotated_text(
 
     Combines per-line ``<span class="layout-line">`` positioning with
     font annotation ``<span>`` wrappers for math characters.  Each visual
-    line is positioned at its exact PDF y-offset, and annotations within
-    that line are rendered as inline ``<span>`` elements.
+    line is positioned at its exact PDF y-offset and x-offset, and
+    annotations within that line are rendered as inline ``<span>`` elements.
     """
     assert layout.line_tops is not None
     lines = text.split("\n")
     line_tops = layout.line_tops
+    line_lefts = layout.line_lefts
 
     # Build a mapping of character ranges per line.
     # Line i covers chars [line_start, line_end) in the full text.
@@ -771,9 +783,12 @@ def _format_per_line_annotated_text(
     parts: list[str] = []
     for i, line_text in enumerate(lines):
         top = line_tops[i] if i < len(line_tops) else None
+        left = line_lefts[i] if line_lefts and i < len(line_lefts) else None
         css = "position: absolute; white-space: nowrap"
         if top is not None:
             css += f"; top: {top}pt"
+        if left is not None and left > 0.5:
+            css += f"; left: {left}pt"
 
         if i < len(line_ranges):
             line_start, line_end = line_ranges[i]
