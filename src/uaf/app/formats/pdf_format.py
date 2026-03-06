@@ -151,6 +151,10 @@ class PdfHandler:
                     block, dominant_font_size=font.get("size"),
                 )
 
+                # Per-visual-line y-tops (relative to block bbox top)
+                # for precise per-line positioning in the renderer.
+                line_tops = _compute_line_tops(block, y0)
+
                 # Detect math block: majority Computer Modern math fonts
                 is_math = _is_math_block(block)
 
@@ -188,6 +192,7 @@ class PdfHandler:
                     line_height=line_ht,
                     spans=span_list,
                     font_annotations=font_annots,
+                    line_tops=line_tops,
                 )
 
                 # For math blocks, the character-weighted dominant font size
@@ -446,6 +451,45 @@ def _compute_line_height(
         median = normal_spacings[mid]
 
     return round(median, 1)
+
+
+def _compute_line_tops(
+    block: dict[str, Any],
+    block_y0: float,
+) -> tuple[float, ...] | None:
+    """Compute per-visual-line y-offsets relative to block bbox top.
+
+    Uses the same baseline-merging logic as :func:`_merge_visual_lines`
+    to identify distinct visual lines, then returns the y-top of each
+    line relative to the block's bounding box top (``block_y0``).
+
+    Returns ``None`` for single-line blocks (no per-line positioning
+    needed).
+    """
+    lines = block.get("lines", [])
+    if not lines:
+        return None
+
+    raw_bb = lines[0].get("bbox", (0.0, 0.0, 0.0, 0.0))
+    prev_bbox = (
+        float(raw_bb[0]), float(raw_bb[1]),
+        float(raw_bb[2]), float(raw_bb[3]),
+    )
+    tops: list[float] = [round(prev_bbox[1] - block_y0, 1)]
+
+    for line in lines[1:]:
+        lb = line.get("bbox", (0.0, 0.0, 0.0, 0.0))
+        cur_bbox = (
+            float(lb[0]), float(lb[1]),
+            float(lb[2]), float(lb[3]),
+        )
+        if not _same_baseline(prev_bbox, cur_bbox):
+            tops.append(round(cur_bbox[1] - block_y0, 1))
+        prev_bbox = cur_bbox
+
+    if len(tops) < 2:
+        return None
+    return tuple(tops)
 
 
 def _extract_dominant_font(block: dict[str, Any]) -> dict[str, Any]:

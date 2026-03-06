@@ -115,6 +115,8 @@ class TestInlineMathComputedStyles:
         self.block_info = _find_inline_math_block(page)
 
         # Get detailed span info for the target block.
+        # Exclude layout-line spans (per-line positioning wrappers)
+        # — only inspect inner font annotation spans.
         self.span_details: list[dict[str, Any]] = page.evaluate(
             """(substring) => {
                 const blocks = document.querySelectorAll(
@@ -124,7 +126,9 @@ class TestInlineMathComputedStyles:
                     if (!block.textContent ||
                         !block.textContent.includes(substring))
                         continue;
-                    const spans = block.querySelectorAll('span');
+                    const spans = block.querySelectorAll(
+                        'span:not(.layout-line)'
+                    );
                     const results = [];
                     for (const span of spans) {
                         const cs = getComputedStyle(span);
@@ -295,9 +299,19 @@ class TestLineCountPreservation:
                     const text = block.textContent || '';
                     if (text.trim().length < 10) continue;
                     const html = block.innerHTML;
-                    const brCount =
-                        (html.match(/<br>/g) || []).length;
-                    const htmlLines = brCount + 1;
+                    // Count lines: either layout-line spans (per-line
+                    // positioning) or <br> tags (legacy inline mode).
+                    const lineSpans = block.querySelectorAll(
+                        '.layout-line'
+                    );
+                    let htmlLines;
+                    if (lineSpans.length > 0) {
+                        htmlLines = lineSpans.length;
+                    } else {
+                        const brCount =
+                            (html.match(/<br>/g) || []).length;
+                        htmlLines = brCount + 1;
+                    }
                     results.push({
                         ident: text.substring(0, 30).trim(),
                         htmlLines: htmlLines,

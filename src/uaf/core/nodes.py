@@ -86,6 +86,7 @@ class LayoutHint:
     line_height: float | None = None
     spans: tuple[SpanInfo, ...] | None = None
     font_annotations: tuple[FontAnnotation, ...] | None = None
+    line_tops: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

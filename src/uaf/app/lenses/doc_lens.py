@@ -235,9 +235,10 @@ class DocLens:
             style_parts.append(f"top: {layout.y}pt")
         if layout.width is not None:
             style_parts.append(f"width: {layout.width}pt")
-        # When spans use absolute positioning the parent collapses to
+        # When children use absolute positioning the parent collapses to
         # zero height, so we must set an explicit height from the PDF bbox.
-        if layout.spans and layout.height is not None:
+        has_abs_children = bool(layout.spans) or bool(layout.line_tops)
+        if has_abs_children and layout.height is not None:
             style_parts.append(f"height: {layout.height}pt")
         if layout.reading_order is not None:
             style_parts.append(f"z-index: {1000 - layout.reading_order}")
@@ -268,16 +269,23 @@ class DocLens:
         data_attr_str = " ".join(data_parts)
 
         style = "; ".join(style_parts)
-        # Three rendering paths:
+        # Rendering paths (in order of precedence):
         # 1. Display equations (spans) → absolute positioning per glyph
-        # 2. Inline math (font_annotations) → normal text flow with
-        #    <span> wrappers for math-font character ranges
-        # 3. Plain text → escaped text with line breaks
+        # 2. Per-line positioning (line_tops) → absolute <span> per line
+        # 3. Inline math (font_annotations) → text flow with <span> wrappers
+        # 4. Plain text → escaped text with <br> line breaks
         if layout.spans:
             escaped = _format_spans(layout)
         else:
             render_text = layout.display_text if layout.display_text else text
-            if layout.font_annotations:
+            if layout.line_tops:
+                if layout.font_annotations:
+                    escaped = _format_per_line_annotated_text(
+                        render_text, layout.font_annotations, layout,
+                    )
+                else:
+                    escaped = _format_per_line_text(render_text, layout)
+            elif layout.font_annotations:
                 escaped = _format_annotated_text(
                     render_text, layout.font_annotations, layout,
                 )
@@ -693,6 +701,162 @@ def _format_layout_text(text: str, layout: LayoutHint) -> str:
             f"{escape(text)}</span>"
         )
     return escape(text).replace("\n", "<br>")
+
+
+def _format_per_line_text(text: str, layout: LayoutHint) -> str:
+    """Format text with per-line absolute positioning.
+
+    Each visual line gets its own ``<span class="layout-line">`` with
+    ``position: absolute; top: Ypt`` matching the PDF's per-line y-offset.
+    This replaces the ``<br>`` + ``line-height`` approach for multi-line
+    blocks, eliminating cumulative spacing errors.
+    """
+    assert layout.line_tops is not None
+    lines = text.split("\n")
+    line_tops = layout.line_tops
+
+    flw = layout.first_line_weight
+    block_w = layout.font_weight or "normal"
+
+    parts: list[str] = []
+    for i, line_text in enumerate(lines):
+        top = line_tops[i] if i < len(line_tops) else None
+        css = "position: absolute; white-space: nowrap"
+        if top is not None:
+            css += f"; top: {top}pt"
+
+        content = escape(line_text)
+        if i == 0 and flw and flw != block_w:
+            content = (
+                f'<span style="font-weight: {escape(flw)}">'
+                f"{content}</span>"
+            )
+
+        parts.append(
+            f'<span class="layout-line" style="{css}">'
+            f"{content}</span>"
+        )
+    return "".join(parts)
+
+
+def _format_per_line_annotated_text(
+    text: str,
+    annotations: tuple[FontAnnotation, ...],
+    layout: LayoutHint,
+) -> str:
+    """Format annotated text with per-line absolute positioning.
+
+    Combines per-line ``<span class="layout-line">`` positioning with
+    font annotation ``<span>`` wrappers for math characters.  Each visual
+    line is positioned at its exact PDF y-offset, and annotations within
+    that line are rendered as inline ``<span>`` elements.
+    """
+    assert layout.line_tops is not None
+    lines = text.split("\n")
+    line_tops = layout.line_tops
+
+    # Build a mapping of character ranges per line.
+    # Line i covers chars [line_start, line_end) in the full text.
+    line_ranges: list[tuple[int, int]] = []
+    offset = 0
+    for line_text in lines:
+        line_ranges.append((offset, offset + len(line_text)))
+        offset += len(line_text) + 1  # +1 for \n
+
+    sorted_anns = sorted(annotations, key=lambda a: a.start)
+
+    flw = layout.first_line_weight
+    block_w = layout.font_weight or "normal"
+
+    parts: list[str] = []
+    for i, line_text in enumerate(lines):
+        top = line_tops[i] if i < len(line_tops) else None
+        css = "position: absolute; white-space: nowrap"
+        if top is not None:
+            css += f"; top: {top}pt"
+
+        if i < len(line_ranges):
+            line_start, line_end = line_ranges[i]
+        else:
+            line_start = line_end = 0
+
+        # Collect annotations that overlap this line.
+        line_anns: list[FontAnnotation] = []
+        for ann in sorted_anns:
+            if ann.end <= line_start:
+                continue
+            if ann.start >= line_end:
+                break
+            # Clip annotation to line boundaries.
+            clipped_start = max(ann.start, line_start) - line_start
+            clipped_end = min(ann.end, line_end) - line_start
+            if clipped_start < clipped_end:
+                line_anns.append(FontAnnotation(
+                    start=clipped_start,
+                    end=clipped_end,
+                    font_family=ann.font_family,
+                    font_style=ann.font_style,
+                    font_size=ann.font_size,
+                    font_weight=ann.font_weight,
+                    vertical_align=ann.vertical_align,
+                ))
+
+        # Render annotated line content.
+        content = _annotate_line(line_text, line_anns)
+
+        if i == 0 and flw and flw != block_w:
+            content = (
+                f'<span style="font-weight: {escape(flw)}">'
+                f"{content}</span>"
+            )
+
+        parts.append(
+            f'<span class="layout-line" style="{css}">'
+            f"{content}</span>"
+        )
+    return "".join(parts)
+
+
+def _annotate_line(
+    text: str,
+    annotations: list[FontAnnotation],
+) -> str:
+    """Apply font annotations to a single line of text.
+
+    Returns HTML with ``<span>`` wrappers for annotated character ranges.
+    Offsets in ``annotations`` are relative to the line start.
+    """
+    if not annotations:
+        return escape(text)
+
+    parts: list[str] = []
+    pos = 0
+    for ann in annotations:
+        if ann.start > pos:
+            parts.append(escape(text[pos:ann.start]))
+        css: list[str] = []
+        safe_family = ann.font_family.replace('"', "'")
+        css.append(f"font-family: {safe_family}")
+        if ann.font_style:
+            css.append(f"font-style: {escape(ann.font_style)}")
+        if ann.font_size is not None:
+            css.append(f"font-size: {ann.font_size}pt")
+        if ann.font_weight:
+            css.append(f"font-weight: {escape(ann.font_weight)}")
+        if ann.vertical_align:
+            css.append(
+                f"vertical-align: {escape(ann.vertical_align)}",
+            )
+        style = "; ".join(css)
+        parts.append(
+            f'<span style="{style}">'
+            f"{escape(text[ann.start:ann.end])}</span>"
+        )
+        pos = ann.end
+
+    if pos < len(text):
+        parts.append(escape(text[pos:]))
+    return "".join(parts)
 
 
 def _format_annotated_text(
