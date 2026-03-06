@@ -85,6 +85,7 @@ class LayoutHint:
     display_text: str | None = None
     line_height: float | None = None
     line_baselines: tuple[float, ...] | None = None  # per-line y-offsets from 1st baseline
+    line_lefts: tuple[float, ...] | None = None  # per-line x-offsets from block left
     spans: tuple[SpanInfo, ...] | None = None
     font_annotations: tuple[FontAnnotation, ...] | None = None
 
