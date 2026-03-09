@@ -265,9 +265,10 @@ class GraphDB:
             case CodeBlock(source=source, language=language):
                 fields.append(("source", source))
                 fields.append(("language", language))
-            case Task(title=title, completed=completed):
+            case Task(title=title, completed=completed, status=status):
                 fields.append(("title", title))
                 fields.append(("completed", str(completed)))
+                fields.append(("status", status))
             case Slide(title=title, order=order):
                 fields.append(("title", title))
                 fields.append(("order", str(order)))
