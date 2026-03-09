@@ -1,7 +1,7 @@
 {% for block in blocks %}
 <div class="doc-block" data-node-id="{{ block.id }}">
     <div class="block-content"
-         onclick="this.style.display='none';this.nextElementSibling.style.display='block';this.nextElementSibling.querySelector('textarea,input').focus();">
+         onclick="this.style.display='none';var ed=this.nextElementSibling;ed.style.display='block';var f=ed.querySelector('textarea,input[type=text]');if(f){f.focus();f.select();}">
         {{ block.html | safe }}
     </div>
     <div class="block-edit" style="display:none;">
@@ -10,16 +10,18 @@
               hx-swap="innerHTML">
             <input type="hidden" name="node_id" value="{{ block.id }}" />
             {% if block.type == 'code_block' %}
-            <textarea name="text" rows="4" class="edit-textarea">{{ block.text }}</textarea>
+            <textarea name="text" rows="6" class="edit-textarea"
+                      onkeydown="if(event.key==='Escape'){event.preventDefault();this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';}else if(event.key==='Enter'&&event.ctrlKey){event.preventDefault();this.closest('form').requestSubmit();}">{{ block.text }}</textarea>
             {% else %}
             <input type="text" name="text" value="{{ block.text }}"
                    class="edit-input"
-                   onkeydown="if(event.key==='Escape'){this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';}" />
+                   onkeydown="if(event.key==='Escape'){event.preventDefault();this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';}else if(event.key==='Enter'){event.preventDefault();this.closest('form').requestSubmit();}" />
             {% endif %}
             <div class="edit-actions">
                 <button type="submit" class="btn btn-sm btn-primary">Save</button>
                 <button type="button" class="btn btn-sm"
                         onclick="this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';">Cancel</button>
+                <span class="edit-hint">{% if block.type == 'code_block' %}Ctrl+Enter to save{% else %}Enter to save{% endif %}, Esc to cancel</span>
             </div>
         </form>
     </div>
@@ -52,6 +54,7 @@
 {% endfor %}
 {% if not blocks %}
 <div class="empty-state">
-    <p>Empty document. Use the toolbar to add content.</p>
+    <p>Empty document. Use the toolbar above to add content.</p>
+    <p class="empty-hint">Add a paragraph, heading, or code block to get started.</p>
 </div>
 {% endif %}

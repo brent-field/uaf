@@ -137,6 +137,18 @@ def _register_imported_artifact(
             resolver.register_parent(gc.meta.id, child.meta.id)
 
 
+def _detect_artifact_type(children: list[object]) -> str:
+    """Detect artifact type from its children: 'doc', 'spreadsheet', or 'project'."""
+    from uaf.core.nodes import Sheet, Task
+
+    for child in children:
+        if isinstance(child, Sheet):
+            return "spreadsheet"
+        if isinstance(child, Task):
+            return "project"
+    return "doc"
+
+
 def _parse_doc_blocks(
     content: str, db: SecureGraphDB, session: Session, artifact_id: NodeId,
 ) -> list[dict[str, str]]:
@@ -299,6 +311,7 @@ def dashboard(
                 "title": art.title,
                 "child_count": len(children),
                 "updated_at": art.meta.updated_at,
+                "artifact_type": _detect_artifact_type(children),
             })
 
     ctx: dict[str, Any] = {
@@ -359,6 +372,7 @@ def delete_artifact(
                 "title": art.title,
                 "child_count": len(children),
                 "updated_at": art.meta.updated_at,
+                "artifact_type": _detect_artifact_type(children),
             })
     ctx: dict[str, Any] = {"request": request, "artifacts": items}
     return templates.TemplateResponse("partials/artifact_list.html", ctx)

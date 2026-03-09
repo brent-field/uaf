@@ -15,9 +15,19 @@
                    hx-swap="innerHTML"
                    hx-include="this" />
         </form>
-        <a href="/dashboard" class="btn btn-sm">Back</a>
-        <a href="/api/artifacts/{{ artifact_id }}/export?format=markdown" class="btn btn-sm">Export .md</a>
-        <button class="btn btn-sm no-print" onclick="window.print()">Print</button>
+        <div class="header-actions">
+            <a href="/dashboard" class="btn btn-sm">Back</a>
+            <div class="export-dropdown">
+                <button class="btn btn-sm" onclick="this.nextElementSibling.classList.toggle('show')">Export</button>
+                <div class="dropdown-menu">
+                    <a href="/api/artifacts/{{ artifact_id }}/export?format=markdown">.md</a>
+                    <a href="/api/artifacts/{{ artifact_id }}/export?format=plaintext">.txt</a>
+                    <a href="/api/artifacts/{{ artifact_id }}/export?format=latex">.tex</a>
+                    <a href="/api/artifacts/{{ artifact_id }}/export?format=docx">.docx</a>
+                </div>
+            </div>
+            <button class="btn btn-sm no-print" onclick="window.print()">Print</button>
+        </div>
     </div>
 
     <div class="toolbar">
@@ -61,4 +71,12 @@
     </div>
 </div>
 <script src="/static/layout-inspector.js"></script>
+<script>
+// Close export dropdown when clicking outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.export-dropdown')) {
+        document.querySelectorAll('.dropdown-menu.show').forEach(function(m) { m.classList.remove('show'); });
+    }
+});
+</script>
 {% endblock %}
