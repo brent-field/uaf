@@ -275,10 +275,16 @@ def node_to_dict(node: Any) -> dict[str, Any]:
             d["source"] = source
             d["equation_number"] = eq_num
             d["display"] = display
-        case Task(title=title, completed=completed, due_date=due_date):
+        case Task(
+            title=title, completed=completed, due_date=due_date,
+            start_date=start_date, end_date=end_date, status=status,
+        ):
             d["title"] = title
             d["completed"] = completed
             d["due_date"] = due_date.isoformat() if due_date is not None else None
+            d["start_date"] = start_date.isoformat() if start_date is not None else None
+            d["end_date"] = end_date.isoformat() if end_date is not None else None
+            d["status"] = status
         case Slide(title=title, order=order):
             d["title"] = title
             d["order"] = order
@@ -358,7 +364,15 @@ def node_from_dict(d: dict[str, Any]) -> Any:
         case _ if node_cls is Task:
             due = d.get("due_date")
             due_dt = datetime.fromisoformat(due) if due is not None else None
-            return Task(meta=meta, title=d["title"], completed=d["completed"], due_date=due_dt)
+            start = d.get("start_date")
+            start_dt = datetime.fromisoformat(start) if start is not None else None
+            end = d.get("end_date")
+            end_dt = datetime.fromisoformat(end) if end is not None else None
+            return Task(
+                meta=meta, title=d["title"], completed=d["completed"],
+                due_date=due_dt, start_date=start_dt, end_date=end_dt,
+                status=d.get("status", "todo"),
+            )
         case _ if node_cls is Slide:
             return Slide(meta=meta, title=d["title"], order=d["order"])
         case _ if node_cls is Shape:

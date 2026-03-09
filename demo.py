@@ -10,6 +10,7 @@ import uvicorn
 from uaf.app.api import create_app
 from uaf.app.lenses import LensRegistry
 from uaf.app.lenses.doc_lens import DocLens
+from uaf.app.lenses.flow_lens import FlowLens
 from uaf.app.lenses.grid_lens import GridLens
 from uaf.security.auth import LocalAuthProvider
 from uaf.security.secure_graph_db import SecureGraphDB
@@ -53,6 +54,7 @@ def main() -> None:
     registry = LensRegistry()
     registry.register(DocLens())
     registry.register(GridLens())
+    registry.register(FlowLens())
 
     app = create_app(sdb, registry)
 
