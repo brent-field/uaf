@@ -212,3 +212,4 @@ __marimo__/
 # Confidential docs (stored in uaf-confidential repo)
 docs/plans/001-initial-vision.md
 docs/plans/005-business-plan.md
+.DS_Store

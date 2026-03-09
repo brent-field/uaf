@@ -32,11 +32,13 @@ All open-source code and technical docs belong here. Business strategy and propr
 ## Commands
 
 ```bash
-make install    # uv sync — install all dependencies
-make test       # Run pytest
-make lint       # Ruff check + mypy
-make format     # Ruff format (auto-fix)
-make check      # lint + test combined
+make install       # uv sync — install all dependencies
+make test          # Run pytest
+make lint          # Ruff check + mypy
+make format        # Ruff format (auto-fix)
+make check         # lint + test combined
+make bench         # Run persistence performance benchmarks
+make reset-store   # Delete the store directory (dev-only)
 ```
 
 ## Project Structure
