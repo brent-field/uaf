@@ -113,7 +113,25 @@ class FlowLens:
     ) -> str:
         """Render Gantt view — task list left, bars/milestones right."""
         if not tasks:
-            return '<div class="flow-empty">No tasks yet. Create a task to get started.</div>'
+            return (
+                '<div class="flow-empty">'
+                '<p>No tasks yet</p>'
+                '<p class="flow-empty-hint">Click <strong>+ Task</strong> above to add'
+                " your first task, then drag between tasks to set dependencies.</p>"
+                "</div>"
+            )
+
+        # Build dependency map for inline display
+        task_map = {t.meta.id: t for t in tasks}
+        dep_names: dict[NodeId, list[str]] = {}
+        for task in tasks:
+            edges = db._db.get_edges_from(task.meta.id)
+            targets = [
+                escape(task_map[e.target].title)
+                for e in edges
+                if e.edge_type == EdgeType.DEPENDS_ON and e.target in task_map
+            ]
+            dep_names[task.meta.id] = targets
 
         rows: list[str] = []
         for task in tasks:
@@ -121,8 +139,22 @@ class FlowLens:
             nid = task.meta.id
             status_cls = f"status-{task.status}"
 
-            # Left side: task name
-            left = f'<td class="task-name {status_cls}" data-node-id="{nid}">{name}</td>'
+            # Dependency subtitle
+            dep_list = dep_names.get(nid, [])
+            dep_sub = ""
+            if dep_list:
+                dep_sub = (
+                    f'<span class="task-dep-info">depends on: '
+                    f'{", ".join(dep_list)}</span>'
+                )
+
+            # Left side: task name + drag handle + dep info
+            left = (
+                f'<td class="task-name {status_cls}" data-node-id="{nid}">'
+                f'<span class="drag-handle" draggable="true" title="Drag to link dependency">'
+                f"&#x1f517;</span>"
+                f"{name}{dep_sub}</td>"
+            )
 
             # Right side: bar or milestone
             if task.start_date and task.end_date:
@@ -178,7 +210,13 @@ class FlowLens:
     ) -> str:
         """Render dependency view — tasks as rows with arrows for DEPENDS_ON edges."""
         if not tasks:
-            return '<div class="flow-empty">No tasks yet.</div>'
+            return (
+                '<div class="flow-empty">'
+                '<p>No tasks yet</p>'
+                '<p class="flow-empty-hint">Click <strong>+ Task</strong> above to add'
+                " your first task, then drag between tasks to set dependencies.</p>"
+                "</div>"
+            )
 
         # Build dependency map: task_id -> list of tasks it depends on
         deps: dict[NodeId, list[NodeId]] = {}
@@ -189,6 +227,7 @@ class FlowLens:
             ]
             deps[task.meta.id] = dep_targets
 
+        task_map = {t.meta.id: t for t in tasks}
         rows: list[str] = []
         for task in tasks:
             name = escape(task.title)
@@ -196,11 +235,33 @@ class FlowLens:
             dep_list = deps.get(nid, [])
             dep_str = ", ".join(str(d) for d in dep_list) if dep_list else "none"
 
+            # Show dependency names with remove buttons
+            dep_chips: list[str] = []
+            for dep_id in dep_list:
+                if dep_id in task_map:
+                    dep_name = escape(task_map[dep_id].title)
+                    dep_chips.append(
+                        f'<span class="dep-chip">'
+                        f"&#8594; {dep_name}"
+                        f'<button class="dep-remove" '
+                        f'hx-post="/artifacts/{artifact_id}/flow/remove-dependency"'
+                        f" hx-vals='{{\"source_id\": \"{nid}\","
+                        f' "target_id": "{dep_id}"}}\''
+                        f' hx-target="#flow-content" hx-swap="innerHTML"'
+                        f' title="Remove">&times;</button>'
+                        f"</span>"
+                    )
+
+            dep_html = " ".join(dep_chips) if dep_chips else ""
+
             rows.append(
                 f'<tr data-node-id="{nid}">'
-                f'<td class="task-name">{name}</td>'
+                f'<td class="task-name">'
+                f'<span class="drag-handle" draggable="true"'
+                f' title="Drag to link dependency">&#x1f517;</span>'
+                f"{name}</td>"
                 f'<td class="dep-arrows" data-deps="{dep_str}">'
-                f'{"&#8594; " * len(dep_list) if dep_list else ""}'
+                f"{dep_html}"
                 f"</td></tr>"
             )
 
@@ -217,7 +278,13 @@ class FlowLens:
     ) -> str:
         """Render DAG view — nodes with directed edges."""
         if not tasks:
-            return '<div class="flow-empty">No tasks yet.</div>'
+            return (
+                '<div class="flow-empty">'
+                '<p>No tasks yet</p>'
+                '<p class="flow-empty-hint">Click <strong>+ Task</strong> above to add'
+                " your first task.</p>"
+                "</div>"
+            )
 
         # Topological sort
         sorted_tasks = _topological_sort(tasks, db)
@@ -251,6 +318,13 @@ class FlowLens:
             col = task.status if task.status in columns else "todo"
             columns[col].append(task)
 
+        # Next-status labels for toggle button
+        _next_label = {
+            "todo": "Start &#x25B6;",
+            "in_progress": "Done &#x2713;",
+            "done": "Reopen &#x21A9;",
+        }
+
         col_html: list[str] = []
         labels = {"todo": "To Do", "in_progress": "In Progress", "done": "Done"}
         for status, label in labels.items():
@@ -268,15 +342,15 @@ class FlowLens:
                     nid = task.meta.id
                     toggle_btn = ""
                     if artifact_id is not None:
+                        btn_label = _next_label.get(task.status, "&#x21bb;")
                         toggle_btn = (
-                            f'<button class="btn btn-sm"'
+                            f'<button class="btn btn-sm kanban-toggle"'
                             f' hx-post="/artifacts/{artifact_id}/flow/toggle-task"'
                             f" hx-vals='{{\"node_id\": \"{nid}\"}}'"
                             f' hx-target="#flow-content"'
                             f' hx-swap="innerHTML"'
-                            f' title="Toggle status"'
-                            f' style="float:right;padding:0 0.3rem;">'
-                            f"&#x21bb;</button>"
+                            f' title="Move to next status">'
+                            f"{btn_label}</button>"
                         )
                     card_parts.append(
                         f'<div class="kanban-card" data-node-id="{nid}">'
