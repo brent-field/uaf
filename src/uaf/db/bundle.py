@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from uaf.core.node_id import BlobId, NodeId
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ class BundleManifest:
 
 
 def export_bundle(
-    db: GraphDB,
+    db: GraphDB | JournaledGraphDB,
     artifact_ids: list[NodeId],
     path: Path,
     *,
@@ -127,7 +128,7 @@ def export_bundle(
 
 
 def _build_full_journal(
-    db: GraphDB,
+    db: GraphDB | JournaledGraphDB,
     node_ids: set[NodeId],
     edge_ids: set[Any],
 ) -> list[str]:
@@ -144,7 +145,7 @@ def _build_full_journal(
 
 
 def _build_snapshot_journal(
-    db: GraphDB,
+    db: GraphDB | JournaledGraphDB,
     node_ids: set[NodeId],
     edge_ids: set[Any],
 ) -> list[str]:
@@ -202,7 +203,7 @@ def _op_in_subtree(
             return False
 
 
-def _collect_blob_ids(db: GraphDB, node_ids: set[NodeId]) -> list[BlobId]:
+def _collect_blob_ids(db: GraphDB | JournaledGraphDB, node_ids: set[NodeId]) -> list[BlobId]:
     """Scan nodes for blob: URI references and return their BlobIds."""
     from uaf.core.node_id import BlobId
 
@@ -229,7 +230,7 @@ def _collect_blob_ids(db: GraphDB, node_ids: set[NodeId]) -> list[BlobId]:
 # ---------------------------------------------------------------------------
 
 
-def import_bundle(db: GraphDB, path: Path) -> list[NodeId]:
+def import_bundle(db: GraphDB | JournaledGraphDB, path: Path) -> list[NodeId]:
     """Import a .uaf bundle into the given GraphDB. Returns imported artifact NodeIds."""
     import uuid
 

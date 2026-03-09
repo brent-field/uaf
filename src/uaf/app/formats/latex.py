@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from uaf.db.graph_db import GraphDB
+    from uaf.db.journaled_graph_db import JournaledGraphDB
 
 # Section commands → heading levels
 _SECTION_LEVELS: dict[str, int] = {
@@ -54,7 +55,7 @@ _LIST_ENVS = {"itemize", "enumerate"}
 class LatexHandler:
     """Import/export LaTeX files via the UAF graph."""
 
-    def import_file(self, path: Path, db: GraphDB) -> NodeId:
+    def import_file(self, path: Path, db: GraphDB | JournaledGraphDB) -> NodeId:
         """Parse a LaTeX file into UAF nodes and edges."""
         text = path.read_text(encoding="utf-8")
 
@@ -76,7 +77,7 @@ class LatexHandler:
 
         return art_id
 
-    def export_file(self, db: GraphDB, root_id: NodeId, path: Path) -> None:
+    def export_file(self, db: GraphDB | JournaledGraphDB, root_id: NodeId, path: Path) -> None:
         """Export a UAF artifact as a LaTeX file."""
         art = db.get_node(root_id)
         children = db.get_children(root_id)
@@ -97,7 +98,9 @@ class LatexHandler:
 
         path.write_text("\n".join(parts), encoding="utf-8")
 
-    def _import_nodes(self, nodes: list[Any], parent_id: NodeId, db: GraphDB) -> None:
+    def _import_nodes(
+        self, nodes: list[Any], parent_id: NodeId, db: GraphDB | JournaledGraphDB,
+    ) -> None:
         """Walk AST nodes and create UAF graph nodes."""
         # Accumulate inline content (text + inline math) into paragraphs
         text_buffer: list[str] = []
@@ -398,7 +401,7 @@ def _render_list_env(node: LatexEnvironmentNode) -> str:
 
 
 def _flush_paragraphs(
-    text_buffer: list[str], parent_id: NodeId, db: GraphDB,
+    text_buffer: list[str], parent_id: NodeId, db: GraphDB | JournaledGraphDB,
 ) -> None:
     """Split accumulated text on double-newlines and create Paragraph nodes."""
     if not text_buffer:
