@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from uaf.app.formats.csv_format import CsvComparator, CsvHandler
+from uaf.app.formats.latex import LatexComparator, LatexHandler
 from uaf.app.formats.markdown import MarkdownComparator, MarkdownHandler
 from uaf.app.formats.plaintext import PlainTextComparator, PlainTextHandler
 from uaf.db.graph_db import GraphDB
@@ -83,6 +84,29 @@ def test_plaintext_roundtrip(fixture: Path, tmp_path: Path) -> None:
     result = PlainTextComparator().compare(fixture, output)
     assert result.is_equivalent, f"Differences: {result.differences}"
     assert result.similarity_score >= 0.95
+
+
+# ---------------------------------------------------------------------------
+# LaTeX fixtures
+# ---------------------------------------------------------------------------
+
+_latex_fixtures = sorted((FIXTURES / "latex").glob("*.tex"))
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    _latex_fixtures,
+    ids=[p.stem for p in _latex_fixtures],
+)
+def test_latex_roundtrip(fixture: Path, tmp_path: Path) -> None:
+    """Import LaTeX → UAF graph → export LaTeX → compare."""
+    db = GraphDB()
+    handler = LatexHandler()
+    root_id = handler.import_file(fixture, db)
+    output = tmp_path / fixture.name
+    handler.export_file(db, root_id, output)
+    result = LatexComparator().compare(fixture, output)
+    assert result.similarity_score >= 0.90, f"Differences: {result.differences}"
 
 
 # ---------------------------------------------------------------------------
