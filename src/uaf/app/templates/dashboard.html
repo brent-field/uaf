@@ -15,13 +15,22 @@
     <ul class="artifact-list" id="artifact-list">
         {% for art in artifacts %}
         <li class="artifact-item">
-            <div>
-                <a href="/artifacts/{{ art.id }}/edit">{{ art.title }}</a>
+            <div class="artifact-info">
+                <div class="artifact-title-row">
+                    {% if art.artifact_type == 'spreadsheet' %}
+                    <span class="type-badge badge-spreadsheet">Sheet</span>
+                    {% elif art.artifact_type == 'project' %}
+                    <span class="type-badge badge-project">Project</span>
+                    {% else %}
+                    <span class="type-badge badge-doc">Doc</span>
+                    {% endif %}
+                    <a href="/artifacts/{{ art.id }}/edit">{{ art.title }}</a>
+                </div>
                 <div class="meta">{{ art.child_count }} blocks &middot; {{ art.updated_at.strftime('%b %d, %H:%M') }}</div>
             </div>
             <div class="artifact-actions">
-                <a href="/artifacts/{{ art.id }}/edit" class="btn btn-sm">Edit Doc</a>
-                <a href="/artifacts/{{ art.id }}/grid" class="btn btn-sm">Grid View</a>
+                <a href="/artifacts/{{ art.id }}/edit" class="btn btn-sm">Edit</a>
+                <a href="/artifacts/{{ art.id }}/grid" class="btn btn-sm">Grid</a>
                 <a href="/api/artifacts/{{ art.id }}/export?format=markdown" class="btn btn-sm">Export</a>
                 <button class="btn btn-sm btn-danger"
                         hx-delete="/artifacts/{{ art.id }}"
@@ -44,7 +53,8 @@
     <form method="post" action="/artifacts/import" enctype="multipart/form-data" class="import-form">
         <div class="field">
             <label for="file">File</label>
-            <input type="file" id="file" name="file" accept=".md,.csv,.txt,.docx,.pdf,.json" required />
+            <input type="file" id="file" name="file"
+                   accept=".md,.csv,.txt,.docx,.pdf,.json,.tex,.uaf" required />
         </div>
         <button type="submit" class="btn btn-primary">Import</button>
     </form>

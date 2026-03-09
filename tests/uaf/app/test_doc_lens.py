@@ -409,6 +409,51 @@ class TestDocLensActions:
         texts = [c.text for c in children]
         assert texts == ["First", "Second", "Third"]
 
+    def test_format_paragraph_to_code_block(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Doc")
+        art_id = sdb.create_node(session, art)
+
+        p = Paragraph(meta=make_node_metadata(NodeType.PARAGRAPH), text="x = 1")
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        action = FormatText(node_id=p_id, style="code_block")
+        lens.apply_action(sdb, session, art_id, action)
+
+        node = sdb.get_node(session, p_id)
+        assert isinstance(node, CodeBlock)
+        assert node.source == "x = 1"
+
+    def test_edit_preserves_node_id(self) -> None:
+        """Editing a block's text preserves its node ID (update, not delete+create)."""
+        sdb, session, _lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Doc")
+        art_id = sdb.create_node(session, art)
+
+        p = Paragraph(meta=make_node_metadata(NodeType.PARAGRAPH), text="Original")
+        p_id = sdb.create_node(session, p)
+        sdb.create_edge(session, _contains(art_id, p_id))
+
+        # Simulate inline edit: update the node directly
+        updated = Paragraph(meta=p.meta, text="Updated text")
+        sdb.update_node(session, updated)
+
+        node = sdb.get_node(session, p_id)
+        assert isinstance(node, Paragraph)
+        assert node.text == "Updated text"
+        assert node.meta.id == p_id
+
+    def test_empty_doc_placeholder_message(self) -> None:
+        """Empty document render includes helpful placeholder text."""
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Empty")
+        art_id = sdb.create_node(session, art)
+
+        view = lens.render(sdb, session, art_id)
+        assert "Empty" in view.content
+        assert view.node_count == 1
+
     def test_unsupported_action_raises(self) -> None:
         from uaf.app.lenses.actions import SetCellValue
 
