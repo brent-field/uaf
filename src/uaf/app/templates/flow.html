@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — UAF Project{% endblock %}
+{% block content %}
+<div class="card">
+    <div class="editor-header">
+        <form hx-post="/artifacts/{{ artifact_id }}/flow/rename"
+              hx-target="#flow-content"
+              hx-swap="innerHTML"
+              style="flex:1;display:flex;gap:0.5rem;align-items:center;">
+            <input type="text" name="title" value="{{ title }}"
+                   class="editor-title"
+                   hx-trigger="change"
+                   hx-post="/artifacts/{{ artifact_id }}/flow/rename"
+                   hx-target="#flow-content"
+                   hx-swap="innerHTML"
+                   hx-include="this" />
+        </form>
+        <div class="header-actions">
+            <a href="/dashboard" class="btn btn-sm">Back</a>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <div class="view-toggle">
+            <button class="btn btn-sm view-mode-btn {% if view_mode == 'gantt' %}active{% endif %}"
+                    hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=gantt"
+                    hx-target="#flow-content"
+                    hx-swap="innerHTML"
+                    onclick="document.querySelectorAll('.view-mode-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');">
+                Gantt</button>
+            <button class="btn btn-sm view-mode-btn {% if view_mode == 'deps' %}active{% endif %}"
+                    hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=deps"
+                    hx-target="#flow-content"
+                    hx-swap="innerHTML"
+                    onclick="document.querySelectorAll('.view-mode-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');">
+                Dependencies</button>
+            <button class="btn btn-sm view-mode-btn {% if view_mode == 'dag' %}active{% endif %}"
+                    hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=dag"
+                    hx-target="#flow-content"
+                    hx-swap="innerHTML"
+                    onclick="document.querySelectorAll('.view-mode-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');">
+                DAG</button>
+            <button class="btn btn-sm view-mode-btn {% if view_mode == 'kanban' %}active{% endif %}"
+                    hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=kanban"
+                    hx-target="#flow-content"
+                    hx-swap="innerHTML"
+                    onclick="document.querySelectorAll('.view-mode-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');">
+                Kanban</button>
+        </div>
+        <span class="toolbar-sep"></span>
+        <button class="btn btn-sm"
+                onclick="document.getElementById('add-task-form').style.display='flex'">
+            + Task</button>
+        <button class="btn btn-sm" id="link-mode-btn"
+                onclick="window.flowLinkMode.toggle()">
+            + Dependency</button>
+        <span class="htmx-indicator">Saving...</span>
+    </div>
+
+    <div id="add-task-form" class="add-task-form" style="display:none;">
+        <form hx-post="/artifacts/{{ artifact_id }}/flow/create-task"
+              hx-target="#flow-content"
+              hx-swap="innerHTML"
+              style="display:flex;gap:0.5rem;align-items:center;width:100%;">
+            <input type="text" name="title" placeholder="Task title" required
+                   class="edit-input" style="flex:1;" />
+            <input type="date" name="start_date" class="edit-input" style="width:auto;" />
+            <input type="date" name="end_date" class="edit-input" style="width:auto;" />
+            <button type="submit" class="btn btn-sm btn-primary">Add</button>
+            <button type="button" class="btn btn-sm"
+                    onclick="this.closest('.add-task-form').style.display='none'">Cancel</button>
+        </form>
+    </div>
+
+    <div id="link-mode-banner" class="link-mode-banner" style="display:none;">
+        <span id="link-mode-text">Click the first task (the one that depends on another)...</span>
+        <button class="btn btn-sm" onclick="window.flowLinkMode.cancel()">Cancel</button>
+    </div>
+
+    <div id="flow-content" class="flow-content">
+        {{ flow_html | safe }}
+    </div>
+</div>
+
+<script>
+(function() {
+    var artifactId = '{{ artifact_id }}';
+    var state = { active: false, step: 0, sourceId: null };
+
+    function toggle() {
+        if (state.active) { cancel(); return; }
+        state.active = true;
+        state.step = 1;
+        state.sourceId = null;
+        document.getElementById('link-mode-btn').classList.add('active');
+        document.getElementById('link-mode-banner').style.display = 'flex';
+        document.getElementById('link-mode-text').textContent =
+            'Click the task that depends on another...';
+        document.getElementById('add-task-form').style.display = 'none';
+        document.getElementById('flow-content').classList.add('link-mode');
+    }
+
+    function cancel() {
+        state.active = false;
+        state.step = 0;
+        state.sourceId = null;
+        document.getElementById('link-mode-btn').classList.remove('active');
+        document.getElementById('link-mode-banner').style.display = 'none';
+        document.getElementById('flow-content').classList.remove('link-mode');
+        // Remove any selection highlights
+        document.querySelectorAll('.link-selected').forEach(function(el) {
+            el.classList.remove('link-selected');
+        });
+    }
+
+    function handleClick(e) {
+        if (!state.active) return;
+        // Find the closest element with a data-node-id
+        var el = e.target.closest('[data-node-id]');
+        if (!el) return;
+        var nodeId = el.getAttribute('data-node-id');
+        if (!nodeId) return;
+
+        // Don't intercept button clicks (toggle/delete)
+        if (e.target.closest('button')) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (state.step === 1) {
+            // First click: select source (the dependent task)
+            state.sourceId = nodeId;
+            state.step = 2;
+            el.classList.add('link-selected');
+            document.getElementById('link-mode-text').textContent =
+                'Now click the task it depends on...';
+        } else if (state.step === 2) {
+            if (nodeId === state.sourceId) return; // can't depend on self
+            // Second click: select target and submit
+            var form = document.createElement('form');
+            form.style.display = 'none';
+            form.method = 'POST';
+            form.action = '/artifacts/' + artifactId + '/flow/set-dependency';
+            form.setAttribute('hx-post', form.action);
+            form.setAttribute('hx-target', '#flow-content');
+            form.setAttribute('hx-swap', 'innerHTML');
+
+            var s = document.createElement('input');
+            s.name = 'source_id'; s.value = state.sourceId;
+            var t = document.createElement('input');
+            t.name = 'target_id'; t.value = nodeId;
+            form.appendChild(s);
+            form.appendChild(t);
+
+            document.body.appendChild(form);
+            htmx.process(form);
+            htmx.trigger(form, 'submit');
+
+            cancel();
+            // Clean up form after HTMX processes it
+            setTimeout(function() { form.remove(); }, 500);
+        }
+    }
+
+    document.getElementById('flow-content').addEventListener('click', handleClick, true);
+
+    window.flowLinkMode = { toggle: toggle, cancel: cancel };
+})();
+</script>
+
+<style>
+.flow-content { padding: 1rem 0; }
+.add-task-form { padding: 0.75rem 1rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }
+.flow-empty { padding: 2rem; text-align: center; color: #888; }
+
+/* Link mode */
+.link-mode-banner {
+    padding: 0.5rem 1rem;
+    background: #dbeafe;
+    border: 1px solid #93c5fd;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.9rem;
+    color: #1e40af;
+}
+.flow-content.link-mode [data-node-id] { cursor: crosshair; }
+.flow-content.link-mode [data-node-id]:hover { background: #dbeafe !important; }
+.link-selected { background: #bfdbfe !important; outline: 2px solid #3b82f6; }
+
+/* Gantt */
+.flow-gantt { width: 100%; border-collapse: collapse; }
+.flow-gantt th, .flow-gantt td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-gantt th { font-weight: 600; font-size: 0.85rem; color: #666; }
+.task-name { white-space: nowrap; }
+.task-name.status-done { text-decoration: line-through; color: #999; }
+.task-name.status-in_progress { color: #2563eb; font-weight: 500; }
+.gantt-cell { min-width: 200px; }
+.gantt-bar { height: 20px; background: #3b82f6; border-radius: 3px; min-width: 40px; }
+.gantt-bar.status-done { background: #22c55e; }
+.gantt-bar.status-in_progress { background: #f59e0b; }
+.gantt-milestone { font-size: 1.2rem; color: #e11d48; }
+
+/* Dependencies */
+.flow-deps { width: 100%; border-collapse: collapse; }
+.flow-deps th, .flow-deps td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-deps th { font-weight: 600; font-size: 0.85rem; color: #666; }
+
+/* DAG */
+.flow-dag { display: flex; flex-direction: column; gap: 0.5rem; padding: 1rem; }
+.dag-node { padding: 0.5rem 1rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; display: inline-block; }
+.dag-label { font-weight: 500; }
+
+/* Kanban */
+.flow-kanban { display: flex; gap: 1rem; min-height: 200px; }
+.kanban-column { flex: 1; background: #f8f8f8; border-radius: 8px; padding: 0.75rem; }
+.kanban-column h3 { margin: 0 0 0.75rem 0; font-size: 0.9rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+.kanban-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; cursor: pointer; }
+.kanban-card:hover { border-color: #3b82f6; }
+.card-title { font-weight: 500; }
+.due-date { display: block; font-size: 0.8rem; color: #888; margin-top: 0.25rem; }
+.kanban-empty { color: #aaa; font-size: 0.85rem; text-align: center; padding: 1rem; }
+
+/* Task actions row */
+.flow-gantt tr:hover, .flow-deps tr:hover { background: #f8f8f8; }
+.task-actions { white-space: nowrap; }
+.task-actions .btn { padding: 0.15rem 0.4rem; font-size: 0.75rem; }
+</style>
+{% endblock %}

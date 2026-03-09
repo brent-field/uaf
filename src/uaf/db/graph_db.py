@@ -239,8 +239,9 @@ class GraphDB:
 
         fields: list[tuple[str, str]] = []
         match node:
-            case Artifact(title=title):
+            case Artifact(title=title, artifact_type=atype):
                 fields.append(("title", title))
+                fields.append(("artifact_type", atype))
             case Paragraph(text=text, style=style):
                 fields.append(("text", text))
                 fields.append(("style", style))

@@ -7,6 +7,9 @@
         <form method="post" action="/artifacts/create" style="display:inline;">
             <button type="submit" class="btn btn-primary">+ New Document</button>
         </form>
+        <form method="post" action="/artifacts/create-project" style="display:inline;">
+            <button type="submit" class="btn btn-primary">+ New Project</button>
+        </form>
     </div>
 </div>
 
@@ -24,13 +27,20 @@
                     {% else %}
                     <span class="type-badge badge-doc">Doc</span>
                     {% endif %}
+                    {% if art.artifact_type == 'project' %}
+                    <a href="/artifacts/{{ art.id }}/flow">{{ art.title }}</a>
+                    {% elif art.artifact_type == 'spreadsheet' %}
+                    <a href="/artifacts/{{ art.id }}/grid">{{ art.title }}</a>
+                    {% else %}
                     <a href="/artifacts/{{ art.id }}/edit">{{ art.title }}</a>
+                    {% endif %}
                 </div>
                 <div class="meta">{{ art.child_count }} blocks &middot; {{ art.updated_at.strftime('%b %d, %H:%M') }}</div>
             </div>
             <div class="artifact-actions">
                 <a href="/artifacts/{{ art.id }}/edit" class="btn btn-sm">Edit</a>
                 <a href="/artifacts/{{ art.id }}/grid" class="btn btn-sm">Grid</a>
+                <a href="/artifacts/{{ art.id }}/flow" class="btn btn-sm">Flow</a>
                 <a href="/api/artifacts/{{ art.id }}/export?format=markdown" class="btn btn-sm">Export</a>
                 <button class="btn btn-sm btn-danger"
                         hx-delete="/artifacts/{{ art.id }}"

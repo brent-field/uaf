@@ -11,7 +11,13 @@
                 {% else %}
                 <span class="type-badge badge-doc">Doc</span>
                 {% endif %}
+                {% if art.artifact_type == 'project' %}
+                <a href="/artifacts/{{ art.id }}/flow">{{ art.title }}</a>
+                {% elif art.artifact_type == 'spreadsheet' %}
+                <a href="/artifacts/{{ art.id }}/grid">{{ art.title }}</a>
+                {% else %}
                 <a href="/artifacts/{{ art.id }}/edit">{{ art.title }}</a>
+                {% endif %}
             </div>
             <div class="meta">{{ art.child_count }} blocks &middot; {{ art.updated_at.strftime('%b %d, %H:%M') }}</div>
         </div>

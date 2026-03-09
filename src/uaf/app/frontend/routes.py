@@ -306,12 +306,15 @@ def dashboard(
     for art in artifacts:
         if isinstance(art, Artifact):
             children = db.get_children(session, art.meta.id)
+            atype = art.artifact_type
+            if atype == "doc":
+                atype = _detect_artifact_type(children)
             items.append({
                 "id": str(art.meta.id),
                 "title": art.title,
                 "child_count": len(children),
                 "updated_at": art.meta.updated_at,
-                "artifact_type": _detect_artifact_type(children),
+                "artifact_type": atype,
             })
 
     ctx: dict[str, Any] = {
@@ -367,12 +370,15 @@ def delete_artifact(
     for art in artifacts:
         if isinstance(art, Artifact):
             children = db.get_children(session, art.meta.id)
+            atype = art.artifact_type
+            if atype == "doc":
+                atype = _detect_artifact_type(children)
             items.append({
                 "id": str(art.meta.id),
                 "title": art.title,
                 "child_count": len(children),
                 "updated_at": art.meta.updated_at,
-                "artifact_type": _detect_artifact_type(children),
+                "artifact_type": atype,
             })
     ctx: dict[str, Any] = {"request": request, "artifacts": items}
     return templates.TemplateResponse("partials/artifact_list.html", ctx)
@@ -879,3 +885,288 @@ def add_col(
 
     ctx: dict[str, Any] = {"request": request, "grid_html": grid_html}
     return templates.TemplateResponse("partials/grid_table.html", ctx)
+
+
+# ---------------------------------------------------------------------------
+# FlowLens (project management)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/artifacts/create-project")
+def create_project(
+    request: Request,
+    db: SecureGraphDB = Depends(get_db),
+) -> RedirectResponse:
+    """Create a new project artifact."""
+    session = _require_session(request, db)
+    from uaf.core.nodes import make_node_metadata
+
+    art = Artifact(
+        meta=make_node_metadata(NodeType.ARTIFACT),
+        title="Untitled Project",
+        artifact_type="project",
+    )
+    art_id = db.create_node(session, art)
+    return RedirectResponse(
+        url=f"/artifacts/{art_id}/flow", status_code=303,
+    )
+
+
+@router.get("/artifacts/{artifact_id}/flow", response_model=None)
+def flow_page(
+    request: Request,
+    artifact_id: str,
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse | RedirectResponse:
+    """Render the FlowLens project page."""
+    session = _get_session_or_none(request, db)
+    if session is None:
+        return RedirectResponse(url="/login", status_code=303)
+
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    art = db.get_node(session, aid)
+    if art is None or not isinstance(art, Artifact):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    lens = registry.get("flow")
+    if lens is None:
+        raise HTTPException(
+            status_code=500, detail="FlowLens not registered",
+        )
+
+    view = lens.render(db, session, aid)
+
+    ctx: dict[str, Any] = {
+        "request": request,
+        "user": _user_ctx(session),
+        "artifact_id": artifact_id,
+        "title": art.title,
+        "flow_html": view.content,
+        "view_mode": "gantt",
+    }
+    return templates.TemplateResponse("flow.html", ctx)
+
+
+@router.get(
+    "/artifacts/{artifact_id}/flow/view",
+    response_class=HTMLResponse,
+)
+def flow_view(
+    request: Request,
+    artifact_id: str,
+    mode: str = "gantt",
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Return FlowLens partial for the requested view mode."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    from uaf.app.lenses.flow_lens import FlowLens
+
+    lens = registry.get("flow")
+    if lens is None or not isinstance(lens, FlowLens):
+        return HTMLResponse("<p>FlowLens not registered.</p>")
+
+    view = lens.render(db, session, aid, mode=mode)
+    return HTMLResponse(view.content)
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/rename",
+    response_class=HTMLResponse,
+)
+def flow_rename(
+    request: Request,
+    artifact_id: str,
+    title: str = Form(...),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Rename project artifact and return updated flow view."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    lens = registry.get("flow")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid,
+            RenameArtifact(artifact_id=aid, title=title),
+        )
+        view = lens.render(db, session, aid)
+        return HTMLResponse(view.content)
+    return HTMLResponse("")
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/create-task",
+    response_class=HTMLResponse,
+)
+def flow_create_task(
+    request: Request,
+    artifact_id: str,
+    title: str = Form(...),
+    start_date: str = Form(""),
+    end_date: str = Form(""),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Create a task and return updated flow view."""
+    from datetime import UTC, datetime
+
+    from uaf.app.lenses.actions import CreateTask
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    children = db.get_children(session, aid)
+    position = len(children)
+
+    sd = (
+        datetime.strptime(start_date, "%Y-%m-%d").replace(
+            tzinfo=UTC,
+        )
+        if start_date
+        else None
+    )
+    ed = (
+        datetime.strptime(end_date, "%Y-%m-%d").replace(
+            tzinfo=UTC,
+        )
+        if end_date
+        else None
+    )
+
+    lens = registry.get("flow")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid,
+            CreateTask(
+                parent_id=aid,
+                title=title,
+                position=position,
+                start_date=sd,
+                end_date=ed,
+            ),
+        )
+        view = lens.render(db, session, aid)
+        return HTMLResponse(view.content)
+    return HTMLResponse("")
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/toggle-task",
+    response_class=HTMLResponse,
+)
+def flow_toggle_task(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Toggle task status and return updated flow view."""
+    from uaf.app.lenses.actions import ToggleTask
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    nid = NodeId(value=uuid.UUID(node_id))
+
+    lens = registry.get("flow")
+    if lens is not None:
+        lens.apply_action(db, session, aid, ToggleTask(task_id=nid))
+        view = lens.render(db, session, aid)
+        return HTMLResponse(view.content)
+    return HTMLResponse("")
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/set-dependency",
+    response_class=HTMLResponse,
+)
+def flow_set_dependency(
+    request: Request,
+    artifact_id: str,
+    source_id: str = Form(...),
+    target_id: str = Form(...),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Add a dependency between two tasks."""
+    from uaf.app.lenses.actions import SetDependency
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    src = NodeId(value=uuid.UUID(source_id))
+    tgt = NodeId(value=uuid.UUID(target_id))
+
+    lens = registry.get("flow")
+    if lens is not None:
+        with contextlib.suppress(ValueError):
+            lens.apply_action(
+                db, session, aid,
+                SetDependency(source_task_id=src, target_task_id=tgt),
+            )
+        view = lens.render(db, session, aid)
+        return HTMLResponse(view.content)
+    return HTMLResponse("")
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/remove-dependency",
+    response_class=HTMLResponse,
+)
+def flow_remove_dependency(
+    request: Request,
+    artifact_id: str,
+    source_id: str = Form(...),
+    target_id: str = Form(...),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Remove a dependency between two tasks."""
+    from uaf.app.lenses.actions import RemoveDependency
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    src = NodeId(value=uuid.UUID(source_id))
+    tgt = NodeId(value=uuid.UUID(target_id))
+
+    lens = registry.get("flow")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid,
+            RemoveDependency(
+                source_task_id=src, target_task_id=tgt,
+            ),
+        )
+        view = lens.render(db, session, aid)
+        return HTMLResponse(view.content)
+    return HTMLResponse("")
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/delete-task",
+    response_class=HTMLResponse,
+)
+def flow_delete_task(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Delete a task and return updated flow view."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    nid = NodeId(value=uuid.UUID(node_id))
+
+    lens = registry.get("flow")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid, DeleteNode(node_id=nid),
+        )
+        view = lens.render(db, session, aid)
+        return HTMLResponse(view.content)
+    return HTMLResponse("")
