@@ -132,6 +132,7 @@ class Artifact:
 
     meta: NodeMetadata
     title: str
+    artifact_type: str = "doc"  # "doc" | "spreadsheet" | "project"
 
 
 @dataclass(frozen=True, slots=True)

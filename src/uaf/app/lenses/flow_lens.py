@@ -12,6 +12,7 @@ from uaf.app.lenses.actions import (
     CreateTaskGroup,
     DeleteNode,
     RemoveDependency,
+    RenameArtifact,
     ReorderNodes,
     SetDateRange,
     SetDependency,
@@ -38,6 +39,11 @@ _SUPPORTED = frozenset({NodeType.ARTIFACT, NodeType.TASK})
 
 # Status cycle for ToggleTask
 _STATUS_CYCLE = {"todo": "in_progress", "in_progress": "done", "done": "todo"}
+_STATUS_ICONS = {"todo": "&#9744;", "in_progress": "&#9634;", "done": "&#9745;"}
+
+
+def _status_icon(status: str) -> str:
+    return _STATUS_ICONS.get(status, "&#9744;")
 
 
 class FlowLens:
@@ -83,7 +89,7 @@ class FlowLens:
             case "dag":
                 content = self._render_dag(task_list, artifact_id, db, session)
             case "kanban":
-                content = self._render_kanban(task_list)
+                content = self._render_kanban(task_list, artifact_id)
             case _:
                 content = self._render_gantt(task_list, artifact_id, db, session)
 
@@ -137,11 +143,31 @@ class FlowLens:
             else:
                 right = '<td class="gantt-cell"></td>'
 
-            rows.append(f"<tr>{left}{right}</tr>")
+            actions = (
+                f'<td class="task-actions">'
+                f'<button class="btn btn-sm"'
+                f' hx-post="/artifacts/{artifact_id}/flow/toggle-task"'
+                f" hx-vals='{{\"node_id\": \"{nid}\"}}'"
+                f' hx-target="#flow-content"'
+                f' hx-swap="innerHTML"'
+                f' title="Toggle status">'
+                f"{_status_icon(task.status)}"
+                f"</button>"
+                f'<button class="btn btn-sm btn-danger"'
+                f' hx-post="/artifacts/{artifact_id}/flow/delete-task"'
+                f" hx-vals='{{\"node_id\": \"{nid}\"}}'"
+                f' hx-target="#flow-content"'
+                f' hx-swap="innerHTML"'
+                f' hx-confirm="Delete task?"'
+                f' title="Delete">&times;</button>'
+                f"</td>"
+            )
+            rows.append(f"<tr>{left}{right}{actions}</tr>")
 
         return (
             '<table class="flow-gantt">'
-            "<thead><tr><th>Task</th><th>Timeline</th></tr></thead>"
+            "<thead><tr><th>Task</th><th>Timeline</th>"
+            "<th></th></tr></thead>"
             f'<tbody>{"".join(rows)}</tbody>'
             "</table>"
         )
@@ -214,7 +240,9 @@ class FlowLens:
 
         return f'<div class="flow-dag">{"".join(nodes)}</div>'
 
-    def _render_kanban(self, tasks: list[Task]) -> str:
+    def _render_kanban(
+        self, tasks: list[Task], artifact_id: NodeId | None = None,
+    ) -> str:
         """Render Kanban view — columns by status."""
         columns: dict[str, list[Task]] = {
             "todo": [], "in_progress": [], "done": [],
@@ -237,8 +265,22 @@ class FlowLens:
                         f'<span class="due-date">{task.due_date.strftime("%Y-%m-%d")}</span>'
                         if task.due_date else ""
                     )
+                    nid = task.meta.id
+                    toggle_btn = ""
+                    if artifact_id is not None:
+                        toggle_btn = (
+                            f'<button class="btn btn-sm"'
+                            f' hx-post="/artifacts/{artifact_id}/flow/toggle-task"'
+                            f" hx-vals='{{\"node_id\": \"{nid}\"}}'"
+                            f' hx-target="#flow-content"'
+                            f' hx-swap="innerHTML"'
+                            f' title="Toggle status"'
+                            f' style="float:right;padding:0 0.3rem;">'
+                            f"&#x21bb;</button>"
+                        )
                     card_parts.append(
-                        f'<div class="kanban-card" data-node-id="{task.meta.id}">'
+                        f'<div class="kanban-card" data-node-id="{nid}">'
+                        f"{toggle_btn}"
                         f'<span class="card-title">{name}</span>{due}'
                         f"</div>"
                     )
@@ -290,6 +332,8 @@ class FlowLens:
                 self._reorder(db, session, parent_id, new_order)
             case DeleteNode(node_id=node_id):
                 self._delete_task(db, session, node_id)
+            case RenameArtifact(artifact_id=aid, title=title):
+                self._rename_artifact(db, session, aid, title)
             case _:
                 msg = f"FlowLens does not support action: {type(action).__name__}"
                 raise ValueError(msg)
@@ -404,6 +448,15 @@ class FlowLens:
             timestamp=utc_now(),
         )
         db._db.apply(op)
+
+    def _rename_artifact(
+        self, db: SecureGraphDB, session: Session,
+        artifact_id: NodeId, title: str,
+    ) -> None:
+        art = db.get_node(session, artifact_id)
+        if art is not None and isinstance(art, Artifact):
+            updated = replace(art, title=title)
+            db.update_node(session, updated)
 
     def _delete_task(
         self, db: SecureGraphDB, session: Session, node_id: NodeId,

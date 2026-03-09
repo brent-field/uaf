@@ -255,8 +255,10 @@ def node_to_dict(node: Any) -> dict[str, Any]:
     }
 
     match node:
-        case Artifact(title=title):
+        case Artifact(title=title, artifact_type=atype):
             d["title"] = title
+            if atype != "doc":
+                d["artifact_type"] = atype
         case Paragraph(text=text, style=style):
             d["text"] = text
             d["style"] = style
@@ -344,7 +346,10 @@ def node_from_dict(d: dict[str, Any]) -> Any:
 
     match node_cls:
         case _ if node_cls is Artifact:
-            return Artifact(meta=meta, title=d["title"])
+            return Artifact(
+                meta=meta, title=d["title"],
+                artifact_type=d.get("artifact_type", "doc"),
+            )
         case _ if node_cls is Paragraph:
             return Paragraph(meta=meta, text=d["text"], style=d.get("style", "body"))
         case _ if node_cls is Heading:
