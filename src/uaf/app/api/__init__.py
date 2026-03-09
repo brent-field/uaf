@@ -14,6 +14,7 @@ from uaf.app.api.routes_import_export import router as import_export_router
 from uaf.app.api.routes_lens import router as lens_router
 from uaf.app.api.routes_nodes import router as nodes_router
 from uaf.app.api.routes_nodes import search_router
+from uaf.app.api.routes_sharing import router as sharing_router
 from uaf.app.frontend.routes import router as frontend_router
 
 if TYPE_CHECKING:
@@ -36,6 +37,7 @@ def create_app(db: SecureGraphDB, registry: LensRegistry) -> FastAPI:
     app.include_router(lens_router, prefix="/api/artifacts", tags=["lens"])
     app.include_router(search_router, prefix="/api/search", tags=["search"])
     app.include_router(import_export_router, prefix="/api", tags=["import/export"])
+    app.include_router(sharing_router, prefix="/api/sharing", tags=["sharing"])
 
     # Static files and frontend
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")

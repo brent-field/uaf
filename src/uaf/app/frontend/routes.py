@@ -18,6 +18,7 @@ from uaf.app.formats import FormatHandler
 from uaf.app.formats.csv_format import CsvHandler
 from uaf.app.formats.docx_format import DocxHandler
 from uaf.app.formats.gdoc_format import GdocHandler
+from uaf.app.formats.latex import LatexHandler
 from uaf.app.formats.markdown import MarkdownHandler
 from uaf.app.formats.pdf_format import PdfHandler
 from uaf.app.formats.plaintext import PlainTextHandler
@@ -49,6 +50,7 @@ _FORMAT_HANDLERS: dict[str, FormatHandler] = {
     "docx": DocxHandler(),
     "pdf": PdfHandler(),
     "gdoc": GdocHandler(),
+    "latex": LatexHandler(),
 }
 _EXTENSIONS: dict[str, str] = {
     "markdown": ".md",
@@ -57,6 +59,7 @@ _EXTENSIONS: dict[str, str] = {
     "docx": ".docx",
     "pdf": ".pdf",
     "gdoc": ".json",
+    "latex": ".tex",
 }
 _EXT_TO_FORMAT: dict[str, str] = {v: k for k, v in _EXTENSIONS.items()}
 _EXT_TO_FORMAT[".gdoc"] = "gdoc"
@@ -132,6 +135,18 @@ def _register_imported_artifact(
         grandchildren = db._db.get_children(child.meta.id)
         for gc in grandchildren:
             resolver.register_parent(gc.meta.id, child.meta.id)
+
+
+def _detect_artifact_type(children: list[object]) -> str:
+    """Detect artifact type from its children: 'doc', 'spreadsheet', or 'project'."""
+    from uaf.core.nodes import Sheet, Task
+
+    for child in children:
+        if isinstance(child, Sheet):
+            return "spreadsheet"
+        if isinstance(child, Task):
+            return "project"
+    return "doc"
 
 
 def _parse_doc_blocks(
@@ -296,6 +311,7 @@ def dashboard(
                 "title": art.title,
                 "child_count": len(children),
                 "updated_at": art.meta.updated_at,
+                "artifact_type": _detect_artifact_type(children),
             })
 
     ctx: dict[str, Any] = {
@@ -356,6 +372,7 @@ def delete_artifact(
                 "title": art.title,
                 "child_count": len(children),
                 "updated_at": art.meta.updated_at,
+                "artifact_type": _detect_artifact_type(children),
             })
     ctx: dict[str, Any] = {"request": request, "artifacts": items}
     return templates.TemplateResponse("partials/artifact_list.html", ctx)

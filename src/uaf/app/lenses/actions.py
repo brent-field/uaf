@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from uaf.core.node_id import NodeId
     from uaf.core.nodes import CellValue
 
@@ -123,6 +125,80 @@ class RenameArtifact:
 
 
 # ---------------------------------------------------------------------------
+# FlowLens actions
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class CreateTask:
+    """Create a new task under a parent."""
+
+    parent_id: NodeId
+    title: str
+    position: int
+    due_date: datetime | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CreateTaskGroup:
+    """Create a parent task that contains sub-tasks."""
+
+    parent_id: NodeId
+    title: str
+    position: int
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateTask:
+    """Update a task's title."""
+
+    task_id: NodeId
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToggleTask:
+    """Cycle task status: todo → in_progress → done → todo."""
+
+    task_id: NodeId
+
+
+@dataclass(frozen=True, slots=True)
+class SetDependency:
+    """Source task depends on target task."""
+
+    source_task_id: NodeId
+    target_task_id: NodeId
+
+
+@dataclass(frozen=True, slots=True)
+class RemoveDependency:
+    """Remove a dependency between two tasks."""
+
+    source_task_id: NodeId
+    target_task_id: NodeId
+
+
+@dataclass(frozen=True, slots=True)
+class SetDueDate:
+    """Set or clear a task's due date."""
+
+    task_id: NodeId
+    due_date: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class SetDateRange:
+    """Set a task's start and end dates for Gantt bars."""
+
+    task_id: NodeId
+    start_date: datetime
+    end_date: datetime
+
+
+# ---------------------------------------------------------------------------
 # Union type
 # ---------------------------------------------------------------------------
 
@@ -139,4 +215,12 @@ type LensAction = (
     | MoveNode
     | DeleteNode
     | RenameArtifact
+    | CreateTask
+    | CreateTaskGroup
+    | UpdateTask
+    | ToggleTask
+    | SetDependency
+    | RemoveDependency
+    | SetDueDate
+    | SetDateRange
 )

@@ -14,6 +14,7 @@ from uaf.app.api.schemas import ArtifactResponse
 from uaf.app.formats.csv_format import CsvHandler
 from uaf.app.formats.docx_format import DocxHandler
 from uaf.app.formats.gdoc_format import GdocHandler
+from uaf.app.formats.latex import LatexHandler
 from uaf.app.formats.markdown import MarkdownHandler
 from uaf.app.formats.pdf_format import PdfHandler
 from uaf.app.formats.plaintext import PlainTextHandler
@@ -25,7 +26,13 @@ router = APIRouter()
 
 _HANDLERS: dict[
     str,
-    MarkdownHandler | CsvHandler | PlainTextHandler | DocxHandler | PdfHandler | GdocHandler,
+    MarkdownHandler
+    | CsvHandler
+    | PlainTextHandler
+    | DocxHandler
+    | PdfHandler
+    | GdocHandler
+    | LatexHandler,
 ] = {
     "markdown": MarkdownHandler(),
     "csv": CsvHandler(),
@@ -33,6 +40,7 @@ _HANDLERS: dict[
     "docx": DocxHandler(),
     "pdf": PdfHandler(),
     "gdoc": GdocHandler(),
+    "latex": LatexHandler(),
 }
 
 _EXTENSIONS: dict[str, str] = {
@@ -42,6 +50,7 @@ _EXTENSIONS: dict[str, str] = {
     "docx": ".docx",
     "pdf": ".pdf",
     "gdoc": ".json",
+    "latex": ".tex",
 }
 _EXT_TO_FORMAT: dict[str, str] = {v: k for k, v in _EXTENSIONS.items()}
 _EXT_TO_FORMAT[".gdoc"] = "gdoc"

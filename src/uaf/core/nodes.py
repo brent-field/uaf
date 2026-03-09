@@ -222,6 +222,9 @@ class Task:
     title: str
     completed: bool = False
     due_date: datetime | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    status: str = "todo"  # "todo" | "in_progress" | "done"
 
 
 @dataclass(frozen=True, slots=True)
