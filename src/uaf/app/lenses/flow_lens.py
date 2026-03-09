@@ -150,7 +150,7 @@ class FlowLens:
 
             # Left side: task name + drag handle + dep info
             left = (
-                f'<td class="task-name {status_cls}" data-node-id="{nid}">'
+                f'<td class="task-name {status_cls}">'
                 f'<span class="drag-handle" draggable="true" title="Drag to link dependency">'
                 f"&#x1f517;</span>"
                 f"{name}{dep_sub}</td>"
@@ -194,7 +194,7 @@ class FlowLens:
                 f' title="Delete">&times;</button>'
                 f"</td>"
             )
-            rows.append(f"<tr>{left}{right}{actions}</tr>")
+            rows.append(f'<tr data-node-id="{nid}">{left}{right}{actions}</tr>')
 
         return (
             '<table class="flow-gantt">'
