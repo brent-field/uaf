@@ -51,9 +51,6 @@
         <button class="btn btn-sm"
                 onclick="document.getElementById('add-task-form').style.display='flex'">
             + Task</button>
-        <button class="btn btn-sm" id="link-mode-btn"
-                onclick="window.flowLinkMode.toggle()">
-            + Dependency</button>
         <span class="htmx-indicator">Saving...</span>
     </div>
 
@@ -72,10 +69,11 @@
         </form>
     </div>
 
-    <div id="link-mode-banner" class="link-mode-banner" style="display:none;">
-        <span id="link-mode-text">Click the first task (the one that depends on another)...</span>
-        <button class="btn btn-sm" onclick="window.flowLinkMode.cancel()">Cancel</button>
+    <div id="drag-feedback" class="drag-feedback" style="display:none;">
+        <span id="drag-feedback-text"></span>
     </div>
+
+    <div id="drag-line" class="drag-line" style="display:none;"></div>
 
     <div id="flow-content" class="flow-content">
         {{ flow_html | safe }}
@@ -85,110 +83,176 @@
 <script>
 (function() {
     var artifactId = '{{ artifact_id }}';
-    var state = { active: false, step: 0, sourceId: null };
+    var content = document.getElementById('flow-content');
+    var feedback = document.getElementById('drag-feedback');
+    var feedbackText = document.getElementById('drag-feedback-text');
+    var line = document.getElementById('drag-line');
 
-    function toggle() {
-        if (state.active) { cancel(); return; }
-        state.active = true;
-        state.step = 1;
-        state.sourceId = null;
-        document.getElementById('link-mode-btn').classList.add('active');
-        document.getElementById('link-mode-banner').style.display = 'flex';
-        document.getElementById('link-mode-text').textContent =
-            'Click the task that depends on another...';
-        document.getElementById('add-task-form').style.display = 'none';
-        document.getElementById('flow-content').classList.add('link-mode');
-    }
+    var dragging = false;
+    var sourceRow = null;
+    var sourceId = null;
+    var sourceHandle = null;
+    var card = content.closest('.card');
 
-    function cancel() {
-        state.active = false;
-        state.step = 0;
-        state.sourceId = null;
-        document.getElementById('link-mode-btn').classList.remove('active');
-        document.getElementById('link-mode-banner').style.display = 'none';
-        document.getElementById('flow-content').classList.remove('link-mode');
-        // Remove any selection highlights
-        document.querySelectorAll('.link-selected').forEach(function(el) {
-            el.classList.remove('link-selected');
-        });
-    }
-
-    function handleClick(e) {
-        if (!state.active) return;
-        // Find the closest element with a data-node-id
-        var el = e.target.closest('[data-node-id]');
-        if (!el) return;
-        var nodeId = el.getAttribute('data-node-id');
-        if (!nodeId) return;
-
-        // Don't intercept button clicks (toggle/delete)
-        if (e.target.closest('button')) return;
-
+    // --- Mousedown on .drag-handle starts the link gesture ---
+    content.addEventListener('mousedown', function(e) {
+        var handle = e.target.closest('.drag-handle');
+        if (!handle) return;
+        var row = handle.closest('[data-node-id]');
+        if (!row) return;
         e.preventDefault();
-        e.stopPropagation();
+        dragging = true;
+        sourceRow = row;
+        sourceHandle = handle;
+        sourceId = row.getAttribute('data-node-id');
+        row.classList.add('drag-source');
+        feedback.style.display = 'flex';
+        feedbackText.textContent = 'Release on another task to create dependency...';
+        line.style.display = 'block';
+        var rect = handle.getBoundingClientRect();
+        var cRect = card.getBoundingClientRect();
+        line.style.left = (rect.left + rect.width / 2 - cRect.left) + 'px';
+        line.style.top = (rect.top + rect.height / 2 - cRect.top) + 'px';
+        line.style.width = '0px';
+        line.style.transform = 'rotate(0deg)';
+    });
 
-        if (state.step === 1) {
-            // First click: select source (the dependent task)
-            state.sourceId = nodeId;
-            state.step = 2;
-            el.classList.add('link-selected');
-            document.getElementById('link-mode-text').textContent =
-                'Now click the task it depends on...';
-        } else if (state.step === 2) {
-            if (nodeId === state.sourceId) return; // can't depend on self
-            // Second click: select target and submit
+    // --- Mousemove: draw line + highlight targets ---
+    document.addEventListener('mousemove', function(e) {
+        if (!dragging) return;
+        // Update line
+        var handleRect = sourceHandle.getBoundingClientRect();
+        var cRect = card.getBoundingClientRect();
+        var x1 = handleRect.left + handleRect.width / 2 - cRect.left;
+        var y1 = handleRect.top + handleRect.height / 2 - cRect.top;
+        var x2 = e.clientX - cRect.left;
+        var y2 = e.clientY - cRect.top;
+        var dx = x2 - x1, dy = y2 - y1;
+        var len = Math.sqrt(dx * dx + dy * dy);
+        var angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        line.style.left = x1 + 'px';
+        line.style.top = y1 + 'px';
+        line.style.width = len + 'px';
+        line.style.transform = 'rotate(' + angle + 'deg)';
+
+        // Highlight drop target
+        content.querySelectorAll('.drop-target').forEach(function(el) {
+            el.classList.remove('drop-target');
+        });
+        var target = document.elementFromPoint(e.clientX, e.clientY);
+        if (target) {
+            var row = target.closest('[data-node-id]');
+            if (row && row.getAttribute('data-node-id') !== sourceId) {
+                row.classList.add('drop-target');
+            }
+        }
+    });
+
+    // --- Mouseup: complete or cancel ---
+    document.addEventListener('mouseup', function(e) {
+        if (!dragging) return;
+        var target = document.elementFromPoint(e.clientX, e.clientY);
+        var targetRow = target ? target.closest('[data-node-id]') : null;
+        var targetId = targetRow ? targetRow.getAttribute('data-node-id') : null;
+
+        if (targetId && targetId !== sourceId) {
+            // Create dependency: source depends on target
             var form = document.createElement('form');
             form.style.display = 'none';
-            form.method = 'POST';
-            form.action = '/artifacts/' + artifactId + '/flow/set-dependency';
-            form.setAttribute('hx-post', form.action);
+            form.setAttribute('hx-post',
+                '/artifacts/' + artifactId + '/flow/set-dependency');
             form.setAttribute('hx-target', '#flow-content');
             form.setAttribute('hx-swap', 'innerHTML');
-
             var s = document.createElement('input');
-            s.name = 'source_id'; s.value = state.sourceId;
+            s.name = 'source_id'; s.value = sourceId;
             var t = document.createElement('input');
-            t.name = 'target_id'; t.value = nodeId;
+            t.name = 'target_id'; t.value = targetId;
             form.appendChild(s);
             form.appendChild(t);
-
             document.body.appendChild(form);
             htmx.process(form);
             htmx.trigger(form, 'submit');
-
-            cancel();
-            // Clean up form after HTMX processes it
             setTimeout(function() { form.remove(); }, 500);
         }
+        cleanup();
+    });
+
+    // --- Escape key cancels ---
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && dragging) cleanup();
+    });
+
+    function cleanup() {
+        dragging = false;
+        sourceRow = null;
+        sourceId = null;
+        sourceHandle = null;
+        feedback.style.display = 'none';
+        line.style.display = 'none';
+        content.querySelectorAll('.drag-source').forEach(function(el) {
+            el.classList.remove('drag-source');
+        });
+        content.querySelectorAll('.drop-target').forEach(function(el) {
+            el.classList.remove('drop-target');
+        });
     }
-
-    document.getElementById('flow-content').addEventListener('click', handleClick, true);
-
-    window.flowLinkMode = { toggle: toggle, cancel: cancel };
 })();
 </script>
 
 <style>
 .flow-content { padding: 1rem 0; }
 .add-task-form { padding: 0.75rem 1rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }
-.flow-empty { padding: 2rem; text-align: center; color: #888; }
 
-/* Link mode */
-.link-mode-banner {
+/* Empty state */
+.flow-empty { padding: 2rem; text-align: center; color: #888; }
+.flow-empty p { margin: 0.25rem 0; }
+.flow-empty-hint { font-size: 0.9rem; color: #aaa; }
+
+/* Drag feedback banner */
+.drag-feedback {
     padding: 0.5rem 1rem;
     background: #dbeafe;
     border: 1px solid #93c5fd;
     border-radius: 4px;
     margin-bottom: 0.5rem;
-    display: flex;
     align-items: center;
-    justify-content: space-between;
     font-size: 0.9rem;
     color: #1e40af;
 }
-.flow-content.link-mode [data-node-id] { cursor: crosshair; }
-.flow-content.link-mode [data-node-id]:hover { background: #dbeafe !important; }
-.link-selected { background: #bfdbfe !important; outline: 2px solid #3b82f6; }
+
+/* Drag handle */
+.drag-handle {
+    cursor: grab; display: inline-block; margin-right: 0.4rem;
+    padding: 0.1rem 0.2rem; font-size: 0.85rem; opacity: 0.4;
+    user-select: none; border-radius: 3px;
+}
+.drag-handle:hover { opacity: 1; background: #e0e7ff; }
+[data-node-id].drag-source { background: #dbeafe !important; outline: 2px solid #3b82f6; }
+[data-node-id].drop-target { background: #d1fae5 !important; outline: 2px dashed #22c55e; }
+
+/* Drag connector line */
+.drag-line {
+    position: absolute; height: 2px; background: #3b82f6;
+    transform-origin: 0 50%; pointer-events: none; z-index: 100;
+}
+
+/* Dependency info in Gantt */
+.task-dep-info {
+    display: block; font-size: 0.75rem; color: #888;
+    font-weight: normal; font-style: italic;
+}
+
+/* Dependency chips in deps view */
+.dep-chip {
+    display: inline-flex; align-items: center; gap: 0.25rem;
+    background: #f0f4ff; border: 1px solid #c7d2fe; border-radius: 4px;
+    padding: 0.1rem 0.4rem; font-size: 0.8rem; margin-right: 0.25rem;
+}
+.dep-remove {
+    background: none; border: none; cursor: pointer; color: #999;
+    font-size: 0.9rem; padding: 0 0.15rem; line-height: 1;
+}
+.dep-remove:hover { color: #e11d48; }
 
 /* Gantt */
 .flow-gantt { width: 100%; border-collapse: collapse; }
@@ -217,10 +281,11 @@
 .flow-kanban { display: flex; gap: 1rem; min-height: 200px; }
 .kanban-column { flex: 1; background: #f8f8f8; border-radius: 8px; padding: 0.75rem; }
 .kanban-column h3 { margin: 0 0 0.75rem 0; font-size: 0.9rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
-.kanban-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; cursor: pointer; }
+.kanban-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; }
 .kanban-card:hover { border-color: #3b82f6; }
 .card-title { font-weight: 500; }
 .due-date { display: block; font-size: 0.8rem; color: #888; margin-top: 0.25rem; }
+.kanban-toggle { float: right; padding: 0 0.3rem; font-size: 0.75rem; }
 .kanban-empty { color: #aaa; font-size: 0.85rem; text-align: center; padding: 1rem; }
 
 /* Task actions row */

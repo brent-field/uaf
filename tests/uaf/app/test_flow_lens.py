@@ -155,6 +155,35 @@ class TestGanttView:
         assert "task-name" in view.content
         assert "My Task" in view.content
 
+    def test_drag_handle_and_row_data_node_id(self) -> None:
+        """Drag handles need data-node-id on the <tr> so the whole row is a drop zone."""
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "Draggable")
+
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="gantt")  # type: ignore[arg-type]
+        assert "drag-handle" in view.content
+        # data-node-id must be on the <tr> (not just <td>) for drop targeting
+        assert "<tr data-node-id=" in view.content
+
+    def test_gantt_shows_dependency_info(self) -> None:
+        """Gantt rows should show inline dependency info."""
+        sdb, session, art_id = _setup()
+        t1_id = _add_task(sdb, session, art_id, "Prerequisite")
+        t2_id = _add_task(sdb, session, art_id, "Follower")
+
+        dep = Edge(
+            id=EdgeId.generate(), source=t2_id, target=t1_id,
+            edge_type=EdgeType.DEPENDS_ON, created_at=utc_now(),
+        )
+        sdb.create_edge(session, dep)  # type: ignore[arg-type]
+
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="gantt")  # type: ignore[arg-type]
+        assert "task-dep-info" in view.content
+        assert "depends on:" in view.content
+        assert "Prerequisite" in view.content
+
 
 # ---------------------------------------------------------------------------
 # TestDependencyView
@@ -199,6 +228,35 @@ class TestDependencyView:
         view = lens.render(sdb, session, art_id, mode="deps")  # type: ignore[arg-type]
         # All dependency cells should show "none"
         assert view.content.count("&#8594;") == 0
+
+    def test_drag_handle_on_dep_rows(self) -> None:
+        """Deps view rows should have drag handles and data-node-id on <tr>."""
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "Task X")
+
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="deps")  # type: ignore[arg-type]
+        assert "drag-handle" in view.content
+        assert "<tr data-node-id=" in view.content
+
+    def test_dep_chip_with_remove_button(self) -> None:
+        """Dependencies should render as chips with remove buttons."""
+        sdb, session, art_id = _setup()
+        t1_id = _add_task(sdb, session, art_id, "Alpha")
+        t2_id = _add_task(sdb, session, art_id, "Beta")
+
+        dep = Edge(
+            id=EdgeId.generate(), source=t2_id, target=t1_id,
+            edge_type=EdgeType.DEPENDS_ON, created_at=utc_now(),
+        )
+        sdb.create_edge(session, dep)  # type: ignore[arg-type]
+
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="deps")  # type: ignore[arg-type]
+        assert "dep-chip" in view.content
+        assert "Alpha" in view.content
+        assert "dep-remove" in view.content
+        assert "remove-dependency" in view.content
 
 
 # ---------------------------------------------------------------------------
