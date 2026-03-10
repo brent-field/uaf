@@ -98,6 +98,8 @@ class FlowLens:
         match mode:
             case "gantt":
                 content = self._render_gantt(task_list, artifact_id, db, session)
+            case "list":
+                content = self._render_list(task_list, artifact_id)
             case "deps":
                 content = self._render_deps(task_list, artifact_id, db, session)
             case "dag":
@@ -212,6 +214,127 @@ class FlowLens:
             "<thead><tr><th>Task</th><th>Timeline</th>"
             "<th></th></tr></thead>"
             f'<tbody>{"".join(rows)}</tbody>'
+            "</table>"
+        )
+
+    def _render_list(
+        self, tasks: list[Task], artifact_id: NodeId,
+    ) -> str:
+        """Render List view — data-grid with full keyboard navigation."""
+        aid = artifact_id
+        hx = (
+            ' hx-target="#flow-content" hx-swap="innerHTML"'
+            ' hx-sync="closest table:replace"'
+        )
+
+        rows: list[str] = []
+        for ri, task in enumerate(tasks):
+            name = escape(task.title)
+            nid = task.meta.id
+            status_cls = f"status-{task.status}"
+            vals = f'{{"node_id":"{nid}","mode":"list"}}'
+
+            # Col 0: status toggle
+            c0 = (
+                f'<td><button data-row="{ri}" data-col="0"'
+                f' class="gc list-check {status_cls}"'
+                f' hx-post="/artifacts/{aid}/flow/toggle-task"'
+                f" hx-vals='{vals}'{hx}"
+                f' data-action="toggle">'
+                f"{_status_icon(task.status)}</button></td>"
+            )
+
+            # Col 1: title — uses custom "save" trigger to avoid
+            # blur-triggered swaps that destroy the focus target.
+            c1 = (
+                f'<td><input data-row="{ri}" data-col="1"'
+                f' class="gc list-cell-input {status_cls}"'
+                f' type="text" value="{name}" name="title"'
+                f' hx-post="/artifacts/{aid}/flow/update-task"'
+                f' hx-include="closest tr"'
+                f' hx-trigger="save"{hx}'
+                f' data-action="update" /></td>'
+            )
+
+            # Col 2: start date — uses custom "save" trigger like title
+            sd = (
+                task.start_date.strftime("%Y-%m-%d")
+                if task.start_date else ""
+            )
+            c2 = (
+                f'<td><input data-row="{ri}" data-col="2"'
+                f' class="gc list-cell-date"'
+                f' type="date" value="{sd}" name="start_date"'
+                f' hx-post="/artifacts/{aid}/flow/update-task-dates"'
+                f' hx-include="closest tr"'
+                f' hx-trigger="save"{hx}'
+                f' data-action="update" /></td>'
+            )
+
+            # Col 3: end date — uses custom "save" trigger like title
+            ed = (
+                task.end_date.strftime("%Y-%m-%d")
+                if task.end_date else ""
+            )
+            c3 = (
+                f'<td><input data-row="{ri}" data-col="3"'
+                f' class="gc list-cell-date"'
+                f' type="date" value="{ed}" name="end_date"'
+                f' hx-post="/artifacts/{aid}/flow/update-task-dates"'
+                f' hx-include="closest tr"'
+                f' hx-trigger="save"{hx}'
+                f' data-action="update" /></td>'
+            )
+
+            # Col 4: delete
+            c4 = (
+                f'<td><button data-row="{ri}" data-col="4"'
+                f' class="gc list-row-delete"'
+                f' hx-post="/artifacts/{aid}/flow/delete-task"'
+                f" hx-vals='{vals}'{hx}"
+                f' hx-confirm="Delete task?"'
+                f' data-action="delete">&times;</button></td>'
+            )
+
+            hidden = (
+                f'<td class="list-hidden">'
+                f'<input type="hidden" name="node_id" value="{nid}" />'
+                f'<input type="hidden" name="mode" value="list" />'
+                f"</td>"
+            )
+
+            rows.append(
+                f'<tr data-node-id="{nid}">'
+                f"{c0}{c1}{c2}{c3}{c4}{hidden}</tr>"
+            )
+
+        # New-row placeholder
+        nr = len(tasks)
+        new_row = (
+            f'<tr class="list-row-new">'
+            f"<td></td>"
+            f'<td><input data-row="{nr}" data-col="1"'
+            f' class="gc list-cell-input"'
+            f' type="text" name="title" placeholder="Add a task\u2026"'
+            f' hx-post="/artifacts/{aid}/flow/create-task"'
+            f" hx-vals='{{\"mode\":\"list\"}}'"
+            f' hx-trigger="keydown[key==\'Enter\']"'
+            f"{hx}"
+            f' data-action="create" /></td>'
+            f"<td></td><td></td><td></td>"
+            f"</tr>"
+        )
+
+        return (
+            '<table class="flow-list-grid" role="grid">'
+            "<thead><tr>"
+            '<th class="col-status"></th>'
+            "<th>Task</th>"
+            '<th class="col-date">Start</th>'
+            '<th class="col-date">End</th>'
+            '<th class="col-actions"></th>'
+            "</tr></thead>"
+            f'<tbody>{"".join(rows)}{new_row}</tbody>'
             "</table>"
         )
 
