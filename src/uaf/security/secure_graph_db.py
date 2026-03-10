@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from uaf.core.edges import EdgeType
-from uaf.core.errors import PermissionDeniedError
+from uaf.core.errors import PermissionDeniedError, RegistrationNotSupportedError
 from uaf.core.node_id import utc_now
 from uaf.core.nodes import Artifact, NodeType
 from uaf.core.operations import (
@@ -52,11 +52,14 @@ class SecureGraphDB:
         db: GraphDB | JournaledGraphDB,
         auth: AuthProvider,
         on_security_event: Callable[[dict[str, Any]], None] | None = None,
+        *,
+        resolver: PermissionResolver | None = None,
+        audit: AuditLog | None = None,
     ) -> None:
         self._db = db
         self._auth = auth
-        self._resolver = PermissionResolver()
-        self._audit = AuditLog()
+        self._resolver = resolver or PermissionResolver()
+        self._audit = audit or AuditLog()
         self._on_security_event = on_security_event
 
     # ------------------------------------------------------------------
@@ -73,6 +76,40 @@ class SecureGraphDB:
             token = self._auth.issue_token(principal)
         else:
             token = ""
+        return Session(principal=principal, token=token)
+
+    def register_principal(
+        self,
+        display_name: str,
+        password: str,
+        *,
+        roles: frozenset[Role] = frozenset(),
+    ) -> Session:
+        """Create a new principal, persist the event, and return a session.
+
+        Unlike calling ``auth.create_principal()`` directly, this method
+        ensures the ``create_principal`` security event is emitted so that
+        ``SecurityStore`` can persist the registration for replay on restart.
+        """
+        from uaf.security.auth import LocalAuthProvider
+
+        if not isinstance(self._auth, LocalAuthProvider):
+            msg = "Registration requires LocalAuthProvider"
+            raise RegistrationNotSupportedError(msg)
+
+        principal = self._auth.create_principal(
+            display_name, password, roles=roles,
+        )
+        password_hash = self._auth.get_password_hash(principal.id)
+        assert password_hash is not None  # just created
+        self._emit_security_event({
+            "type": "create_principal",
+            "principal_id": principal.id.value,
+            "display_name": principal.display_name,
+            "password_hash": password_hash,
+            "roles": [r.value for r in principal.roles],
+        })
+        token = self._auth.issue_token(principal)
         return Session(principal=principal, token=token)
 
     def system_session(self) -> Session:

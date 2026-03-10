@@ -34,11 +34,9 @@ def _build_stack(
         audit=audit,
     )
     sdb = SecureGraphDB(
-        db, auth, on_security_event=sec_store.record
+        db, auth, on_security_event=sec_store.record,
+        resolver=resolver, audit=audit,
     )
-    # Wire resolver and audit from the SecureGraphDB
-    sdb._resolver = resolver
-    sdb._audit = audit
     return sdb, sec_store, auth
 
 
@@ -50,7 +48,7 @@ class TestSecurityStorePrincipalPersistence:
         principal = auth.create_principal("alice", "password123", roles=frozenset({Role.OWNER}))
         # Manually record since create_principal is on auth, not SecureGraphDB
         sec_store.record_principal(
-            principal, auth._password_hashes[principal.id]
+            principal, auth.get_password_hash(principal.id) or ""
         )
         sec_store.close()
 
@@ -81,7 +79,7 @@ class TestSecurityStoreACLPersistence:
             "bob", "pass", roles=frozenset({Role.OWNER})
         )
         sec_store.record_principal(
-            principal, auth._password_hashes[principal.id]
+            principal, auth.get_password_hash(principal.id) or ""
         )
         session = sdb.authenticate(
             __import__("uaf.security.auth", fromlist=["PasswordCredentials"]).PasswordCredentials(
@@ -124,7 +122,7 @@ class TestSecurityStoreParentPersistence:
             "charlie", "pass", roles=frozenset({Role.OWNER})
         )
         sec_store.record_principal(
-            principal, auth._password_hashes[principal.id]
+            principal, auth.get_password_hash(principal.id) or ""
         )
         from uaf.security.auth import PasswordCredentials
 
@@ -179,7 +177,7 @@ class TestSecurityStoreAuditPersistence:
             "dave", "pass", roles=frozenset({Role.OWNER})
         )
         sec_store.record_principal(
-            principal, auth._password_hashes[principal.id]
+            principal, auth.get_password_hash(principal.id) or ""
         )
         from uaf.security.auth import PasswordCredentials
 
@@ -208,6 +206,44 @@ class TestSecurityStoreAuditPersistence:
         # Audit entries should be present
         entries = audit2.for_principal(principal.id)
         assert len(entries) > 0
+
+
+class TestSecurityStoreRegisterPrincipalRoundTrip:
+    """Test that register_principal persists via SecurityStore and survives rebuild."""
+
+    def test_register_then_rebuild_and_authenticate(self, tmp_path: Path) -> None:
+        """Full round-trip: register via SecureGraphDB → rebuild from scratch → login."""
+        from uaf.security.auth import PasswordCredentials
+
+        sdb, sec_store, auth = _build_stack(tmp_path)
+
+        # Register through SecureGraphDB (emits security event)
+        session = sdb.register_principal("eve", "s3cure!")
+        principal = session.principal
+        assert auth.get_principal(principal.id) is not None
+        sec_store.close()
+
+        # Rebuild everything from scratch
+        auth2 = LocalAuthProvider()
+        resolver2 = PermissionResolver()
+        audit2 = AuditLog()
+        sec_store2 = SecurityStore(
+            path=tmp_path / "security.jsonl",
+            auth=auth2,
+            resolver=resolver2,
+            audit=audit2,
+        )
+        sec_store2.replay()
+
+        # The principal should exist and authenticate with the same password
+        p = auth2.get_principal(principal.id)
+        assert p is not None
+        assert p.display_name == "eve"
+
+        authenticated = auth2.authenticate(
+            PasswordCredentials(principal_id=principal.id, password="s3cure!")
+        )
+        assert authenticated.id == principal.id
 
 
 class TestSecurityStoreCorruptLine:

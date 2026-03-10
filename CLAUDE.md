@@ -71,6 +71,10 @@ docs/         # Architecture and design documents
 - **AI-native:** Designed for Graph-RAG — AI agents navigate the graph, not read text
 - **Sovereignty:** EU/GDPR-compliant, local-first with CRDT sync
 
+## Workflow
+
+- **Use worktrees for feature work:** When implementing changes, use an isolated git worktree so the main working tree stays clean.
+
 ## Key Files
 
 - `agents.md` — Document index and table of contents for all project docs
