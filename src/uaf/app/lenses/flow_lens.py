@@ -40,10 +40,24 @@ _SUPPORTED = frozenset({NodeType.ARTIFACT, NodeType.TASK})
 # Status cycle for ToggleTask
 _STATUS_CYCLE = {"todo": "in_progress", "in_progress": "done", "done": "todo"}
 _STATUS_ICONS = {"todo": "&#9744;", "in_progress": "&#9634;", "done": "&#9745;"}
+_TOGGLE_LABELS = {
+    "todo": "Start &#x25B6;",
+    "in_progress": "Done &#x2713;",
+    "done": "Reopen &#x21A9;",
+}
 
 
 def _status_icon(status: str) -> str:
     return _STATUS_ICONS.get(status, "&#9744;")
+
+
+def _empty_state(hint: str) -> str:
+    return (
+        '<div class="flow-empty">'
+        "<p>No tasks yet</p>"
+        f'<p class="flow-empty-hint">{hint}</p>'
+        "</div>"
+    )
 
 
 class FlowLens:
@@ -113,12 +127,9 @@ class FlowLens:
     ) -> str:
         """Render Gantt view — task list left, bars/milestones right."""
         if not tasks:
-            return (
-                '<div class="flow-empty">'
-                '<p>No tasks yet</p>'
-                '<p class="flow-empty-hint">Click <strong>+ Task</strong> above to add'
-                " your first task, then drag between tasks to set dependencies.</p>"
-                "</div>"
+            return _empty_state(
+                "Click <strong>+ Task</strong> above to add your first task,"
+                " then drag between tasks to set dependencies."
             )
 
         # Build dependency map for inline display
@@ -210,12 +221,9 @@ class FlowLens:
     ) -> str:
         """Render dependency view — tasks as rows with arrows for DEPENDS_ON edges."""
         if not tasks:
-            return (
-                '<div class="flow-empty">'
-                '<p>No tasks yet</p>'
-                '<p class="flow-empty-hint">Click <strong>+ Task</strong> above to add'
-                " your first task, then drag between tasks to set dependencies.</p>"
-                "</div>"
+            return _empty_state(
+                "Click <strong>+ Task</strong> above to add your first task,"
+                " then drag between tasks to set dependencies."
             )
 
         # Build dependency map: task_id -> list of tasks it depends on
@@ -278,12 +286,8 @@ class FlowLens:
     ) -> str:
         """Render DAG view — nodes with directed edges."""
         if not tasks:
-            return (
-                '<div class="flow-empty">'
-                '<p>No tasks yet</p>'
-                '<p class="flow-empty-hint">Click <strong>+ Task</strong> above to add'
-                " your first task.</p>"
-                "</div>"
+            return _empty_state(
+                "Click <strong>+ Task</strong> above to add your first task."
             )
 
         # Topological sort
@@ -318,13 +322,6 @@ class FlowLens:
             col = task.status if task.status in columns else "todo"
             columns[col].append(task)
 
-        # Next-status labels for toggle button
-        _next_label = {
-            "todo": "Start &#x25B6;",
-            "in_progress": "Done &#x2713;",
-            "done": "Reopen &#x21A9;",
-        }
-
         col_html: list[str] = []
         labels = {"todo": "To Do", "in_progress": "In Progress", "done": "Done"}
         for status, label in labels.items():
@@ -342,7 +339,7 @@ class FlowLens:
                     nid = task.meta.id
                     toggle_btn = ""
                     if artifact_id is not None:
-                        btn_label = _next_label.get(task.status, "&#x21bb;")
+                        btn_label = _TOGGLE_LABELS.get(task.status, "&#x21bb;")
                         toggle_btn = (
                             f'<button class="btn btn-sm kanban-toggle"'
                             f' hx-post="/artifacts/{artifact_id}/flow/toggle-task"'

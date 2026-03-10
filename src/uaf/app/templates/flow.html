@@ -91,6 +91,8 @@
     var dragging = false;
     var sourceRow = null;
     var sourceId = null;
+    var sourceHandle = null;
+    var card = content.closest('.card');
 
     // --- Mousedown on .drag-handle starts the link gesture ---
     content.addEventListener('mousedown', function(e) {
@@ -101,13 +103,14 @@
         e.preventDefault();
         dragging = true;
         sourceRow = row;
+        sourceHandle = handle;
         sourceId = row.getAttribute('data-node-id');
         row.classList.add('drag-source');
         feedback.style.display = 'flex';
         feedbackText.textContent = 'Release on another task to create dependency...';
         line.style.display = 'block';
         var rect = handle.getBoundingClientRect();
-        var cRect = content.closest('.card').getBoundingClientRect();
+        var cRect = card.getBoundingClientRect();
         line.style.left = (rect.left + rect.width / 2 - cRect.left) + 'px';
         line.style.top = (rect.top + rect.height / 2 - cRect.top) + 'px';
         line.style.width = '0px';
@@ -118,8 +121,8 @@
     document.addEventListener('mousemove', function(e) {
         if (!dragging) return;
         // Update line
-        var handleRect = sourceRow.querySelector('.drag-handle').getBoundingClientRect();
-        var cRect = content.closest('.card').getBoundingClientRect();
+        var handleRect = sourceHandle.getBoundingClientRect();
+        var cRect = card.getBoundingClientRect();
         var x1 = handleRect.left + handleRect.width / 2 - cRect.left;
         var y1 = handleRect.top + handleRect.height / 2 - cRect.top;
         var x2 = e.clientX - cRect.left;
@@ -183,6 +186,7 @@
         dragging = false;
         sourceRow = null;
         sourceId = null;
+        sourceHandle = null;
         feedback.style.display = 'none';
         line.style.display = 'none';
         content.querySelectorAll('.drag-source').forEach(function(el) {
