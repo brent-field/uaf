@@ -599,3 +599,275 @@ class TestFlowLensActionTypes:
         a = SetDateRange(task_id=nid, start_date=start, end_date=end)
         assert a.start_date == start
         assert a.end_date == end
+
+
+# ---------------------------------------------------------------------------
+# TestListView
+# ---------------------------------------------------------------------------
+
+
+class TestListView:
+    """Tests for the List view HTML structure and interactivity."""
+
+    def test_renders_table_grid(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "Task A")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert "flow-list-grid" in view.content
+        assert "<table" in view.content
+
+    def test_has_column_headers(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert ">Task<" in view.content
+        assert ">Start<" in view.content
+        assert ">End<" in view.content
+
+    def test_task_row_has_title_input(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "Edit Me")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert 'value="Edit Me"' in view.content
+        assert 'type="text"' in view.content
+
+    def test_task_row_has_date_inputs(self) -> None:
+        """Each task row must have separate start and end date inputs."""
+        sdb, session, art_id = _setup()
+        now = datetime.now(tz=UTC)
+        _add_task(
+            sdb, session, art_id, "Dated",
+            start_date=now, end_date=now + timedelta(days=3),
+        )
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert 'name="start_date"' in view.content
+        assert 'name="end_date"' in view.content
+        assert view.content.count('type="date"') == 2
+
+    def test_date_inputs_have_grid_cell_class(self) -> None:
+        """Date inputs must have the gc class for keyboard navigation."""
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        # Both date cells should have the gc (grid-cell) class
+        assert 'class="gc list-cell-date"' in view.content
+
+    def test_date_inputs_have_data_row_and_col(self) -> None:
+        """Date inputs must have data-row and data-col for JS navigation."""
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert 'data-row="0" data-col="2"' in view.content  # start
+        assert 'data-row="0" data-col="3"' in view.content  # end
+
+    def test_no_input_in_grid_triggers_htmx_on_change(self) -> None:
+        """No input in the list grid should use hx-trigger='change'.
+
+        The 'change' event fires on blur, which causes HTMX to replace the
+        entire grid when the user clicks or tabs to another cell — destroying
+        the destination cell before it receives focus.  All saves must use
+        a custom event (e.g. 'save') dispatched explicitly by JS.
+        """
+        sdb, session, art_id = _setup()
+        now = datetime.now(tz=UTC)
+        _add_task(
+            sdb, session, art_id, "T",
+            start_date=now, end_date=now + timedelta(days=3),
+        )
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        import re
+
+        # Find all <input> tags that are NOT hidden and NOT the new-row
+        inputs = re.findall(
+            r'<input[^>]*class="gc[^"]*"[^>]*/>',
+            view.content,
+        )
+        assert len(inputs) >= 3, f"Expected ≥3 grid inputs, got {len(inputs)}"
+        for inp in inputs:
+            assert 'hx-trigger="change"' not in inp, (
+                f"Grid input must not use hx-trigger=\"change\" (fires on blur "
+                f"and destroys focus target):\n{inp}"
+            )
+
+    def test_new_row_placeholder_exists(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert "list-row-new" in view.content
+        assert "Add a task" in view.content
+
+    def test_new_row_triggers_on_enter(self) -> None:
+        sdb, session, art_id = _setup()
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert "create-task" in view.content
+        assert "keydown" in view.content  # hx-trigger includes Enter key
+
+    def test_empty_project_shows_new_row(self) -> None:
+        """Even with no tasks, the new-row input should be present."""
+        sdb, session, art_id = _setup()
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert "list-row-new" in view.content
+        assert "Add a task" in view.content
+
+    def test_status_toggle_includes_mode(self) -> None:
+        """Status toggle must pass mode=list so re-render stays in list view."""
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert '"mode":"list"' in view.content
+
+    def test_delete_button_includes_mode(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        # The hx-vals on delete should include mode
+        assert "delete-task" in view.content
+        # mode=list should appear in vals for both toggle and delete
+        assert view.content.count('"mode":"list"') >= 2
+
+    def test_multiple_tasks_have_sequential_data_rows(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "A")
+        _add_task(sdb, session, art_id, "B")
+        _add_task(sdb, session, art_id, "C")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert 'data-row="0"' in view.content
+        assert 'data-row="1"' in view.content
+        assert 'data-row="2"' in view.content
+        # New row placeholder should be row 3
+        assert 'data-row="3"' in view.content
+
+
+class TestListViewIntegration:
+    """Integration tests: hit the actual HTTP routes via TestClient
+    and verify the HTML that arrives in the browser."""
+
+    @staticmethod
+    def _make_client() -> tuple[object, str, str]:
+        """Create app + client + project artifact, return (client, token, artifact_id)."""
+        from fastapi.testclient import TestClient
+
+        from uaf.app.api import create_app
+        from uaf.app.lenses import LensRegistry
+
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(FlowLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+
+        # Register & get token
+        resp = client.post(
+            "/api/auth/register",
+            json={"display_name": "Tester", "password": "pass123"},
+        )
+        token = resp.json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Create a project artifact
+        resp = client.post(
+            "/api/artifacts",
+            json={"title": "Test Project", "artifact_type": "project"},
+            headers=headers,
+        )
+        aid = resp.json()["id"]
+
+        return client, token, aid
+
+    def test_list_view_partial_returns_grid_html(self) -> None:
+        """GET /artifacts/{id}/flow/view?mode=list must return the grid table."""
+        client, token, aid = self._make_client()
+        resp = client.get(
+            f"/artifacts/{aid}/flow/view?mode=list",
+            cookies={"uaf_token": token},
+        )
+        assert resp.status_code == 200
+        assert "flow-list-grid" in resp.text
+
+    def test_create_task_returns_list_mode(self) -> None:
+        """POST create-task with mode=list must return list HTML, not gantt."""
+        client, token, aid = self._make_client()
+        resp = client.post(
+            f"/artifacts/{aid}/flow/create-task",
+            data={"title": "New Task", "mode": "list"},
+            cookies={"uaf_token": token},
+        )
+        assert resp.status_code == 200
+        html = resp.text
+        assert "flow-list-grid" in html, "create-task with mode=list returned non-list HTML"
+        assert "New Task" in html
+
+    def test_create_task_list_has_date_inputs_for_new_task(self) -> None:
+        """After creating a task, the list view must have date inputs for it."""
+        client, token, aid = self._make_client()
+        resp = client.post(
+            f"/artifacts/{aid}/flow/create-task",
+            data={"title": "Dated Task", "mode": "list"},
+            cookies={"uaf_token": token},
+        )
+        html = resp.text
+        assert 'type="date"' in html, "New task row must have date inputs"
+        assert 'name="start_date"' in html
+        assert 'name="end_date"' in html
+
+    def test_toggle_task_returns_list_mode(self) -> None:
+        """POST toggle-task with mode=list must re-render as list."""
+        client, token, aid = self._make_client()
+        # Create a task first
+        resp = client.post(
+            f"/artifacts/{aid}/flow/create-task",
+            data={"title": "Toggle Me", "mode": "list"},
+            cookies={"uaf_token": token},
+        )
+        # Find the node_id from the HTML (hidden input)
+        import re
+
+        match = re.search(r'name="node_id" value="([^"]+)"', resp.text)
+        assert match, "Could not find node_id in list HTML"
+        node_id = match.group(1)
+
+        resp = client.post(
+            f"/artifacts/{aid}/flow/toggle-task",
+            data={"node_id": node_id, "mode": "list"},
+            cookies={"uaf_token": token},
+        )
+        assert "flow-list-grid" in resp.text, "toggle-task with mode=list returned non-list HTML"
+
+    def test_no_change_trigger_in_list_partial(self) -> None:
+        """The list view partial must not have hx-trigger='change' on any
+        grid input. This is the root cause of the tab/click bug: change fires
+        on blur, triggering an HTMX swap that destroys the focus target."""
+        client, token, aid = self._make_client()
+        # Create a task so we have a real row with all inputs
+        resp = client.post(
+            f"/artifacts/{aid}/flow/create-task",
+            data={"title": "Check Triggers", "mode": "list"},
+            cookies={"uaf_token": token},
+        )
+        html = resp.text
+        import re
+
+        # Find all grid-cell inputs (class="gc ...")
+        gc_inputs = re.findall(r'<input[^>]*class="gc[^"]*"[^>]*/>', html)
+        assert len(gc_inputs) >= 3, (
+            f"Expected ≥3 grid-cell inputs (title + start + end), got {len(gc_inputs)}"
+        )
+        for inp in gc_inputs:
+            assert 'hx-trigger="change"' not in inp, (
+                f"Grid input must not use hx-trigger=\"change\":\n{inp}"
+            )

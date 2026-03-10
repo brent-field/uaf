@@ -1009,13 +1009,15 @@ def flow_create_task(
     title: str = Form(...),
     start_date: str = Form(""),
     end_date: str = Form(""),
+    mode: str = Form("gantt"),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
     """Create a task and return updated flow view."""
-    from datetime import UTC, datetime
+    from datetime import UTC, datetime, timedelta
 
     from uaf.app.lenses.actions import CreateTask
+    from uaf.app.lenses.flow_lens import FlowLens
 
     session = _require_session(request, db)
     aid = NodeId(value=uuid.UUID(artifact_id))
@@ -1023,20 +1025,21 @@ def flow_create_task(
     children = db.get_children(session, aid)
     position = len(children)
 
-    sd = (
-        datetime.strptime(start_date, "%Y-%m-%d").replace(
-            tzinfo=UTC,
-        )
-        if start_date
-        else None
-    )
-    ed = (
-        datetime.strptime(end_date, "%Y-%m-%d").replace(
-            tzinfo=UTC,
-        )
-        if end_date
-        else None
-    )
+    if start_date:
+        sd = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UTC)
+    elif mode == "list":
+        sd = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        sd = None
+
+    if end_date:
+        ed = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=UTC)
+    elif mode == "list":
+        ed = datetime.now(tz=UTC).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        ) + timedelta(days=7)
+    else:
+        ed = None
 
     lens = registry.get("flow")
     if lens is not None:
@@ -1050,7 +1053,10 @@ def flow_create_task(
                 end_date=ed,
             ),
         )
-        view = lens.render(db, session, aid)
+        if isinstance(lens, FlowLens):
+            view = lens.render(db, session, aid, mode=mode)
+        else:
+            view = lens.render(db, session, aid)
         return HTMLResponse(view.content)
     return HTMLResponse("")
 
@@ -1063,11 +1069,13 @@ def flow_toggle_task(
     request: Request,
     artifact_id: str,
     node_id: str = Form(...),
+    mode: str = Form("gantt"),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
     """Toggle task status and return updated flow view."""
     from uaf.app.lenses.actions import ToggleTask
+    from uaf.app.lenses.flow_lens import FlowLens
 
     session = _require_session(request, db)
     aid = NodeId(value=uuid.UUID(artifact_id))
@@ -1076,9 +1084,111 @@ def flow_toggle_task(
     lens = registry.get("flow")
     if lens is not None:
         lens.apply_action(db, session, aid, ToggleTask(task_id=nid))
-        view = lens.render(db, session, aid)
+        if isinstance(lens, FlowLens):
+            view = lens.render(db, session, aid, mode=mode)
+        else:
+            view = lens.render(db, session, aid)
         return HTMLResponse(view.content)
     return HTMLResponse("")
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/update-task",
+    response_class=HTMLResponse,
+)
+def flow_update_task(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    title: str = Form(...),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Update a task's title inline and return updated flow view."""
+    from uaf.app.lenses.actions import UpdateTask
+    from uaf.app.lenses.flow_lens import FlowLens
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    nid = NodeId(value=uuid.UUID(node_id))
+
+    lens = registry.get("flow")
+    if lens is not None and isinstance(lens, FlowLens):
+        lens.apply_action(db, session, aid, UpdateTask(task_id=nid, title=title))
+        view = lens.render(db, session, aid, mode="list")
+        return HTMLResponse(view.content)
+    return HTMLResponse("")
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/update-task-dates",
+    response_class=HTMLResponse,
+)
+def flow_update_task_dates(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    start_date: str = Form(""),
+    end_date: str = Form(""),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Update a task's date range inline and return updated flow view."""
+    from datetime import UTC, datetime
+
+    from uaf.app.lenses.actions import SetDateRange
+    from uaf.app.lenses.flow_lens import FlowLens
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    nid = NodeId(value=uuid.UUID(node_id))
+
+    lens = registry.get("flow")
+    if not isinstance(lens, FlowLens):
+        return HTMLResponse("")
+    if start_date and end_date:
+        sd = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UTC)
+        ed = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=UTC)
+        lens.apply_action(
+            db, session, aid,
+            SetDateRange(task_id=nid, start_date=sd, end_date=ed),
+        )
+    view = lens.render(db, session, aid, mode="list")
+    return HTMLResponse(view.content)
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/update-task-due",
+    response_class=HTMLResponse,
+)
+def flow_update_task_due(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    due_date: str = Form(""),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Update a task's due date inline and return updated list view."""
+    from datetime import UTC, datetime
+
+    from uaf.app.lenses.actions import SetDueDate
+    from uaf.app.lenses.flow_lens import FlowLens
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    nid = NodeId(value=uuid.UUID(node_id))
+
+    lens = registry.get("flow")
+    if not isinstance(lens, FlowLens):
+        return HTMLResponse("")
+    dd = (
+        datetime.strptime(due_date, "%Y-%m-%d").replace(tzinfo=UTC)
+        if due_date else None
+    )
+    lens.apply_action(db, session, aid, SetDueDate(task_id=nid, due_date=dd))
+    view = lens.render(db, session, aid, mode="list")
+    return HTMLResponse(view.content)
 
 
 @router.post(
@@ -1154,10 +1264,13 @@ def flow_delete_task(
     request: Request,
     artifact_id: str,
     node_id: str = Form(...),
+    mode: str = Form("gantt"),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
     """Delete a task and return updated flow view."""
+    from uaf.app.lenses.flow_lens import FlowLens
+
     session = _require_session(request, db)
     aid = NodeId(value=uuid.UUID(artifact_id))
     nid = NodeId(value=uuid.UUID(node_id))
@@ -1167,6 +1280,9 @@ def flow_delete_task(
         lens.apply_action(
             db, session, aid, DeleteNode(node_id=nid),
         )
-        view = lens.render(db, session, aid)
+        if isinstance(lens, FlowLens):
+            view = lens.render(db, session, aid, mode=mode)
+        else:
+            view = lens.render(db, session, aid)
         return HTMLResponse(view.content)
     return HTMLResponse("")
