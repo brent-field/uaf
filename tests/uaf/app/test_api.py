@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi.testclient import TestClient
 
 from uaf.app.api import create_app
@@ -11,6 +13,10 @@ from uaf.app.lenses.grid_lens import GridLens
 from uaf.db.graph_db import GraphDB
 from uaf.security.auth import LocalAuthProvider, PasswordCredentials
 from uaf.security.secure_graph_db import SecureGraphDB
+from uaf.security.security_store import SecurityStore
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _setup() -> tuple[TestClient, SecureGraphDB, str]:
@@ -361,3 +367,72 @@ class TestImportExport:
             headers=_auth(token),
         )
         assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Persistent login session tests
+# ---------------------------------------------------------------------------
+
+
+def _boot_persistent(
+    store_dir: Path,
+) -> tuple[TestClient, SecurityStore]:
+    """Boot a full persistent stack and return (client, security_store)."""
+    from uaf.db.journaled_graph_db import JournaledGraphDB
+    from uaf.db.store import Store, StoreConfig
+    from uaf.security.acl import PermissionResolver
+    from uaf.security.audit import AuditLog
+
+    store = Store.open_or_create(StoreConfig(root=store_dir))
+    db = JournaledGraphDB(store)
+    auth = LocalAuthProvider(jwt_secret="test-secret")
+    resolver = PermissionResolver()
+    audit = AuditLog()
+    sec_store = SecurityStore(
+        path=store_dir / "security.jsonl",
+        auth=auth, resolver=resolver, audit=audit,
+    )
+    sec_store.replay()
+    sdb = SecureGraphDB(
+        db, auth, on_security_event=sec_store.record,
+        resolver=resolver, audit=audit,
+    )
+    registry = LensRegistry()
+    registry.register(DocLens())
+    registry.register(GridLens())
+    app = create_app(sdb, registry)
+    return TestClient(app), sec_store
+
+
+class TestPersistentLogin:
+    """Verify that register → restart → login works with persistent storage."""
+
+    def test_register_restart_login(self, tmp_path: Path) -> None:
+        """Register via API, rebuild stack from disk, login with same creds."""
+        store_dir = tmp_path / "store"
+
+        # --- first boot ---
+        client, sec_store = _boot_persistent(store_dir)
+
+        resp = client.post(
+            "/api/auth/register",
+            json={"display_name": "Persist", "password": "pw123"},
+        )
+        assert resp.status_code == 200
+        principal_id = resp.json()["principal_id"]
+        sec_store.close()
+
+        # --- second boot (simulate restart) ---
+        client2, _sec_store2 = _boot_persistent(store_dir)
+
+        resp = client2.post(
+            "/api/auth/login",
+            json={"principal_id": principal_id, "password": "pw123"},
+        )
+        assert resp.status_code == 200
+        token = resp.json()["token"]
+        assert resp.json()["display_name"] == "Persist"
+
+        resp = client2.get("/api/auth/me", headers=_auth(token))
+        assert resp.status_code == 200
+        assert resp.json()["principal_id"] == principal_id

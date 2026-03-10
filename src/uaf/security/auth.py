@@ -81,6 +81,17 @@ class LocalAuthProvider:
         self._password_hashes[principal.id] = self._hasher.hash(password)
         return principal
 
+    def get_password_hash(self, principal_id: PrincipalId) -> str | None:
+        """Return the stored password hash for a principal, or None."""
+        return self._password_hashes.get(principal_id)
+
+    def restore_principal(
+        self, principal: Principal, password_hash: str,
+    ) -> None:
+        """Restore a principal from persisted state (used during replay)."""
+        self._principals[principal.id] = principal
+        self._password_hashes[principal.id] = password_hash
+
     def authenticate(self, credentials: Credentials) -> Principal:
         """Authenticate with either password or token credentials."""
         match credentials:

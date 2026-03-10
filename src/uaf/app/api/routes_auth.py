@@ -11,7 +11,7 @@ from uaf.app.api.schemas import (
     RegisterRequest,
     TokenResponse,
 )
-from uaf.core.errors import AuthenticationError
+from uaf.core.errors import AuthenticationError, RegistrationNotSupportedError
 from uaf.security.auth import PasswordCredentials
 from uaf.security.primitives import PrincipalId
 from uaf.security.secure_graph_db import SecureGraphDB, Session
@@ -41,16 +41,10 @@ def login(body: LoginRequest, db: SecureGraphDB = Depends(get_db)) -> TokenRespo
 @router.post("/register", response_model=TokenResponse)
 def register(body: RegisterRequest, db: SecureGraphDB = Depends(get_db)) -> TokenResponse:
     """Create a new principal and return a session token."""
-    from uaf.security.auth import LocalAuthProvider
-
-    auth = db._auth
-    if not isinstance(auth, LocalAuthProvider):
-        raise HTTPException(status_code=501, detail="Registration not supported")
-
-    principal = auth.create_principal(body.display_name, body.password)
-    session = db.authenticate(
-        PasswordCredentials(principal_id=principal.id, password=body.password)
-    )
+    try:
+        session = db.register_principal(body.display_name, body.password)
+    except RegistrationNotSupportedError as e:
+        raise HTTPException(status_code=501, detail=str(e)) from e
     return TokenResponse(
         token=session.token,
         principal_id=session.principal.id.value,

@@ -35,3 +35,7 @@ class PermissionDeniedError(UAFError):
 
 class AuthenticationError(UAFError):
     """Raised when authentication fails."""
+
+
+class RegistrationNotSupportedError(UAFError):
+    """Raised when registration is attempted on an unsupported auth provider."""

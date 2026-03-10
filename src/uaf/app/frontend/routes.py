@@ -257,10 +257,11 @@ def register_submit(
     db: SecureGraphDB = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
     """Handle register form submission."""
-    from uaf.security.auth import LocalAuthProvider
+    from uaf.core.errors import RegistrationNotSupportedError
 
-    auth = db._auth
-    if not isinstance(auth, LocalAuthProvider):
+    try:
+        session = db.register_principal(display_name, password)
+    except RegistrationNotSupportedError:
         ctx: dict[str, Any] = {
             "request": request,
             "mode": "register",
@@ -269,10 +270,6 @@ def register_submit(
         }
         return templates.TemplateResponse("login.html", ctx)
 
-    principal = auth.create_principal(display_name, password)
-    session = db.authenticate(
-        PasswordCredentials(principal_id=principal.id, password=password)
-    )
     response = RedirectResponse(url="/dashboard", status_code=303)
     response.set_cookie("uaf_token", session.token, httponly=True, samesite="lax")
     return response

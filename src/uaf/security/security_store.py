@@ -114,8 +114,7 @@ class SecurityStore:
             display_name=event["display_name"],
             roles=roles,
         )
-        self._auth._principals[pid] = principal
-        self._auth._password_hashes[pid] = event["password_hash"]
+        self._auth.restore_principal(principal, event["password_hash"])
 
     def _replay_register_artifact(self, event: dict[str, Any]) -> None:
         nid = NodeId(value=uuid.UUID(event["artifact_id"]))
