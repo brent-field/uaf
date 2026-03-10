@@ -151,7 +151,7 @@ class FlowLens:
             # Left side: task name + drag handle + dep info
             left = (
                 f'<td class="task-name {status_cls}">'
-                f'<span class="drag-handle" draggable="true" title="Drag to link dependency">'
+                f'<span class="drag-handle" title="Drag to link dependency">'
                 f"&#x1f517;</span>"
                 f"{name}{dep_sub}</td>"
             )
@@ -257,7 +257,7 @@ class FlowLens:
             rows.append(
                 f'<tr data-node-id="{nid}">'
                 f'<td class="task-name">'
-                f'<span class="drag-handle" draggable="true"'
+                f'<span class="drag-handle"'
                 f' title="Drag to link dependency">&#x1f517;</span>'
                 f"{name}</td>"
                 f'<td class="dep-arrows" data-deps="{dep_str}">'

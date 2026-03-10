@@ -73,6 +73,8 @@
         <span id="drag-feedback-text"></span>
     </div>
 
+    <div id="drag-line" class="drag-line" style="display:none;"></div>
+
     <div id="flow-content" class="flow-content">
         {{ flow_html | safe }}
     </div>
@@ -81,83 +83,108 @@
 <script>
 (function() {
     var artifactId = '{{ artifact_id }}';
-    var dragSourceId = null;
     var content = document.getElementById('flow-content');
     var feedback = document.getElementById('drag-feedback');
     var feedbackText = document.getElementById('drag-feedback-text');
+    var line = document.getElementById('drag-line');
 
-    // --- Drag start: from .drag-handle ---
-    content.addEventListener('dragstart', function(e) {
+    var dragging = false;
+    var sourceRow = null;
+    var sourceId = null;
+
+    // --- Mousedown on .drag-handle starts the link gesture ---
+    content.addEventListener('mousedown', function(e) {
         var handle = e.target.closest('.drag-handle');
         if (!handle) return;
         var row = handle.closest('[data-node-id]');
         if (!row) return;
-        dragSourceId = row.getAttribute('data-node-id');
-        e.dataTransfer.effectAllowed = 'link';
-        e.dataTransfer.setData('text/plain', dragSourceId);
+        e.preventDefault();
+        dragging = true;
+        sourceRow = row;
+        sourceId = row.getAttribute('data-node-id');
         row.classList.add('drag-source');
         feedback.style.display = 'flex';
-        feedbackText.textContent = 'Drop on another task to create dependency...';
+        feedbackText.textContent = 'Release on another task to create dependency...';
+        line.style.display = 'block';
+        var rect = handle.getBoundingClientRect();
+        var cRect = content.closest('.card').getBoundingClientRect();
+        line.style.left = (rect.left + rect.width / 2 - cRect.left) + 'px';
+        line.style.top = (rect.top + rect.height / 2 - cRect.top) + 'px';
+        line.style.width = '0px';
+        line.style.transform = 'rotate(0deg)';
     });
 
-    // --- Drag over: highlight potential targets ---
-    content.addEventListener('dragover', function(e) {
-        if (!dragSourceId) return;
-        var target = e.target.closest('[data-node-id]');
-        if (!target) return;
-        var targetId = target.getAttribute('data-node-id');
-        if (targetId === dragSourceId) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'link';
+    // --- Mousemove: draw line + highlight targets ---
+    document.addEventListener('mousemove', function(e) {
+        if (!dragging) return;
+        // Update line
+        var handleRect = sourceRow.querySelector('.drag-handle').getBoundingClientRect();
+        var cRect = content.closest('.card').getBoundingClientRect();
+        var x1 = handleRect.left + handleRect.width / 2 - cRect.left;
+        var y1 = handleRect.top + handleRect.height / 2 - cRect.top;
+        var x2 = e.clientX - cRect.left;
+        var y2 = e.clientY - cRect.top;
+        var dx = x2 - x1, dy = y2 - y1;
+        var len = Math.sqrt(dx * dx + dy * dy);
+        var angle = Math.atan2(dy, dx) * 180 / Math.PI;
+        line.style.left = x1 + 'px';
+        line.style.top = y1 + 'px';
+        line.style.width = len + 'px';
+        line.style.transform = 'rotate(' + angle + 'deg)';
+
         // Highlight drop target
         content.querySelectorAll('.drop-target').forEach(function(el) {
             el.classList.remove('drop-target');
         });
-        target.classList.add('drop-target');
+        var target = document.elementFromPoint(e.clientX, e.clientY);
+        if (target) {
+            var row = target.closest('[data-node-id]');
+            if (row && row.getAttribute('data-node-id') !== sourceId) {
+                row.classList.add('drop-target');
+            }
+        }
     });
 
-    // --- Drag leave: clear highlight ---
-    content.addEventListener('dragleave', function(e) {
-        var target = e.target.closest('[data-node-id]');
-        if (target) target.classList.remove('drop-target');
-    });
+    // --- Mouseup: complete or cancel ---
+    document.addEventListener('mouseup', function(e) {
+        if (!dragging) return;
+        var target = document.elementFromPoint(e.clientX, e.clientY);
+        var targetRow = target ? target.closest('[data-node-id]') : null;
+        var targetId = targetRow ? targetRow.getAttribute('data-node-id') : null;
 
-    // --- Drop: create dependency ---
-    content.addEventListener('drop', function(e) {
-        e.preventDefault();
-        var target = e.target.closest('[data-node-id]');
-        if (!target || !dragSourceId) { cleanup(); return; }
-        var targetId = target.getAttribute('data-node-id');
-        if (targetId === dragSourceId) { cleanup(); return; }
-
-        // POST: source (the dragged task) depends on target (the drop task)
-        var form = document.createElement('form');
-        form.style.display = 'none';
-        form.setAttribute('hx-post',
-            '/artifacts/' + artifactId + '/flow/set-dependency');
-        form.setAttribute('hx-target', '#flow-content');
-        form.setAttribute('hx-swap', 'innerHTML');
-
-        var s = document.createElement('input');
-        s.name = 'source_id'; s.value = dragSourceId;
-        var t = document.createElement('input');
-        t.name = 'target_id'; t.value = targetId;
-        form.appendChild(s);
-        form.appendChild(t);
-
-        document.body.appendChild(form);
-        htmx.process(form);
-        htmx.trigger(form, 'submit');
-        setTimeout(function() { form.remove(); }, 500);
+        if (targetId && targetId !== sourceId) {
+            // Create dependency: source depends on target
+            var form = document.createElement('form');
+            form.style.display = 'none';
+            form.setAttribute('hx-post',
+                '/artifacts/' + artifactId + '/flow/set-dependency');
+            form.setAttribute('hx-target', '#flow-content');
+            form.setAttribute('hx-swap', 'innerHTML');
+            var s = document.createElement('input');
+            s.name = 'source_id'; s.value = sourceId;
+            var t = document.createElement('input');
+            t.name = 'target_id'; t.value = targetId;
+            form.appendChild(s);
+            form.appendChild(t);
+            document.body.appendChild(form);
+            htmx.process(form);
+            htmx.trigger(form, 'submit');
+            setTimeout(function() { form.remove(); }, 500);
+        }
         cleanup();
     });
 
-    // --- Drag end: cleanup ---
-    content.addEventListener('dragend', function() { cleanup(); });
+    // --- Escape key cancels ---
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && dragging) cleanup();
+    });
 
     function cleanup() {
-        dragSourceId = null;
+        dragging = false;
+        sourceRow = null;
+        sourceId = null;
         feedback.style.display = 'none';
+        line.style.display = 'none';
         content.querySelectorAll('.drag-source').forEach(function(el) {
             el.classList.remove('drag-source');
         });
@@ -192,11 +219,18 @@
 /* Drag handle */
 .drag-handle {
     cursor: grab; display: inline-block; margin-right: 0.4rem;
-    font-size: 0.85rem; opacity: 0.4; user-select: none;
+    padding: 0.1rem 0.2rem; font-size: 0.85rem; opacity: 0.4;
+    user-select: none; border-radius: 3px;
 }
-.drag-handle:hover { opacity: 1; }
+.drag-handle:hover { opacity: 1; background: #e0e7ff; }
 [data-node-id].drag-source { background: #dbeafe !important; outline: 2px solid #3b82f6; }
 [data-node-id].drop-target { background: #d1fae5 !important; outline: 2px dashed #22c55e; }
+
+/* Drag connector line */
+.drag-line {
+    position: absolute; height: 2px; background: #3b82f6;
+    transform-origin: 0 50%; pointer-events: none; z-index: 100;
+}
 
 /* Dependency info in Gantt */
 .task-dep-info {
