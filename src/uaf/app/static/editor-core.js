@@ -2,11 +2,17 @@ var UAF = window.UAF || {};
 
 UAF.debounce = function(fn, ms) {
     var timer;
-    return function() {
-        var ctx = this, args = arguments;
+    var lastCtx, lastArgs;
+    var wrapper = function() {
+        lastCtx = this;
+        lastArgs = arguments;
         clearTimeout(timer);
-        timer = setTimeout(function() { fn.apply(ctx, args); }, ms);
+        timer = setTimeout(function() { timer = null; fn.apply(lastCtx, lastArgs); lastArgs = null; }, ms);
     };
+    wrapper.flush = function() {
+        if (timer) { clearTimeout(timer); timer = null; fn.apply(lastCtx, lastArgs); lastArgs = null; }
+    };
+    return wrapper;
 };
 
 UAF.SlashMenu = {
@@ -141,6 +147,14 @@ UAF.saveCE = function(url, data) {
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: new URLSearchParams(data)
     });
+};
+
+/** Synchronous save — blocks until complete. Use only for flush-before-navigate. */
+UAF.saveCESync = function(url, data) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', url, false);  // synchronous
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.send(new URLSearchParams(data).toString());
 };
 
 window.UAF = UAF;

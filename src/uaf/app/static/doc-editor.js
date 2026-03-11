@@ -13,7 +13,9 @@
     if (!content) return;
 
     // --- Contenteditable auto-save ---
-    var debouncedSave = UAF.debounce(function(el) {
+    var _pendingEl = null;
+
+    function _buildSaveData(el) {
         var nodeId = el.dataset.nodeId;
         var text = el.innerText;
         var fmt = 'plain';
@@ -21,17 +23,50 @@
             text = el.innerHTML;
             fmt = 'html';
         }
-        UAF.saveCE('/artifacts/' + artifactId + '/action/update-text', {
-            node_id: nodeId,
-            text: text,
-            content_format: fmt
-        });
+        return {node_id: nodeId, text: text, content_format: fmt};
+    }
+
+    var debouncedSave = UAF.debounce(function(el) {
+        _pendingEl = null;
+        UAF.saveCE('/artifacts/' + artifactId + '/action/update-text', _buildSaveData(el));
     }, 500);
+
+    /** Flush any pending contenteditable save synchronously (blocks until done). */
+    function flushSave() {
+        if (_pendingEl) {
+            debouncedSave.flush();  // clears the timer
+            // The flush called the debounced fn which uses async fetch —
+            // but we already cleared _pendingEl. Do a sync save instead.
+        }
+    }
+
+    // Override: track the dirty element and use sync save on flush
+    var _origFlush = debouncedSave.flush;
+    debouncedSave.flush = function() {
+        if (_pendingEl) {
+            var data = _buildSaveData(_pendingEl);
+            _pendingEl = null;
+            // Cancel the pending async timer
+            _origFlush();
+            // Do a synchronous XHR so the data is persisted before the next request
+            UAF.saveCESync('/artifacts/' + artifactId + '/action/update-text', data);
+        }
+    };
 
     content.addEventListener('input', function(e) {
         var body = e.target.closest('.block-body');
         if (body && body.contentEditable === 'true') {
+            _pendingEl = body;
             debouncedSave(body);
+        }
+    });
+
+    // --- Flush before any HTMX request that would swap doc-content ---
+    document.body.addEventListener('htmx:beforeRequest', function(e) {
+        var target = e.detail.target || (e.detail.elt && e.detail.elt.getAttribute('hx-target'));
+        // Flush if any HTMX request targets doc-content (view toggles, inserts, etc.)
+        if (_pendingEl) {
+            debouncedSave.flush();
         }
     });
 
