@@ -243,13 +243,40 @@
         requestAnimationFrame(function() { focusCell(row, col); });
     });
 
-    // Arrow keys, Enter, Escape (delegated on #flow-content)
+    // Editable column indices for Tab navigation (skip status/delete buttons)
+    var tabCols = [1, 2, 3];
+
+    // Arrow keys, Tab, Enter, Escape (delegated on #flow-content)
     content.addEventListener('keydown', function(e) {
         var el = e.target;
         if (!el.classList || !el.classList.contains('gc')) return;
         var row = +el.dataset.row, col = +el.dataset.col;
 
-        if (e.key === 'ArrowDown' && el.type !== 'date') {
+        if (e.key === 'Tab') {
+            // Tab/Shift-Tab: move between grid columns, skipping date-input
+            // internal segments (month/day/year) that trap native Tab.
+            var idx = tabCols.indexOf(col);
+            if (idx === -1) idx = 0;
+            var mr = maxRow();
+            if (e.shiftKey) {
+                idx--;
+                if (idx < 0) { row--; idx = tabCols.length - 1; }
+                if (row < 0) { row = 0; idx = 0; }
+            } else {
+                idx++;
+                if (idx >= tabCols.length) { row++; idx = 0; }
+                if (row > mr) { row = mr; idx = tabCols.length - 1; }
+            }
+            var target = content.querySelector(
+                '[data-row="'+row+'"][data-col="'+tabCols[idx]+'"]'
+            );
+            if (target) {
+                e.preventDefault();
+                target.focus();
+                try { if (target.type === 'text' && target.select) target.select(); } catch(_) {}
+            }
+            // If no target found, let native Tab proceed (exits grid)
+        } else if (e.key === 'ArrowDown' && el.type !== 'date') {
             e.preventDefault();
             focusCell(Math.min(row + 1, maxRow()), col);
         } else if (e.key === 'ArrowUp' && el.type !== 'date') {
@@ -374,36 +401,39 @@
 .list-hidden { display: none; }
 
 /* Grid cells — shared focus ring */
-.gc:focus { outline: 2px solid #3b82f6; outline-offset: -1px; border-radius: 2px; }
+.flow-list-grid .gc:focus { outline: 2px solid #3b82f6; outline-offset: -1px; border-radius: 2px; }
 
 /* Status toggle */
-.list-check {
+.flow-list-grid .list-check {
     background: none; border: none; cursor: pointer; font-size: 1.1rem;
     padding: 0.2rem 0.35rem; border-radius: 3px; line-height: 1;
 }
-.list-check:hover { background: #e0e7ff; }
+.flow-list-grid .list-check:hover { background: #e0e7ff; }
 
-/* Cell inputs */
-.list-cell-input {
+/* Cell inputs — scoped under .flow-list-grid to beat the global
+   input[type="text"] rule in style.css (specificity 0-1-1). */
+.flow-list-grid .list-cell-input {
     border: 1px solid transparent; background: transparent;
     padding: 0.3rem 0.4rem; border-radius: 3px; font: inherit;
     width: 100%; box-sizing: border-box;
+    margin: 0; box-shadow: none;
 }
-.list-cell-input:hover { border-color: #ddd; }
-.list-cell-input:focus { border-color: transparent; background: white; outline: 2px solid #3b82f6; outline-offset: -1px; }
-.list-cell-input.status-done { text-decoration: line-through; color: #999; }
-.list-cell-input.status-in_progress { color: #2563eb; }
+.flow-list-grid .list-cell-input:hover { border-color: #ddd; }
+.flow-list-grid .list-cell-input:focus { border-color: transparent; background: white; outline: 2px solid #3b82f6; outline-offset: -1px; }
+.flow-list-grid .list-cell-input.status-done { text-decoration: line-through; color: #999; }
+.flow-list-grid .list-cell-input.status-in_progress { color: #2563eb; }
 
-.list-cell-date {
+.flow-list-grid .list-cell-date {
     border: 1px solid transparent; background: transparent;
     padding: 0.25rem 0.3rem; border-radius: 3px; font: inherit;
     color: #888; font-size: 0.85rem; width: 100%; box-sizing: border-box;
+    margin: 0; box-shadow: none;
 }
-.list-cell-date:hover { border-color: #ddd; }
-.list-cell-date:focus { border-color: transparent; background: white; outline: 2px solid #3b82f6; outline-offset: -1px; }
+.flow-list-grid .list-cell-date:hover { border-color: #ddd; }
+.flow-list-grid .list-cell-date:focus { border-color: transparent; background: white; outline: 2px solid #3b82f6; outline-offset: -1px; }
 
 /* Delete button — visible on hover */
-.list-row-delete {
+.flow-list-grid .list-row-delete {
     background: none; border: none; cursor: pointer; color: transparent;
     font-size: 1rem; padding: 0.2rem 0.4rem; border-radius: 3px;
 }

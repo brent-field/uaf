@@ -646,7 +646,8 @@ class TestListView:
         view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
         assert 'name="start_date"' in view.content
         assert 'name="end_date"' in view.content
-        assert view.content.count('type="date"') == 2
+        # 2 date inputs in the task row + 2 in the new-row placeholder = 4
+        assert view.content.count('type="date"') == 4
 
     def test_date_inputs_have_grid_cell_class(self) -> None:
         """Date inputs must have the gc class for keyboard navigation."""
