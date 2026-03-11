@@ -303,6 +303,64 @@ class TestDAGView:
         view = lens.render(sdb, session, art_id, mode="dag")  # type: ignore[arg-type]
         assert 'data-row="0"' in view.content
 
+    def test_dag_has_svg_container(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "Task A")
+
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="dag")  # type: ignore[arg-type]
+        assert "dag-edges" in view.content
+        assert "dag-container" in view.content
+
+    def test_dag_nodes_have_grid_positioning(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "Task A")
+
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="dag")  # type: ignore[arg-type]
+        assert "grid-row" in view.content
+        assert "grid-column" in view.content
+
+    def test_dag_layered_layout(self) -> None:
+        sdb, session, art_id = _setup()
+        t1_id = _add_task(sdb, session, art_id, "A")
+        t2_id = _add_task(sdb, session, art_id, "B")
+        t3_id = _add_task(sdb, session, art_id, "C")
+
+        # B depends on A, C depends on B  =>  layers: A=0, B=1, C=2
+        dep1 = Edge(
+            id=EdgeId.generate(), source=t2_id, target=t1_id,
+            edge_type=EdgeType.DEPENDS_ON, created_at=utc_now(),
+        )
+        dep2 = Edge(
+            id=EdgeId.generate(), source=t3_id, target=t2_id,
+            edge_type=EdgeType.DEPENDS_ON, created_at=utc_now(),
+        )
+        sdb.create_edge(session, dep1)  # type: ignore[arg-type]
+        sdb.create_edge(session, dep2)  # type: ignore[arg-type]
+
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="dag")  # type: ignore[arg-type]
+
+        import re
+        rows = re.findall(r'data-row="(\d+)"', view.content)
+        assert rows == ["0", "1", "2"]
+
+    def test_dag_deps_attribute_populated(self) -> None:
+        sdb, session, art_id = _setup()
+        t1_id = _add_task(sdb, session, art_id, "Parent")
+        t2_id = _add_task(sdb, session, art_id, "Child")
+
+        dep = Edge(
+            id=EdgeId.generate(), source=t2_id, target=t1_id,
+            edge_type=EdgeType.DEPENDS_ON, created_at=utc_now(),
+        )
+        sdb.create_edge(session, dep)  # type: ignore[arg-type]
+
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="dag")  # type: ignore[arg-type]
+        assert str(t1_id) in view.content
+
 
 # ---------------------------------------------------------------------------
 # TestKanbanView

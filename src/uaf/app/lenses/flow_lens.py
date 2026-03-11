@@ -419,32 +419,60 @@ class FlowLens:
         self, tasks: list[Task], artifact_id: NodeId,
         db: SecureGraphDB, session: Session,
     ) -> str:
-        """Render DAG view — nodes with directed edges."""
+        """Render DAG view — layered graph with positioned nodes."""
         if not tasks:
             return _empty_state(
                 "Click <strong>+ Task</strong> above to add your first task."
             )
 
-        # Topological sort
-        sorted_tasks = _topological_sort(tasks, db)
+        sorted_tasks, preds = _topological_sort(tasks, db)
 
+        # Compute layers: layer[nid] = longest path from a root
+        layer: dict[NodeId, int] = {}
+        for task in sorted_tasks:
+            nid = task.meta.id
+            parent_layers = [layer[p] for p in preds[nid] if p in layer]
+            layer[nid] = (max(parent_layers) + 1) if parent_layers else 0
+
+        # Group tasks by layer and assign column indices
+        layers: dict[int, list[Task]] = {}
+        for task in sorted_tasks:
+            lyr = layer[task.meta.id]
+            layers.setdefault(lyr, []).append(task)
+
+        max_cols = max(len(ts) for ts in layers.values()) if layers else 1
+        col_index: dict[NodeId, int] = {}
+        for lyr_tasks in layers.values():
+            for col, task in enumerate(lyr_tasks):
+                col_index[task.meta.id] = col
+
+        # Render nodes with grid positioning
         nodes: list[str] = []
-        for i, task in enumerate(sorted_tasks):
+        for task in sorted_tasks:
             name = escape(task.title)
             nid = task.meta.id
-            edges = db._db.get_edges_from(nid)
-            dep_targets = [
-                str(e.target) for e in edges if e.edge_type == EdgeType.DEPENDS_ON
-            ]
-            deps_attr = " ".join(dep_targets)
+            deps_attr = " ".join(str(p) for p in preds[nid])
+            row = layer[nid] + 1  # CSS grid is 1-indexed
+            col = col_index[nid] + 1
             nodes.append(
-                f'<div class="dag-node" data-node-id="{nid}" '
-                f'data-row="{i}" data-deps="{deps_attr}">'
+                f'<div class="dag-node"'
+                f' style="grid-row:{row}; grid-column:{col}"'
+                f' data-node-id="{nid}"'
+                f' data-row="{layer[nid]}"'
+                f' data-deps="{deps_attr}">'
                 f'<span class="dag-label">{name}</span>'
                 f"</div>"
             )
 
-        return f'<div class="flow-dag">{"".join(nodes)}</div>'
+        grid_style = f"grid-template-columns: repeat({max_cols}, 1fr)"
+        return (
+            f'<div class="dag-container">'
+            f'<div class="flow-dag" style="{grid_style}">'
+            f"{''.join(nodes)}"
+            f"</div>"
+            f'<svg class="dag-edges"></svg>'
+            f"</div>"
+        )
 
     def _render_kanban(
         self, tasks: list[Task], artifact_id: NodeId | None = None,
@@ -709,8 +737,14 @@ def _would_create_cycle(
     return False
 
 
-def _topological_sort(tasks: list[Task], db: SecureGraphDB) -> list[Task]:
-    """Sort tasks respecting DEPENDS_ON edges (topological order)."""
+def _topological_sort(
+    tasks: list[Task], db: SecureGraphDB,
+) -> tuple[list[Task], dict[NodeId, set[NodeId]]]:
+    """Sort tasks respecting DEPENDS_ON edges (topological order).
+
+    Returns ``(sorted_tasks, predecessors)`` where *predecessors* maps each
+    task id to the set of task ids it directly depends on.
+    """
     task_map = {t.meta.id: t for t in tasks}
     task_ids = set(task_map.keys())
 
@@ -721,6 +755,11 @@ def _topological_sort(tasks: list[Task], db: SecureGraphDB) -> list[Task]:
         for edge in edges:
             if edge.edge_type == EdgeType.DEPENDS_ON and edge.target in task_ids:
                 predecessors[tid].add(edge.target)
+
+    # Save original predecessor map before Kahn's mutates it
+    predecessors_orig: dict[NodeId, set[NodeId]] = {
+        tid: set(preds) for tid, preds in predecessors.items()
+    }
 
     # Kahn's algorithm
     result: list[Task] = []
@@ -741,4 +780,4 @@ def _topological_sort(tasks: list[Task], db: SecureGraphDB) -> list[Task]:
         if task.meta.id not in visited:
             result.append(task)
 
-    return result
+    return result, predecessors_orig
