@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import multiprocessing
 import time
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING
 
 import pytest
 
 if TYPE_CHECKING:
-    pass
+    from collections.abc import Generator
 
 
 def _run_server(started: multiprocessing.Event) -> None:  # type: ignore[type-arg]
@@ -52,7 +52,7 @@ def _run_server(started: multiprocessing.Event) -> None:  # type: ignore[type-ar
 
 
 @pytest.fixture(scope="module")
-def server_url() -> Generator[str, None, None]:
+def server_url() -> Generator[str]:
     """Start the demo server and yield its URL."""
     started = multiprocessing.Event()
     proc = multiprocessing.Process(target=_run_server, args=(started,), daemon=True)

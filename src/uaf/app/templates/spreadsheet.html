@@ -30,6 +30,16 @@
                 hx-post="/artifacts/{{ artifact_id }}/grid/add-col"
                 hx-target="#grid-content"
                 hx-swap="innerHTML">+ Column</button>
+        <button class="btn btn-sm btn-danger"
+                hx-post="/artifacts/{{ artifact_id }}/grid/delete-row"
+                hx-target="#grid-content"
+                hx-swap="innerHTML"
+                hx-confirm="Delete last row?">- Row</button>
+        <button class="btn btn-sm btn-danger"
+                hx-post="/artifacts/{{ artifact_id }}/grid/delete-col"
+                hx-target="#grid-content"
+                hx-swap="innerHTML"
+                hx-confirm="Delete last column?">- Column</button>
         <span class="htmx-indicator">Saving...</span>
     </div>
     {% endif %}
@@ -43,23 +53,41 @@
 
 <script>
 document.body.addEventListener('click', function(e) {
-    var td = e.target.closest('td[data-node-id]');
+    var td = e.target.closest('td[data-row][data-col]');
     if (!td) return;
     var nodeId = td.getAttribute('data-node-id');
+    var row = td.getAttribute('data-row');
+    var col = td.getAttribute('data-col');
     var currentVal = td.textContent.trim();
     var artifactId = '{{ artifact_id }}';
     var modal = document.getElementById('cell-edit-modal');
-    modal.innerHTML =
-        '<div class="cell-edit-overlay" onclick="if(event.target===this)this.remove()">' +
-        '<form class="cell-edit-form" hx-post="/artifacts/' + artifactId + '/grid/set-cell" ' +
-        'hx-target="#grid-content" hx-swap="innerHTML">' +
-        '<h4>Edit Cell</h4>' +
-        '<input type="hidden" name="cell_id" value="' + nodeId + '" />' +
-        '<input type="text" name="value" value="' + currentVal.replace(/"/g, '&quot;') + '" autofocus />' +
-        '<div class="cell-edit-actions">' +
-        '<button type="button" class="btn btn-sm" onclick="this.closest(\'.cell-edit-overlay\').remove()">Cancel</button>' +
-        '<button type="submit" class="btn btn-sm btn-primary">Save</button>' +
-        '</div></form></div>';
+
+    if (nodeId) {
+        modal.innerHTML =
+            '<div class="cell-edit-overlay" onclick="if(event.target===this)this.remove()">' +
+            '<form class="cell-edit-form" hx-post="/artifacts/' + artifactId + '/grid/set-cell" ' +
+            'hx-target="#grid-content" hx-swap="innerHTML">' +
+            '<h4>Edit Cell</h4>' +
+            '<input type="hidden" name="cell_id" value="' + nodeId + '" />' +
+            '<input type="text" name="value" value="' + currentVal.replace(/"/g, '&quot;') + '" autofocus />' +
+            '<div class="cell-edit-actions">' +
+            '<button type="button" class="btn btn-sm" onclick="this.closest(\'.cell-edit-overlay\').remove()">Cancel</button>' +
+            '<button type="submit" class="btn btn-sm btn-primary">Save</button>' +
+            '</div></form></div>';
+    } else {
+        modal.innerHTML =
+            '<div class="cell-edit-overlay" onclick="if(event.target===this)this.remove()">' +
+            '<form class="cell-edit-form" hx-post="/artifacts/' + artifactId + '/grid/create-cell" ' +
+            'hx-target="#grid-content" hx-swap="innerHTML">' +
+            '<h4>Edit Cell</h4>' +
+            '<input type="hidden" name="row" value="' + row + '" />' +
+            '<input type="hidden" name="col" value="' + col + '" />' +
+            '<input type="text" name="value" value="" autofocus />' +
+            '<div class="cell-edit-actions">' +
+            '<button type="button" class="btn btn-sm" onclick="this.closest(\'.cell-edit-overlay\').remove()">Cancel</button>' +
+            '<button type="submit" class="btn btn-sm btn-primary">Save</button>' +
+            '</div></form></div>';
+    }
     htmx.process(modal);
 });
 </script>
