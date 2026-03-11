@@ -17,6 +17,7 @@ from uaf.app.lenses.actions import (
     SetDateRange,
     SetDependency,
     SetDueDate,
+    SetTaskStatus,
     ToggleTask,
     UpdateTask,
 )
@@ -516,9 +517,23 @@ class FlowLens:
                     )
                 card_html = "".join(card_parts)
 
+            add_form = ""
+            if artifact_id is not None:
+                add_form = (
+                    f'<div class="kanban-add">'
+                    f'<form hx-post="/artifacts/{artifact_id}/flow/create-task"'
+                    f' hx-target="#flow-content" hx-swap="innerHTML"'
+                    f' style="display:flex;gap:0.25rem;">'
+                    f'<input type="hidden" name="mode" value="kanban" />'
+                    f'<input type="text" name="title" placeholder="Add task..."'
+                    f' class="kanban-add-input" />'
+                    f'<button type="submit" class="btn btn-sm">+</button>'
+                    f'</form></div>'
+                )
+
             col_html.append(
                 f'<div class="kanban-column" data-status="{status}">'
-                f'<h3>{label}</h3>{card_html}'
+                f'<h3>{label}</h3>{card_html}{add_form}'
                 f"</div>"
             )
 
@@ -554,6 +569,8 @@ class FlowLens:
                 self._set_dependency(db, session, artifact_id, src, tgt)
             case RemoveDependency(source_task_id=src, target_task_id=tgt):
                 self._remove_dependency(db, session, src, tgt)
+            case SetTaskStatus(task_id=task_id, status=status):
+                self._set_task_status(db, session, task_id, status)
             case SetDueDate(task_id=task_id, due_date=due):
                 self._set_due_date(db, session, task_id, due)
             case SetDateRange(task_id=task_id, start_date=start, end_date=end):
@@ -603,6 +620,17 @@ class FlowLens:
             msg = f"Task not found: {task_id}"
             raise ValueError(msg)
         updated = replace(task, title=title)
+        db.update_node(session, updated)
+
+    def _set_task_status(
+        self, db: SecureGraphDB, session: Session, task_id: NodeId, status: str,
+    ) -> None:
+        task = db.get_node(session, task_id)
+        if task is None or not isinstance(task, Task):
+            msg = f"Task not found: {task_id}"
+            raise ValueError(msg)
+        completed = status == "done"
+        updated = replace(task, status=status, completed=completed)
         db.update_node(session, updated)
 
     def _toggle_task(

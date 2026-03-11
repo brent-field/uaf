@@ -379,6 +379,55 @@
 })();
 </script>
 
+<script>
+// Kanban drag-and-drop
+(function() {
+    function initKanban() {
+        if (typeof Sortable === 'undefined') return;
+        var columns = document.querySelectorAll('.kanban-column');
+        var artifactId = '{{ artifact_id }}';
+        columns.forEach(function(col) {
+            if (col._sortable) return;
+            col._sortable = Sortable.create(col, {
+                group: 'kanban',
+                draggable: '.kanban-card',
+                ghostClass: 'block-ghost',
+                animation: 150,
+                onEnd: function(evt) {
+                    var card = evt.item;
+                    var newCol = evt.to;
+                    var newStatus = newCol.dataset.status;
+                    var taskId = card.dataset.nodeId;
+                    if (taskId && newStatus) {
+                        fetch('/artifacts/' + artifactId + '/flow/set-status', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                            body: new URLSearchParams({
+                                node_id: taskId,
+                                status: newStatus,
+                                mode: 'kanban'
+                            })
+                        }).then(function(r) { return r.text(); }).then(function(html) {
+                            var content = document.getElementById('flow-content');
+                            content.innerHTML = html;
+                            htmx.process(content);
+                            initKanban();
+                        });
+                    }
+                }
+            });
+        });
+    }
+    initKanban();
+    var content = document.getElementById('flow-content');
+    if (content) {
+        content.addEventListener('htmx:afterSwap', function() {
+            requestAnimationFrame(initKanban);
+        });
+    }
+})();
+</script>
+
 <style>
 .flow-content { padding: 1rem 0; }
 .add-task-form { padding: 0.75rem 1rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }

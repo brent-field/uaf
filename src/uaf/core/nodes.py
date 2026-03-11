@@ -142,6 +142,7 @@ class Paragraph:
     meta: NodeMetadata
     text: str
     style: str = "body"
+    content_format: str = "plain"
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from uaf.app.api.dependencies import get_db, get_registry
@@ -178,13 +178,29 @@ def _parse_doc_blocks(
     artifact_id: NodeId,
 ) -> list[dict[str, str]]:
     """Parse DocLens HTML into per-block dicts for the template."""
+    from uaf.core.nodes import Paragraph
+
     children = db.get_children(session, artifact_id)
     blocks: list[dict[str, str]] = []
+    type_labels = {
+        "heading": "H", "paragraph": "P", "code_block": "Code",
+        "math_block": "Math", "text_block": "Text", "image": "Img",
+    }
     for child in children:
         nid = str(child.meta.id)
         html, text, node_type = _render_single_block(child)
-        if html:
-            blocks.append({"id": nid, "html": html, "text": text, "type": node_type})
+        if html or node_type:
+            fmt = "plain"
+            if isinstance(child, Paragraph):
+                fmt = child.content_format
+            blocks.append({
+                "id": nid,
+                "html": html,
+                "text": text,
+                "type": node_type,
+                "content_format": fmt,
+                "type_label": type_labels.get(node_type, "?"),
+            })
     return blocks
 
 
@@ -197,8 +213,10 @@ def _render_single_block(node: object) -> tuple[str, str, str]:
             tag = f"h{min(max(level, 1), 6)}"
             return f"<{tag}>{escape(text)}</{tag}>", text, "heading"
         case Paragraph(text=text, style=style):
+            fmt = getattr(node, 'content_format', 'plain')
             cls = f' class="{escape(style)}"' if style != "body" else ""
-            return f"<p{cls}>{escape(text)}</p>", text, "paragraph"
+            displayed = text if fmt == "html" else escape(text)
+            return f"<p{cls}>{displayed}</p>", text, "paragraph"
         case CodeBlock(source=source, language=language):
             lang_cls = f' class="language-{escape(language)}"' if language else ""
             return (
@@ -732,6 +750,188 @@ def move_block_down(
     return templates.TemplateResponse("partials/doc_blocks.html", ctx)
 
 
+@router.post("/artifacts/{artifact_id}/action/update-text")
+def update_block_text(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    text: str = Form(""),
+    content_format: str = Form("plain"),
+    db: SecureGraphDB = Depends(get_db),
+) -> Response:
+    """Save contenteditable text (debounced). Returns 204."""
+    from uaf.app.frontend.sanitize import sanitize_html
+    from uaf.core.nodes import CodeBlock, Heading, Paragraph, TextBlock
+
+    session = _require_session(request, db)
+    nid = NodeId(value=uuid.UUID(node_id))
+    existing = db.get_node(session, nid)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    clean_text = sanitize_html(text) if content_format == "html" else text
+
+    match existing:
+        case Heading(meta=meta, level=level):
+            db.update_node(session, Heading(meta=meta, text=clean_text, level=level))
+        case Paragraph(meta=meta, style=style):
+            db.update_node(
+                session,
+                Paragraph(
+                    meta=meta, text=clean_text, style=style,
+                    content_format=content_format,
+                ),
+            )
+        case CodeBlock(meta=meta, language=lang):
+            db.update_node(session, CodeBlock(meta=meta, source=clean_text, language=lang))
+        case TextBlock(meta=meta):
+            db.update_node(session, TextBlock(meta=meta, text=clean_text))
+    return Response(status_code=204)
+
+
+@router.post("/artifacts/{artifact_id}/action/insert-at", response_class=HTMLResponse)
+def insert_block_at(
+    request: Request,
+    artifact_id: str,
+    position: int = Form(0),
+    style: str = Form("paragraph"),
+    text: str = Form(""),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Insert a block at a specific position. Returns updated doc blocks."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    lens = registry.get("doc")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid,
+            InsertText(parent_id=aid, text=text, position=position, style=style),
+        )
+
+    blocks = _parse_doc_blocks("", db, session, aid)
+    ctx: dict[str, Any] = {
+        "request": request,
+        "artifact_id": artifact_id,
+        "blocks": blocks,
+    }
+    return templates.TemplateResponse("partials/doc_blocks.html", ctx)
+
+
+@router.post("/artifacts/{artifact_id}/action/reorder")
+def reorder_blocks(
+    request: Request,
+    artifact_id: str,
+    order: str = Form(...),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> Response:
+    """Reorder blocks from SortableJS. Returns 204."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    node_ids = tuple(
+        NodeId(value=uuid.UUID(nid)) for nid in order.split(",") if nid.strip()
+    )
+
+    lens = registry.get("doc")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid,
+            ReorderNodes(parent_id=aid, new_order=node_ids),
+        )
+    return Response(status_code=204)
+
+
+@router.post("/artifacts/{artifact_id}/action/convert", response_class=HTMLResponse)
+def convert_block(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    new_style: str = Form(...),
+    level: int = Form(1),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Convert block type via slash menu. Returns updated doc blocks."""
+    from uaf.app.lenses.actions import FormatText
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    nid = NodeId(value=uuid.UUID(node_id))
+
+    lens = registry.get("doc")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid,
+            FormatText(node_id=nid, style=new_style, level=level),
+        )
+
+    blocks = _parse_doc_blocks("", db, session, aid)
+    ctx: dict[str, Any] = {
+        "request": request,
+        "artifact_id": artifact_id,
+        "blocks": blocks,
+    }
+    return templates.TemplateResponse("partials/doc_blocks.html", ctx)
+
+
+@router.post("/artifacts/{artifact_id}/action/split-block", response_class=HTMLResponse)
+def split_block(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    before_text: str = Form(""),
+    after_text: str = Form(""),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Split block at cursor (Enter key). Returns updated doc blocks."""
+    from uaf.core.nodes import CodeBlock, Heading, Paragraph, TextBlock
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    nid = NodeId(value=uuid.UUID(node_id))
+
+    # Update existing block with text before cursor
+    existing = db.get_node(session, nid)
+    if existing is not None:
+        match existing:
+            case Heading(meta=meta, level=level):
+                db.update_node(session, Heading(meta=meta, text=before_text, level=level))
+            case Paragraph(meta=meta, style=style):
+                db.update_node(
+                    session, Paragraph(meta=meta, text=before_text, style=style),
+                )
+            case CodeBlock(meta=meta, language=lang):
+                db.update_node(
+                    session, CodeBlock(meta=meta, source=before_text, language=lang),
+                )
+            case TextBlock(meta=meta):
+                db.update_node(session, TextBlock(meta=meta, text=before_text))
+
+    # Find position of current block and insert new one after it
+    children = db.get_children(session, aid)
+    child_ids = [c.meta.id for c in children]
+    pos = child_ids.index(nid) + 1 if nid in child_ids else len(child_ids)
+
+    lens = registry.get("doc")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid,
+            InsertText(parent_id=aid, text=after_text, position=pos, style="paragraph"),
+        )
+
+    blocks = _parse_doc_blocks("", db, session, aid)
+    ctx: dict[str, Any] = {
+        "request": request,
+        "artifact_id": artifact_id,
+        "blocks": blocks,
+    }
+    return templates.TemplateResponse("partials/doc_blocks.html", ctx)
+
+
 # ---------------------------------------------------------------------------
 # Spreadsheet viewer/editor
 # ---------------------------------------------------------------------------
@@ -920,6 +1120,7 @@ def set_cell_value(
 def add_row(
     request: Request,
     artifact_id: str,
+    position: int = Form(-1),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
@@ -939,9 +1140,14 @@ def add_row(
             rows = child.rows
             break
 
+    if position < 0:
+        position = rows
+
     lens = registry.get("grid")
     if lens is not None and sheet_id is not None:
-        lens.apply_action(db, session, aid, InsertRow(sheet_id=sheet_id, position=rows))
+        lens.apply_action(
+            db, session, aid, InsertRow(sheet_id=sheet_id, position=position),
+        )
         view = lens.render(db, session, aid)
         grid_html = view.content
     else:
@@ -955,6 +1161,7 @@ def add_row(
 def add_col(
     request: Request,
     artifact_id: str,
+    position: int = Form(-1),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
@@ -974,9 +1181,14 @@ def add_col(
             cols = child.cols
             break
 
+    if position < 0:
+        position = cols
+
     lens = registry.get("grid")
     if lens is not None and sheet_id is not None:
-        lens.apply_action(db, session, aid, InsertColumn(sheet_id=sheet_id, position=cols))
+        lens.apply_action(
+            db, session, aid, InsertColumn(sheet_id=sheet_id, position=position),
+        )
         view = lens.render(db, session, aid)
         grid_html = view.content
     else:
@@ -990,10 +1202,11 @@ def add_col(
 def delete_row(
     request: Request,
     artifact_id: str,
+    position: int = Form(-1),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
-    """Delete the last row from the spreadsheet."""
+    """Delete a row from the spreadsheet."""
     session = _require_session(request, db)
     aid = NodeId(value=uuid.UUID(artifact_id))
 
@@ -1009,13 +1222,16 @@ def delete_row(
             rows = child.rows
             break
 
+    if position < 0:
+        position = rows - 1
+
     lens = registry.get("grid")
     if lens is not None and sheet_id is not None and rows > 0:
         lens.apply_action(
             db,
             session,
             aid,
-            DeleteRow(sheet_id=sheet_id, position=rows - 1),
+            DeleteRow(sheet_id=sheet_id, position=position),
         )
         view = lens.render(db, session, aid)
         grid_html = view.content
@@ -1030,10 +1246,11 @@ def delete_row(
 def delete_col(
     request: Request,
     artifact_id: str,
+    position: int = Form(-1),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
-    """Delete the last column from the spreadsheet."""
+    """Delete a column from the spreadsheet."""
     session = _require_session(request, db)
     aid = NodeId(value=uuid.UUID(artifact_id))
 
@@ -1049,13 +1266,16 @@ def delete_col(
             cols = child.cols
             break
 
+    if position < 0:
+        position = cols - 1
+
     lens = registry.get("grid")
     if lens is not None and sheet_id is not None and cols > 0:
         lens.apply_action(
             db,
             session,
             aid,
-            DeleteColumn(sheet_id=sheet_id, position=cols - 1),
+            DeleteColumn(sheet_id=sheet_id, position=position),
         )
         view = lens.render(db, session, aid)
         grid_html = view.content
@@ -1627,6 +1847,41 @@ def flow_delete_task(
             session,
             aid,
             DeleteNode(node_id=nid),
+        )
+        if isinstance(lens, FlowLens):
+            view = lens.render(db, session, aid, mode=mode)
+        else:
+            view = lens.render(db, session, aid)
+        return HTMLResponse(view.content)
+    return HTMLResponse("")
+
+
+@router.post(
+    "/artifacts/{artifact_id}/flow/set-status",
+    response_class=HTMLResponse,
+)
+def flow_set_status(
+    request: Request,
+    artifact_id: str,
+    node_id: str = Form(...),
+    status: str = Form(...),
+    mode: str = Form("kanban"),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Set task status directly (from Kanban drag). Returns updated view."""
+    from uaf.app.lenses.actions import SetTaskStatus
+    from uaf.app.lenses.flow_lens import FlowLens
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    nid = NodeId(value=uuid.UUID(node_id))
+
+    lens = registry.get("flow")
+    if lens is not None:
+        lens.apply_action(
+            db, session, aid,
+            SetTaskStatus(task_id=nid, status=status),
         )
         if isinstance(lens, FlowLens):
             view = lens.render(db, session, aid, mode=mode)
