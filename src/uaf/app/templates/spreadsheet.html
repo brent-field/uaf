@@ -53,6 +53,20 @@
 (function() {
     var artifactId = '{{ artifact_id }}';
     var activeInput = null;
+    var pendingCell = null;  // {row, col} to activate after HTMX swap
+
+    // After HTMX replaces the grid, activate the pending cell
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        if (!e.detail.target || e.detail.target.id !== 'grid-content') return;
+        if (!pendingCell) return;
+        var row = pendingCell.row;
+        var col = pendingCell.col;
+        pendingCell = null;
+        var td = document.querySelector(
+            'td[data-row="' + row + '"][data-col="' + col + '"]'
+        );
+        if (td) activateCell(td);
+    });
 
     function commitCell(td, input) {
         if (!input || input !== activeInput) return;
@@ -114,13 +128,10 @@
                 cancelCell(td, input);
             } else if (e.key === 'Tab') {
                 e.preventDefault();
+                var nextCol = parseInt(td.getAttribute('data-col'), 10)
+                    + (e.shiftKey ? -1 : 1);
+                pendingCell = { row: td.getAttribute('data-row'), col: nextCol };
                 commitCell(td, input);
-                var nextCol = parseInt(td.getAttribute('data-col'), 10) + (e.shiftKey ? -1 : 1);
-                var row = td.getAttribute('data-row');
-                var next = document.querySelector(
-                    'td[data-row="' + row + '"][data-col="' + nextCol + '"]'
-                );
-                if (next) setTimeout(function() { activateCell(next); }, 50);
             }
         });
 
@@ -135,7 +146,17 @@
         var td = e.target.closest('td[data-row][data-col]');
         if (!td) return;
         if (e.target.tagName === 'INPUT') return;
-        activateCell(td);
+        if (activeInput) {
+            // Commit current cell, then activate clicked cell after swap
+            pendingCell = {
+                row: td.getAttribute('data-row'),
+                col: td.getAttribute('data-col'),
+            };
+            var prevTd = activeInput.closest('td');
+            if (prevTd) commitCell(prevTd, activeInput);
+        } else {
+            activateCell(td);
+        }
     });
 })();
 </script>
