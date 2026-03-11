@@ -352,3 +352,80 @@ class TestGridLensActions:
             raise AssertionError("Expected ValueError")
         except ValueError as e:
             assert "InsertText" in str(e)
+
+
+class TestParseCellValue:
+    """Tests for the _parse_cell_value helper."""
+
+    def test_empty_string_returns_none(self) -> None:
+        from uaf.app.frontend.routes import _parse_cell_value
+
+        assert _parse_cell_value("") is None
+
+    def test_true_returns_bool(self) -> None:
+        from uaf.app.frontend.routes import _parse_cell_value
+
+        assert _parse_cell_value("true") is True
+        assert _parse_cell_value("True") is True
+        assert _parse_cell_value("TRUE") is True
+
+    def test_false_returns_bool(self) -> None:
+        from uaf.app.frontend.routes import _parse_cell_value
+
+        assert _parse_cell_value("false") is False
+        assert _parse_cell_value("False") is False
+
+    def test_int_string(self) -> None:
+        from uaf.app.frontend.routes import _parse_cell_value
+
+        assert _parse_cell_value("42") == 42
+        assert isinstance(_parse_cell_value("42"), int)
+
+    def test_float_string(self) -> None:
+        from uaf.app.frontend.routes import _parse_cell_value
+
+        assert _parse_cell_value("3.14") == 3.14
+        assert isinstance(_parse_cell_value("3.14"), float)
+
+    def test_string_passthrough(self) -> None:
+        from uaf.app.frontend.routes import _parse_cell_value
+
+        assert _parse_cell_value("hello") == "hello"
+
+    def test_negative_int(self) -> None:
+        from uaf.app.frontend.routes import _parse_cell_value
+
+        assert _parse_cell_value("-7") == -7
+        assert isinstance(_parse_cell_value("-7"), int)
+
+
+class TestSetCellBoolNone:
+    """Verify bool/None roundtrip through GridLens."""
+
+    def test_set_cell_bool_value(self) -> None:
+        sdb, session, lens = _setup()
+        art_id, sheet_id = _make_spreadsheet(sdb, session)
+
+        cells = sdb.get_children(session, sheet_id)
+        first_cell = cells[0]
+
+        action = SetCellValue(cell_id=first_cell.meta.id, value=True)
+        lens.apply_action(sdb, session, art_id, action)
+
+        node = sdb.get_node(session, first_cell.meta.id)
+        assert isinstance(node, Cell)
+        assert node.value is True
+
+    def test_set_cell_none(self) -> None:
+        sdb, session, lens = _setup()
+        art_id, sheet_id = _make_spreadsheet(sdb, session)
+
+        cells = sdb.get_children(session, sheet_id)
+        first_cell = cells[0]
+
+        action = SetCellValue(cell_id=first_cell.meta.id, value=None)
+        lens.apply_action(sdb, session, art_id, action)
+
+        node = sdb.get_node(session, first_cell.meta.id)
+        assert isinstance(node, Cell)
+        assert node.value is None

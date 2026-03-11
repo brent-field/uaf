@@ -87,6 +87,25 @@ def _get_session_or_none(
         return None
 
 
+def _parse_cell_value(raw: str) -> str | int | float | bool | None:
+    """Parse a raw cell string into the appropriate Python type."""
+    if raw == "":
+        return None
+    if raw.lower() == "true":
+        return True
+    if raw.lower() == "false":
+        return False
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw
+
+
 def _require_session(request: Request, db: SecureGraphDB) -> Session:
     """Get session or raise 401."""
     session = _get_session_or_none(request, db)
@@ -787,14 +806,7 @@ def set_cell_value(
 
     lens = registry.get("grid")
     if lens is not None:
-        # Try to parse as number
-        cell_value: str | int | float = value
-        try:
-            cell_value = int(value)
-        except ValueError:
-            with contextlib.suppress(ValueError):
-                cell_value = float(value)
-
+        cell_value = _parse_cell_value(value)
         lens.apply_action(db, session, aid, SetCellValue(cell_id=cid, value=cell_value))
         view = lens.render(db, session, aid)
         grid_html = view.content
@@ -878,6 +890,134 @@ def add_col(
     return templates.TemplateResponse("partials/grid_table.html", ctx)
 
 
+@router.post("/artifacts/{artifact_id}/grid/delete-row", response_class=HTMLResponse)
+def delete_row(
+    request: Request,
+    artifact_id: str,
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Delete the last row from the spreadsheet."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    from uaf.app.lenses.actions import DeleteRow
+    from uaf.core.nodes import Sheet
+
+    children = db.get_children(session, aid)
+    sheet_id = None
+    rows = 0
+    for child in children:
+        if isinstance(child, Sheet):
+            sheet_id = child.meta.id
+            rows = child.rows
+            break
+
+    lens = registry.get("grid")
+    if lens is not None and sheet_id is not None and rows > 0:
+        lens.apply_action(
+            db, session, aid, DeleteRow(sheet_id=sheet_id, position=rows - 1),
+        )
+        view = lens.render(db, session, aid)
+        grid_html = view.content
+    else:
+        grid_html = ""
+
+    ctx: dict[str, Any] = {"request": request, "grid_html": grid_html}
+    return templates.TemplateResponse("partials/grid_table.html", ctx)
+
+
+@router.post("/artifacts/{artifact_id}/grid/delete-col", response_class=HTMLResponse)
+def delete_col(
+    request: Request,
+    artifact_id: str,
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Delete the last column from the spreadsheet."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    from uaf.app.lenses.actions import DeleteColumn
+    from uaf.core.nodes import Sheet
+
+    children = db.get_children(session, aid)
+    sheet_id = None
+    cols = 0
+    for child in children:
+        if isinstance(child, Sheet):
+            sheet_id = child.meta.id
+            cols = child.cols
+            break
+
+    lens = registry.get("grid")
+    if lens is not None and sheet_id is not None and cols > 0:
+        lens.apply_action(
+            db, session, aid, DeleteColumn(sheet_id=sheet_id, position=cols - 1),
+        )
+        view = lens.render(db, session, aid)
+        grid_html = view.content
+    else:
+        grid_html = ""
+
+    ctx: dict[str, Any] = {"request": request, "grid_html": grid_html}
+    return templates.TemplateResponse("partials/grid_table.html", ctx)
+
+
+@router.post("/artifacts/{artifact_id}/grid/create-cell", response_class=HTMLResponse)
+def create_cell(
+    request: Request,
+    artifact_id: str,
+    row: int = Form(...),
+    col: int = Form(...),
+    value: str = Form(""),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Create a new cell at the given row/col and return updated grid."""
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+
+    from uaf.core.edges import Edge, EdgeType
+    from uaf.core.node_id import EdgeId, utc_now
+    from uaf.core.nodes import Cell, Sheet, make_node_metadata
+
+    children = db.get_children(session, aid)
+    sheet_id = None
+    for child in children:
+        if isinstance(child, Sheet):
+            sheet_id = child.meta.id
+            break
+
+    if sheet_id is not None:
+        cell_value = _parse_cell_value(value)
+        cell = Cell(
+            meta=make_node_metadata(NodeType.CELL),
+            value=cell_value,
+            row=row,
+            col=col,
+        )
+        cid = db.create_node(session, cell)
+        edge = Edge(
+            id=EdgeId.generate(),
+            source=sheet_id,
+            target=cid,
+            edge_type=EdgeType.CONTAINS,
+            created_at=utc_now(),
+        )
+        db.create_edge(session, edge)
+
+    lens = registry.get("grid")
+    if lens is not None:
+        view = lens.render(db, session, aid)
+        grid_html = view.content
+    else:
+        grid_html = ""
+
+    ctx: dict[str, Any] = {"request": request, "grid_html": grid_html}
+    return templates.TemplateResponse("partials/grid_table.html", ctx)
+
+
 # ---------------------------------------------------------------------------
 # FlowLens (project management)
 # ---------------------------------------------------------------------------
@@ -900,6 +1040,67 @@ def create_project(
     art_id = db.create_node(session, art)
     return RedirectResponse(
         url=f"/artifacts/{art_id}/flow", status_code=303,
+    )
+
+
+@router.post("/artifacts/create-spreadsheet")
+def create_spreadsheet(
+    request: Request,
+    db: SecureGraphDB = Depends(get_db),
+) -> RedirectResponse:
+    """Create a new spreadsheet artifact with a 5x5 grid."""
+    session = _require_session(request, db)
+    from uaf.core.edges import Edge, EdgeType
+    from uaf.core.node_id import EdgeId, utc_now
+    from uaf.core.nodes import Cell, Sheet, make_node_metadata
+
+    art = Artifact(
+        meta=make_node_metadata(NodeType.ARTIFACT),
+        title="Untitled Spreadsheet",
+        artifact_type="spreadsheet",
+    )
+    art_id = db.create_node(session, art)
+
+    sheet = Sheet(
+        meta=make_node_metadata(NodeType.SHEET),
+        title="Sheet1",
+        rows=5,
+        cols=5,
+    )
+    sheet_id = db.create_node(session, sheet)
+    db.create_edge(
+        session,
+        Edge(
+            id=EdgeId.generate(),
+            source=art_id,
+            target=sheet_id,
+            edge_type=EdgeType.CONTAINS,
+            created_at=utc_now(),
+        ),
+    )
+
+    for r in range(5):
+        for c in range(5):
+            cell = Cell(
+                meta=make_node_metadata(NodeType.CELL),
+                value=None,
+                row=r,
+                col=c,
+            )
+            cid = db.create_node(session, cell)
+            db.create_edge(
+                session,
+                Edge(
+                    id=EdgeId.generate(),
+                    source=sheet_id,
+                    target=cid,
+                    edge_type=EdgeType.CONTAINS,
+                    created_at=utc_now(),
+                ),
+            )
+
+    return RedirectResponse(
+        url=f"/artifacts/{art_id}/grid", status_code=303,
     )
 
 
