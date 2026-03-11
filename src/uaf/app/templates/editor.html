@@ -49,28 +49,25 @@
         </div>
         <span class="toolbar-sep"></span>
         <button class="btn btn-sm"
-                hx-post="/artifacts/{{ artifact_id }}/action/insert"
-                hx-vals='{"style": "paragraph", "text": "New paragraph"}'
+                hx-post="/artifacts/{{ artifact_id }}/action/insert-at"
+                hx-vals='{"position": "999", "style": "paragraph", "text": ""}'
                 hx-target="#doc-content"
-                hx-swap="innerHTML">+ Paragraph</button>
-        <button class="btn btn-sm"
-                hx-post="/artifacts/{{ artifact_id }}/action/insert"
-                hx-vals='{"style": "heading", "text": "New heading"}'
-                hx-target="#doc-content"
-                hx-swap="innerHTML">+ Heading</button>
-        <button class="btn btn-sm"
-                hx-post="/artifacts/{{ artifact_id }}/action/insert"
-                hx-vals='{"style": "code_block", "text": "// code here"}'
-                hx-target="#doc-content"
-                hx-swap="innerHTML">+ Code Block</button>
+                hx-swap="innerHTML">+ Block</button>
         <span class="htmx-indicator">Saving...</span>
     </div>
 
     <div id="doc-content" class="doc-content">
         {% include "partials/doc_blocks.html" %}
     </div>
+    <div id="slash-menu" class="slash-menu" style="display:none;"></div>
+    <div id="format-toolbar" class="format-toolbar" style="display:none;">
+        <button type="button" data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+        <button type="button" data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button type="button" data-cmd="code" title="Code"><code>&lt;&gt;</code></button>
+    </div>
 </div>
 <script src="/static/layout-inspector.js"></script>
+<script src="/static/doc-editor.js"></script>
 <script>
 // Close export dropdown when clicking outside
 document.addEventListener('click', function(e) {

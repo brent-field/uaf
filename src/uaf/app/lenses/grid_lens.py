@@ -195,7 +195,7 @@ class GridLens:
             + thead
             + "\n"
             + "\n".join(rows_html)
-            + "\n</table>"
+            + "\n</tbody>\n</table>"
         )
         return table_html, node_count
 

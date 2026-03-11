@@ -30,21 +30,11 @@
                 hx-post="/artifacts/{{ artifact_id }}/grid/add-col"
                 hx-target="#grid-content"
                 hx-swap="innerHTML">+ Column</button>
-        <button class="btn btn-sm btn-danger"
-                hx-post="/artifacts/{{ artifact_id }}/grid/delete-row"
-                hx-target="#grid-content"
-                hx-swap="innerHTML"
-                hx-confirm="Delete last row?">- Row</button>
-        <button class="btn btn-sm btn-danger"
-                hx-post="/artifacts/{{ artifact_id }}/grid/delete-col"
-                hx-target="#grid-content"
-                hx-swap="innerHTML"
-                hx-confirm="Delete last column?">- Column</button>
         <span class="htmx-indicator">Saving...</span>
     </div>
     {% endif %}
 
-    <div id="grid-content" class="grid-content">
+    <div id="grid-content" class="grid-content" data-artifact-id="{{ artifact_id }}" data-sheet-id="{{ sheet_id }}">
         {% include "partials/grid_table.html" %}
     </div>
 </div>

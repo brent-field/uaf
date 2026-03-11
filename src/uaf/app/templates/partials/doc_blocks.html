@@ -1,60 +1,42 @@
 {% for block in blocks %}
-<div class="doc-block" data-node-id="{{ block.id }}">
-    <div class="block-content"
-         onclick="this.style.display='none';var ed=this.nextElementSibling;ed.style.display='block';var f=ed.querySelector('textarea,input[type=text]');if(f){f.focus();f.select();}">
-        {{ block.html | safe }}
+<div class="doc-block" data-node-id="{{ block.id }}" data-type="{{ block.type }}">
+    <div class="block-wrapper">
+        <div class="block-handle" title="Drag to reorder">&#x2630;</div>
+        <div class="block-body"
+             contenteditable="true"
+             data-node-id="{{ block.id }}"
+             data-type="{{ block.type }}"
+             data-artifact-id="{{ artifact_id }}"
+             spellcheck="true">{% if block.type == 'code_block' %}<code>{{ block.text }}</code>{% elif block.content_format == 'html' %}{{ block.text | safe }}{% else %}{{ block.text }}{% endif %}</div>
+        <div class="block-menu">
+            <span class="block-type-label">{{ block.type_label }}</span>
+            <button class="btn btn-sm btn-danger block-delete"
+                    hx-post="/artifacts/{{ artifact_id }}/action/delete"
+                    hx-vals='{"node_id": "{{ block.id }}"}'
+                    hx-target="#doc-content"
+                    hx-swap="innerHTML"
+                    hx-confirm="Delete this block?"
+                    title="Delete">&times;</button>
+        </div>
     </div>
-    <div class="block-edit" style="display:none;">
-        <form hx-post="/artifacts/{{ artifact_id }}/action/edit"
-              hx-target="#doc-content"
-              hx-swap="innerHTML">
-            <input type="hidden" name="node_id" value="{{ block.id }}" />
-            {% if block.type == 'code_block' %}
-            <textarea name="text" rows="6" class="edit-textarea"
-                      onkeydown="if(event.key==='Escape'){event.preventDefault();this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';}else if(event.key==='Enter'&&event.ctrlKey){event.preventDefault();this.closest('form').requestSubmit();}">{{ block.text }}</textarea>
-            {% else %}
-            <input type="text" name="text" value="{{ block.text }}"
-                   class="edit-input"
-                   onkeydown="if(event.key==='Escape'){event.preventDefault();this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';}else if(event.key==='Enter'){event.preventDefault();this.closest('form').requestSubmit();}" />
-            {% endif %}
-            <div class="edit-actions">
-                <button type="submit" class="btn btn-sm btn-primary">Save</button>
-                <button type="button" class="btn btn-sm"
-                        onclick="this.closest('.doc-block').querySelector('.block-content').style.display='';this.closest('.block-edit').style.display='none';">Cancel</button>
-                <span class="edit-hint">{% if block.type == 'code_block' %}Ctrl+Enter to save{% else %}Enter to save{% endif %}, Esc to cancel</span>
-            </div>
-        </form>
+    {% if not loop.last %}
+    <div class="block-insert" title="Click to add block below">
+        <button class="block-insert-btn"
+                hx-post="/artifacts/{{ artifact_id }}/action/insert-at"
+                hx-vals='{"position": "{{ loop.index }}", "style": "paragraph", "text": ""}'
+                hx-target="#doc-content"
+                hx-swap="innerHTML">+</button>
     </div>
-    <div class="block-actions">
-        {% if not loop.first %}
-        <button class="btn btn-sm"
-                hx-post="/artifacts/{{ artifact_id }}/action/move-up"
-                hx-vals='{"node_id": "{{ block.id }}"}'
-                hx-target="#doc-content"
-                hx-swap="innerHTML"
-                title="Move up">&#9650;</button>
-        {% endif %}
-        {% if not loop.last %}
-        <button class="btn btn-sm"
-                hx-post="/artifacts/{{ artifact_id }}/action/move-down"
-                hx-vals='{"node_id": "{{ block.id }}"}'
-                hx-target="#doc-content"
-                hx-swap="innerHTML"
-                title="Move down">&#9660;</button>
-        {% endif %}
-        <button class="btn btn-sm btn-danger"
-                hx-post="/artifacts/{{ artifact_id }}/action/delete"
-                hx-vals='{"node_id": "{{ block.id }}"}'
-                hx-target="#doc-content"
-                hx-swap="innerHTML"
-                hx-confirm="Delete this block?"
-                title="Delete">&times;</button>
-    </div>
+    {% endif %}
 </div>
 {% endfor %}
 {% if not blocks %}
 <div class="empty-state">
-    <p>Empty document. Use the toolbar above to add content.</p>
-    <p class="empty-hint">Add a paragraph, heading, or code block to get started.</p>
+    <p>Empty document. Press Enter or type / to add content.</p>
+    <button class="btn btn-primary"
+            hx-post="/artifacts/{{ artifact_id }}/action/insert-at"
+            hx-vals='{"position": "0", "style": "paragraph", "text": ""}'
+            hx-target="#doc-content"
+            hx-swap="innerHTML">Add a block</button>
 </div>
 {% endif %}

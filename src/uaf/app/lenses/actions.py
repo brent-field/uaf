@@ -207,6 +207,31 @@ class SetDateRange:
     end_date: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class UpdateBlockText:
+    """Save contenteditable text content."""
+
+    node_id: NodeId
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConvertBlock:
+    """Convert a block to a different type via slash menu."""
+
+    node_id: NodeId
+    new_style: str
+    level: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class SetTaskStatus:
+    """Set task status directly (e.g. from Kanban drag)."""
+
+    task_id: NodeId
+    status: str
+
+
 # ---------------------------------------------------------------------------
 # Union type
 # ---------------------------------------------------------------------------
@@ -233,4 +258,7 @@ type LensAction = (
     | RemoveDependency
     | SetDueDate
     | SetDateRange
+    | UpdateBlockText
+    | ConvertBlock
+    | SetTaskStatus
 )
