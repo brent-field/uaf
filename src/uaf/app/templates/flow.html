@@ -338,23 +338,24 @@
                 if (!dep) return;
                 var fromR = dep.getBoundingClientRect();
                 var toR = node.getBoundingClientRect();
-                var x1 = fromR.left + fromR.width / 2 - rect.left;
-                var y1 = fromR.bottom - rect.top;
-                var x2 = toR.left + toR.width / 2 - rect.left;
-                var y2 = toR.top - rect.top;
-                var cy = (y1 + y2) / 2;
+                // Draw from right-center of dependency to left-center of dependent
+                var x1 = fromR.right - rect.left;
+                var y1 = fromR.top + fromR.height / 2 - rect.top;
+                var x2 = toR.left - rect.left;
+                var y2 = toR.top + toR.height / 2 - rect.top;
+                var cx = (x1 + x2) / 2;
                 var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                 path.setAttribute('class', 'dag-edge-path');
                 path.setAttribute('d',
                     'M' + x1 + ',' + y1 +
-                    ' C' + x1 + ',' + cy + ' ' + x2 + ',' + cy + ' ' + x2 + ',' + y2
+                    ' C' + cx + ',' + y1 + ' ' + cx + ',' + y2 + ' ' + x2 + ',' + y2
                 );
                 svg.appendChild(path);
                 var arrow = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
                 arrow.setAttribute('class', 'dag-edge-arrow');
                 arrow.setAttribute('points',
-                    (x2 - 4) + ',' + (y2 - 6) + ' ' +
-                    (x2 + 4) + ',' + (y2 - 6) + ' ' +
+                    (x2 + 6) + ',' + (y2 - 4) + ' ' +
+                    (x2 + 6) + ',' + (y2 + 4) + ' ' +
                     x2 + ',' + y2
                 );
                 svg.appendChild(arrow);
@@ -511,10 +512,14 @@
 .flow-deps th { font-weight: 600; font-size: 0.85rem; color: #666; }
 
 /* DAG */
-.dag-container { position: relative; padding: 1rem; }
-.flow-dag { display: grid; gap: 2rem 3rem; justify-items: center; align-items: center; }
-.dag-node { padding: 0.5rem 1rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; text-align: center; min-width: 80px; z-index: 1; }
-.dag-label { font-weight: 500; }
+.dag-container { position: relative; }
+.flow-dag-table { width: 100%; border-collapse: collapse; }
+.flow-dag-table th, .flow-dag-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-dag-table th { font-weight: 600; font-size: 0.85rem; color: #666; }
+.dag-task-name { width: 30%; font-weight: 500; white-space: nowrap; }
+.dag-cell { position: relative; height: 2.5rem; }
+.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.25rem 0.75rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; }
+.dag-label { font-weight: 500; font-size: 0.85rem; }
 .dag-edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .dag-edge-path { fill: none; stroke: #999; stroke-width: 2; }
 .dag-edge-arrow { fill: #999; }

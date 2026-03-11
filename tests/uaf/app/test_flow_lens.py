@@ -312,14 +312,14 @@ class TestDAGView:
         assert "dag-edges" in view.content
         assert "dag-container" in view.content
 
-    def test_dag_nodes_have_grid_positioning(self) -> None:
+    def test_dag_nodes_have_table_layout(self) -> None:
         sdb, session, art_id = _setup()
         _add_task(sdb, session, art_id, "Task A")
 
         lens = FlowLens()
         view = lens.render(sdb, session, art_id, mode="dag")  # type: ignore[arg-type]
-        assert "grid-row" in view.content
-        assert "grid-column" in view.content
+        assert "flow-dag-table" in view.content
+        assert "dag-task-name" in view.content
 
     def test_dag_layered_layout(self) -> None:
         sdb, session, art_id = _setup()

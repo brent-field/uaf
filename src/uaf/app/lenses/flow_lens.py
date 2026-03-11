@@ -419,7 +419,7 @@ class FlowLens:
         self, tasks: list[Task], artifact_id: NodeId,
         db: SecureGraphDB, session: Session,
     ) -> str:
-        """Render DAG view — layered graph with positioned nodes."""
+        """Render DAG view — Gantt-style layout with nodes and dependency arrows."""
         if not tasks:
             return _empty_state(
                 "Click <strong>+ Task</strong> above to add your first task."
@@ -434,42 +434,38 @@ class FlowLens:
             parent_layers = [layer[p] for p in preds[nid] if p in layer]
             layer[nid] = (max(parent_layers) + 1) if parent_layers else 0
 
-        # Group tasks by layer and assign column indices
-        layers: dict[int, list[Task]] = {}
-        for task in sorted_tasks:
-            lyr = layer[task.meta.id]
-            layers.setdefault(lyr, []).append(task)
+        max_layer = max(layer.values(), default=0)
+        num_cols = max_layer + 1
 
-        max_cols = max(len(ts) for ts in layers.values()) if layers else 1
-        col_index: dict[NodeId, int] = {}
-        for lyr_tasks in layers.values():
-            for col, task in enumerate(lyr_tasks):
-                col_index[task.meta.id] = col
-
-        # Render nodes with grid positioning
-        nodes: list[str] = []
-        for task in sorted_tasks:
+        rows: list[str] = []
+        for i, task in enumerate(sorted_tasks):
             name = escape(task.title)
             nid = task.meta.id
             deps_attr = " ".join(str(p) for p in preds[nid])
-            row = layer[nid] + 1  # CSS grid is 1-indexed
-            col = col_index[nid] + 1
-            nodes.append(
-                f'<div class="dag-node"'
-                f' style="grid-row:{row}; grid-column:{col}"'
+            col = layer[nid]
+            # Position node as percentage within the cell
+            pct = (col * 100 // num_cols) if num_cols > 1 else 0
+            left_style = f"left:{pct}%" if num_cols > 1 else "left:0"
+
+            left_td = f'<td class="dag-task-name">{name}</td>'
+            right_td = (
+                f'<td class="dag-cell">'
+                f'<div class="dag-node" style="{left_style}"'
                 f' data-node-id="{nid}"'
-                f' data-row="{layer[nid]}"'
+                f' data-row="{i}"'
                 f' data-deps="{deps_attr}">'
                 f'<span class="dag-label">{name}</span>'
-                f"</div>"
+                f'</div>'
+                f'</td>'
             )
+            rows.append(f"<tr>{left_td}{right_td}</tr>")
 
-        grid_style = f"grid-template-columns: repeat({max_cols}, 1fr)"
         return (
             f'<div class="dag-container">'
-            f'<div class="flow-dag" style="{grid_style}">'
-            f"{''.join(nodes)}"
-            f"</div>"
+            f'<table class="flow-dag-table">'
+            f"<thead><tr><th>Task</th><th>Dependencies</th></tr></thead>"
+            f'<tbody>{"".join(rows)}</tbody>'
+            f"</table>"
             f'<svg class="dag-edges"></svg>'
             f"</div>"
         )
