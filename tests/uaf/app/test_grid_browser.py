@@ -116,8 +116,8 @@ class TestCreateSpreadsheetFromDashboard:
             browser.close()
 
 
-class TestCellClickOpensModal:
-    def test_click_cell_shows_modal(self, server_url: str) -> None:
+class TestCellClickInlineEdit:
+    def test_click_cell_shows_inline_input(self, server_url: str) -> None:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
@@ -130,10 +130,68 @@ class TestCellClickOpensModal:
 
             # Click the first cell
             page.locator("td[data-row][data-col]").first.click()
-            page.wait_for_selector(".cell-edit-overlay", timeout=3000)
+            page.wait_for_selector(".cell-inline-input", timeout=3000)
 
-            modal = page.locator(".cell-edit-overlay")
-            assert modal.count() == 1
+            inline_input = page.locator(".cell-inline-input")
+            assert inline_input.count() == 1
+            browser.close()
+
+
+class TestCellNavigation:
+    """After editing A1, user must be able to navigate to other cells."""
+
+    def test_tab_from_cell_activates_next_cell(self, server_url: str) -> None:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            _register_user(page, server_url)
+
+            page.click('button:has-text("New Spreadsheet")')
+            page.wait_for_selector("#grid-content", timeout=5000)
+
+            # Click A1 (row=0, col=0) and type a value
+            page.locator('td[data-row="0"][data-col="0"]').click()
+            page.wait_for_selector(".cell-inline-input", timeout=3000)
+            page.locator(".cell-inline-input").fill("hello")
+
+            # Press Tab — should commit A1 and activate B1 (row=0, col=1)
+            page.keyboard.press("Tab")
+            page.wait_for_selector(
+                'td[data-row="0"][data-col="1"] .cell-inline-input', timeout=5000,
+            )
+            active = page.locator(
+                'td[data-row="0"][data-col="1"] .cell-inline-input',
+            )
+            assert active.count() == 1
+            browser.close()
+
+    def test_click_another_cell_after_editing(self, server_url: str) -> None:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            _register_user(page, server_url)
+
+            page.click('button:has-text("New Spreadsheet")')
+            page.wait_for_selector("#grid-content", timeout=5000)
+
+            # Click A1 and type a value
+            page.locator('td[data-row="0"][data-col="0"]').click()
+            page.wait_for_selector(".cell-inline-input", timeout=3000)
+            page.locator(".cell-inline-input").fill("42")
+
+            # Click B2 (row=1, col=1) — should commit A1 and activate B2
+            page.locator('td[data-row="1"][data-col="1"]').click()
+            page.wait_for_selector(
+                'td[data-row="1"][data-col="1"] .cell-inline-input', timeout=5000,
+            )
+            active = page.locator(
+                'td[data-row="1"][data-col="1"] .cell-inline-input',
+            )
+            assert active.count() == 1
             browser.close()
 
 

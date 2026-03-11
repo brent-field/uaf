@@ -49,46 +49,115 @@
     </div>
 </div>
 
-<div id="cell-edit-modal"></div>
-
 <script>
-document.body.addEventListener('click', function(e) {
-    var td = e.target.closest('td[data-row][data-col]');
-    if (!td) return;
-    var nodeId = td.getAttribute('data-node-id');
-    var row = td.getAttribute('data-row');
-    var col = td.getAttribute('data-col');
-    var currentVal = td.textContent.trim();
+(function() {
     var artifactId = '{{ artifact_id }}';
-    var modal = document.getElementById('cell-edit-modal');
+    var activeInput = null;
+    var pendingCell = null;  // {row, col} to activate after HTMX swap
 
-    if (nodeId) {
-        modal.innerHTML =
-            '<div class="cell-edit-overlay" onclick="if(event.target===this)this.remove()">' +
-            '<form class="cell-edit-form" hx-post="/artifacts/' + artifactId + '/grid/set-cell" ' +
-            'hx-target="#grid-content" hx-swap="innerHTML">' +
-            '<h4>Edit Cell</h4>' +
-            '<input type="hidden" name="cell_id" value="' + nodeId + '" />' +
-            '<input type="text" name="value" value="' + currentVal.replace(/"/g, '&quot;') + '" autofocus />' +
-            '<div class="cell-edit-actions">' +
-            '<button type="button" class="btn btn-sm" onclick="this.closest(\'.cell-edit-overlay\').remove()">Cancel</button>' +
-            '<button type="submit" class="btn btn-sm btn-primary">Save</button>' +
-            '</div></form></div>';
-    } else {
-        modal.innerHTML =
-            '<div class="cell-edit-overlay" onclick="if(event.target===this)this.remove()">' +
-            '<form class="cell-edit-form" hx-post="/artifacts/' + artifactId + '/grid/create-cell" ' +
-            'hx-target="#grid-content" hx-swap="innerHTML">' +
-            '<h4>Edit Cell</h4>' +
-            '<input type="hidden" name="row" value="' + row + '" />' +
-            '<input type="hidden" name="col" value="' + col + '" />' +
-            '<input type="text" name="value" value="" autofocus />' +
-            '<div class="cell-edit-actions">' +
-            '<button type="button" class="btn btn-sm" onclick="this.closest(\'.cell-edit-overlay\').remove()">Cancel</button>' +
-            '<button type="submit" class="btn btn-sm btn-primary">Save</button>' +
-            '</div></form></div>';
+    // After HTMX replaces the grid, activate the pending cell
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        if (!e.detail.target || e.detail.target.id !== 'grid-content') return;
+        if (!pendingCell) return;
+        var row = pendingCell.row;
+        var col = pendingCell.col;
+        pendingCell = null;
+        var td = document.querySelector(
+            'td[data-row="' + row + '"][data-col="' + col + '"]'
+        );
+        if (td) activateCell(td);
+    });
+
+    function commitCell(td, input) {
+        if (!input || input !== activeInput) return;
+        activeInput = null;
+        var val = input.value;
+        var nodeId = td.getAttribute('data-node-id');
+        var row = td.getAttribute('data-row');
+        var col = td.getAttribute('data-col');
+
+        if (nodeId) {
+            htmx.ajax('POST', '/artifacts/' + artifactId + '/grid/set-cell', {
+                target: '#grid-content',
+                swap: 'innerHTML',
+                values: { cell_id: nodeId, value: val }
+            });
+        } else {
+            htmx.ajax('POST', '/artifacts/' + artifactId + '/grid/create-cell', {
+                target: '#grid-content',
+                swap: 'innerHTML',
+                values: { row: row, col: col, value: val }
+            });
+        }
     }
-    htmx.process(modal);
-});
+
+    function cancelCell(td, input) {
+        if (!input || input !== activeInput) return;
+        activeInput = null;
+        td.textContent = td.getAttribute('data-original') || '';
+        td.removeAttribute('data-original');
+    }
+
+    function activateCell(td) {
+        if (activeInput && activeInput.closest('td') === td) return;
+        if (activeInput) {
+            var prevTd = activeInput.closest('td');
+            if (prevTd) commitCell(prevTd, activeInput);
+        }
+
+        var formula = td.getAttribute('data-formula');
+        var currentVal = formula || td.textContent.trim();
+        td.setAttribute('data-original', td.textContent.trim());
+
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.value = currentVal;
+        input.className = 'cell-inline-input';
+        td.textContent = '';
+        td.appendChild(input);
+        activeInput = input;
+        input.focus();
+        input.select();
+
+        input.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                commitCell(td, input);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelCell(td, input);
+            } else if (e.key === 'Tab') {
+                e.preventDefault();
+                var nextCol = parseInt(td.getAttribute('data-col'), 10)
+                    + (e.shiftKey ? -1 : 1);
+                pendingCell = { row: td.getAttribute('data-row'), col: nextCol };
+                commitCell(td, input);
+            }
+        });
+
+        input.addEventListener('blur', function() {
+            setTimeout(function() {
+                if (activeInput === input) commitCell(td, input);
+            }, 100);
+        });
+    }
+
+    document.body.addEventListener('click', function(e) {
+        var td = e.target.closest('td[data-row][data-col]');
+        if (!td) return;
+        if (e.target.tagName === 'INPUT') return;
+        if (activeInput) {
+            // Commit current cell, then activate clicked cell after swap
+            pendingCell = {
+                row: td.getAttribute('data-row'),
+                col: td.getAttribute('data-col'),
+            };
+            var prevTd = activeInput.closest('td');
+            if (prevTd) commitCell(prevTd, activeInput);
+        } else {
+            activateCell(td);
+        }
+    });
+})();
 </script>
 {% endblock %}

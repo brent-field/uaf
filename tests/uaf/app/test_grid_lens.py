@@ -9,6 +9,7 @@ from uaf.app.lenses.actions import (
     InsertColumn,
     InsertRow,
     RenameArtifact,
+    SetCellFormula,
     SetCellValue,
 )
 from uaf.app.lenses.grid_lens import GridLens
@@ -45,15 +46,16 @@ def _contains(source: NodeId, target: NodeId) -> Edge:
     )
 
 
-def _make_spreadsheet(
-    sdb: SecureGraphDB, session: object
-) -> tuple[NodeId, NodeId]:
+def _make_spreadsheet(sdb: SecureGraphDB, session: object) -> tuple[NodeId, NodeId]:
     """Create a simple 2x3 spreadsheet. Returns (artifact_id, sheet_id)."""
     art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Spreadsheet")
     art_id = sdb.create_node(session, art)
 
     sheet = Sheet(
-        meta=make_node_metadata(NodeType.SHEET), title="Sheet1", rows=2, cols=3,
+        meta=make_node_metadata(NodeType.SHEET),
+        title="Sheet1",
+        rows=2,
+        cols=3,
     )
     sheet_id = sdb.create_node(session, sheet)
     sdb.create_edge(session, _contains(art_id, sheet_id))
@@ -61,7 +63,10 @@ def _make_spreadsheet(
     # Row 0: A, B, C
     for c, val in enumerate(["A", "B", "C"]):
         cell = Cell(
-            meta=make_node_metadata(NodeType.CELL), value=val, row=0, col=c,
+            meta=make_node_metadata(NodeType.CELL),
+            value=val,
+            row=0,
+            col=c,
         )
         cid = sdb.create_node(session, cell)
         sdb.create_edge(session, _contains(sheet_id, cid))
@@ -69,7 +74,10 @@ def _make_spreadsheet(
     # Row 1: 1, 2, 3
     for c, val in enumerate([1, 2, 3]):
         cell = Cell(
-            meta=make_node_metadata(NodeType.CELL), value=val, row=1, col=c,
+            meta=make_node_metadata(NodeType.CELL),
+            value=val,
+            row=1,
+            col=c,
         )
         cid = sdb.create_node(session, cell)
         sdb.create_edge(session, _contains(sheet_id, cid))
@@ -139,7 +147,10 @@ class TestGridLensRender:
         art_id = sdb.create_node(session, art)
 
         sheet = Sheet(
-            meta=make_node_metadata(NodeType.SHEET), title="S1", rows=1, cols=2,
+            meta=make_node_metadata(NodeType.SHEET),
+            title="S1",
+            rows=1,
+            cols=2,
         )
         sheet_id = sdb.create_node(session, sheet)
         sdb.create_edge(session, _contains(art_id, sheet_id))
@@ -177,7 +188,10 @@ class TestGridLensRender:
             sid = sdb.create_node(session, sheet)
             sdb.create_edge(session, _contains(art_id, sid))
             cell = Cell(
-                meta=make_node_metadata(NodeType.CELL), value=f"S{i + 1}", row=0, col=0,
+                meta=make_node_metadata(NodeType.CELL),
+                value=f"S{i + 1}",
+                row=0,
+                col=0,
             )
             cid = sdb.create_node(session, cell)
             sdb.create_edge(session, _contains(sid, cid))
@@ -192,7 +206,10 @@ class TestGridLensRender:
         art_id = sdb.create_node(session, art)
 
         sheet = Sheet(
-            meta=make_node_metadata(NodeType.SHEET), title="S1", rows=1, cols=1,
+            meta=make_node_metadata(NodeType.SHEET),
+            title="S1",
+            rows=1,
+            cols=1,
         )
         sid = sdb.create_node(session, sheet)
         sdb.create_edge(session, _contains(art_id, sid))
@@ -232,7 +249,10 @@ class TestGridLensActions:
         art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="FC")
         art_id = sdb.create_node(session, art)
         sheet = Sheet(
-            meta=make_node_metadata(NodeType.SHEET), title="S", rows=1, cols=1,
+            meta=make_node_metadata(NodeType.SHEET),
+            title="S",
+            rows=1,
+            cols=1,
         )
         sid = sdb.create_node(session, sheet)
         sdb.create_edge(session, _contains(art_id, sid))
@@ -429,3 +449,178 @@ class TestSetCellBoolNone:
         node = sdb.get_node(session, first_cell.meta.id)
         assert isinstance(node, Cell)
         assert node.value is None
+
+
+class TestFormulaRendering:
+    """Tests for data-formula attribute in rendered HTML."""
+
+    def test_formula_cell_has_data_formula_attr(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="FC")
+        art_id = sdb.create_node(session, art)
+        sheet = Sheet(
+            meta=make_node_metadata(NodeType.SHEET),
+            title="S",
+            rows=1,
+            cols=2,
+        )
+        sid = sdb.create_node(session, sheet)
+        sdb.create_edge(session, _contains(art_id, sid))
+
+        c1 = Cell(meta=make_node_metadata(NodeType.CELL), value=5, row=0, col=0)
+        c1_id = sdb.create_node(session, c1)
+        sdb.create_edge(session, _contains(sid, c1_id))
+
+        fc = FormulaCell(
+            meta=make_node_metadata(NodeType.FORMULA_CELL),
+            formula="=A1*3",
+            cached_value=15,
+            row=0,
+            col=1,
+        )
+        fc_id = sdb.create_node(session, fc)
+        sdb.create_edge(session, _contains(sid, fc_id))
+
+        view = lens.render(sdb, session, art_id)
+        assert 'data-formula="=A1*3"' in view.content
+        assert ">15</td>" in view.content
+
+    def test_regular_cell_no_formula_attr(self) -> None:
+        sdb, session, lens = _setup()
+        art_id, _ = _make_spreadsheet(sdb, session)
+        view = lens.render(sdb, session, art_id)
+        assert "data-formula" not in view.content
+
+
+class TestSetCellFormula:
+    """Tests for the SetCellFormula action."""
+
+    def test_set_formula_on_existing_formula_cell(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="FC")
+        art_id = sdb.create_node(session, art)
+        sheet = Sheet(
+            meta=make_node_metadata(NodeType.SHEET),
+            title="S",
+            rows=1,
+            cols=1,
+        )
+        sid = sdb.create_node(session, sheet)
+        sdb.create_edge(session, _contains(art_id, sid))
+
+        fc = FormulaCell(
+            meta=make_node_metadata(NodeType.FORMULA_CELL),
+            formula="=1+1",
+            cached_value=2,
+            row=0,
+            col=0,
+        )
+        fc_id = sdb.create_node(session, fc)
+        sdb.create_edge(session, _contains(sid, fc_id))
+
+        action = SetCellFormula(cell_id=fc_id, formula="=2+3", cached_value=5)
+        lens.apply_action(sdb, session, art_id, action)
+
+        node = sdb.get_node(session, fc_id)
+        assert isinstance(node, FormulaCell)
+        assert node.formula == "=2+3"
+        assert node.cached_value == 5
+
+    def test_convert_cell_to_formula_cell(self) -> None:
+        sdb, session, lens = _setup()
+        art_id, sheet_id = _make_spreadsheet(sdb, session)
+
+        cells = sdb.get_children(session, sheet_id)
+        first_cell = cells[0]
+        assert isinstance(first_cell, Cell)
+
+        action = SetCellFormula(
+            cell_id=first_cell.meta.id,
+            formula="=1+2",
+            cached_value=3,
+        )
+        lens.apply_action(sdb, session, art_id, action)
+
+        node = sdb.get_node(session, first_cell.meta.id)
+        assert isinstance(node, FormulaCell)
+        assert node.formula == "=1+2"
+        assert node.cached_value == 3
+        assert node.row == first_cell.row
+        assert node.col == first_cell.col
+
+
+class TestRecalculateSheet:
+    """Tests for recalculate_sheet dependent recalculation."""
+
+    def test_recalculate_updates_dependent_formula(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="R")
+        art_id = sdb.create_node(session, art)
+        sheet = Sheet(
+            meta=make_node_metadata(NodeType.SHEET),
+            title="S",
+            rows=1,
+            cols=3,
+        )
+        sid = sdb.create_node(session, sheet)
+        sdb.create_edge(session, _contains(art_id, sid))
+
+        # A1 = 10
+        c1 = Cell(meta=make_node_metadata(NodeType.CELL), value=10, row=0, col=0)
+        c1_id = sdb.create_node(session, c1)
+        sdb.create_edge(session, _contains(sid, c1_id))
+
+        # B1 = 20
+        c2 = Cell(meta=make_node_metadata(NodeType.CELL), value=20, row=0, col=1)
+        c2_id = sdb.create_node(session, c2)
+        sdb.create_edge(session, _contains(sid, c2_id))
+
+        # C1 = =A1+B1  (cached_value=0, stale)
+        fc = FormulaCell(
+            meta=make_node_metadata(NodeType.FORMULA_CELL),
+            formula="=A1+B1",
+            cached_value=0,
+            row=0,
+            col=2,
+        )
+        fc_id = sdb.create_node(session, fc)
+        sdb.create_edge(session, _contains(sid, fc_id))
+
+        lens.recalculate_sheet(sdb, session, sid)
+
+        node = sdb.get_node(session, fc_id)
+        assert isinstance(node, FormulaCell)
+        assert node.cached_value == 30
+
+    def test_recalculate_no_change_when_up_to_date(self) -> None:
+        sdb, session, lens = _setup()
+        art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="R")
+        art_id = sdb.create_node(session, art)
+        sheet = Sheet(
+            meta=make_node_metadata(NodeType.SHEET),
+            title="S",
+            rows=1,
+            cols=2,
+        )
+        sid = sdb.create_node(session, sheet)
+        sdb.create_edge(session, _contains(art_id, sid))
+
+        c1 = Cell(meta=make_node_metadata(NodeType.CELL), value=5, row=0, col=0)
+        c1_id = sdb.create_node(session, c1)
+        sdb.create_edge(session, _contains(sid, c1_id))
+
+        fc = FormulaCell(
+            meta=make_node_metadata(NodeType.FORMULA_CELL),
+            formula="=A1+1",
+            cached_value=6,
+            row=0,
+            col=1,
+        )
+        fc_id = sdb.create_node(session, fc)
+        sdb.create_edge(session, _contains(sid, fc_id))
+
+        lens.recalculate_sheet(sdb, session, sid)
+
+        node = sdb.get_node(session, fc_id)
+        assert isinstance(node, FormulaCell)
+        assert node.cached_value == 6
