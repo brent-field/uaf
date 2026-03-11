@@ -308,20 +308,32 @@ class FlowLens:
                 f"{c0}{c1}{c2}{c3}{c4}{hidden}</tr>"
             )
 
-        # New-row placeholder
+        # New-row placeholder — includes date inputs so Tab works
         nr = len(tasks)
+        new_hx = (
+            f' hx-post="/artifacts/{aid}/flow/create-task"'
+            f' hx-include="closest tr"'
+            f" hx-vals='{{\"mode\":\"list\"}}'"
+            f' hx-trigger="keydown[key==\'Enter\']"'
+            f"{hx}"
+            f' data-action="create"'
+        )
         new_row = (
             f'<tr class="list-row-new">'
             f"<td></td>"
             f'<td><input data-row="{nr}" data-col="1"'
             f' class="gc list-cell-input"'
             f' type="text" name="title" placeholder="Add a task\u2026"'
-            f' hx-post="/artifacts/{aid}/flow/create-task"'
-            f" hx-vals='{{\"mode\":\"list\"}}'"
-            f' hx-trigger="keydown[key==\'Enter\']"'
-            f"{hx}"
-            f' data-action="create" /></td>'
-            f"<td></td><td></td><td></td>"
+            f"{new_hx} /></td>"
+            f'<td><input data-row="{nr}" data-col="2"'
+            f' class="gc list-cell-date"'
+            f' type="date" name="start_date"'
+            f"{new_hx} /></td>"
+            f'<td><input data-row="{nr}" data-col="3"'
+            f' class="gc list-cell-date"'
+            f' type="date" name="end_date"'
+            f"{new_hx} /></td>"
+            f"<td></td>"
             f"</tr>"
         )
 
