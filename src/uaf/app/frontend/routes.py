@@ -33,8 +33,7 @@ from uaf.app.lenses.actions import (
 from uaf.core.errors import AuthenticationError
 from uaf.core.node_id import NodeId
 from uaf.core.nodes import Artifact, NodeType
-from uaf.security.auth import PasswordCredentials, TokenCredentials
-from uaf.security.primitives import PrincipalId
+from uaf.security.auth import TokenCredentials
 from uaf.security.secure_graph_db import SecureGraphDB, Session
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -223,18 +222,13 @@ def register_page(request: Request) -> HTMLResponse:
 @router.post("/login", response_model=None)
 def login_submit(
     request: Request,
-    principal_id: str = Form(...),
+    display_name: str = Form(...),
     password: str = Form(...),
     db: SecureGraphDB = Depends(get_db),
 ) -> RedirectResponse | HTMLResponse:
     """Handle login form submission."""
     try:
-        session = db.authenticate(
-            PasswordCredentials(
-                principal_id=PrincipalId(value=principal_id),
-                password=password,
-            )
-        )
+        session = db.authenticate_by_display_name(display_name, password)
     except AuthenticationError:
         ctx: dict[str, Any] = {
             "request": request,

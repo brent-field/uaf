@@ -104,6 +104,13 @@ class LocalAuthProvider:
         """Look up a principal by ID."""
         return self._principals.get(principal_id)
 
+    def find_by_display_name(self, display_name: str) -> Principal | None:
+        """Find a principal by display name."""
+        for p in self._principals.values():
+            if p.display_name == display_name:
+                return p
+        return None
+
     def issue_token(self, principal: Principal) -> str:
         """Generate a JWT token for an authenticated principal."""
         from datetime import timedelta
