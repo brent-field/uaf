@@ -549,25 +549,20 @@ input:focus, select:focus {
     color: var(--success);
 }
 
-/* Cell edit modal */
-.cell-edit-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.3);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
+/* Inline cell editing */
+.grid-content td .cell-inline-input {
+    width: 100%;
+    height: 100%;
+    border: none;
+    outline: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    background: #e8f0fe;
+    box-shadow: inset 0 0 0 2px var(--primary);
+    border-radius: 0;
+    min-width: 0;
 }
-.cell-edit-form {
-    background: var(--bg);
-    padding: 1.25rem;
-    border-radius: var(--radius);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-    min-width: 300px;
-}
-.cell-edit-form h4 { margin-bottom: 0.75rem; }
-.cell-edit-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 
 /* HTMX loading indicator */
 .htmx-indicator {

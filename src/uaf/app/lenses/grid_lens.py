@@ -14,14 +14,17 @@ from uaf.app.lenses.actions import (
     InsertRow,
     RenameArtifact,
     ReorderNodes,
+    SetCellFormula,
     SetCellValue,
 )
 from uaf.core.edges import Edge, EdgeType
+from uaf.core.formula import evaluate_formula
 from uaf.core.node_id import EdgeId, utc_now
 from uaf.core.nodes import (
     Artifact,
     Cell,
     FormulaCell,
+    NodeMetadata,
     NodeType,
     Sheet,
     make_node_metadata,
@@ -33,12 +36,14 @@ if TYPE_CHECKING:
     from uaf.core.nodes import CellValue
     from uaf.security.secure_graph_db import SecureGraphDB, Session
 
-_SUPPORTED = frozenset({
-    NodeType.ARTIFACT,
-    NodeType.SHEET,
-    NodeType.CELL,
-    NodeType.FORMULA_CELL,
-})
+_SUPPORTED = frozenset(
+    {
+        NodeType.ARTIFACT,
+        NodeType.SHEET,
+        NodeType.CELL,
+        NodeType.FORMULA_CELL,
+    }
+)
 
 
 class GridLens:
@@ -52,9 +57,7 @@ class GridLens:
     def supported_node_types(self) -> frozenset[NodeType]:
         return _SUPPORTED
 
-    def render(
-        self, db: SecureGraphDB, session: Session, artifact_id: NodeId
-    ) -> LensView:
+    def render(self, db: SecureGraphDB, session: Session, artifact_id: NodeId) -> LensView:
         """Render the spreadsheet as HTML tables."""
         artifact = db.get_node(session, artifact_id)
         if artifact is None or not isinstance(artifact, Artifact):
@@ -101,6 +104,14 @@ class GridLens:
         match action:
             case SetCellValue(cell_id=cell_id, value=value):
                 self._set_cell_value(db, session, cell_id, value)
+            case SetCellFormula(cell_id=cell_id, formula=formula, cached_value=cached):
+                self._set_cell_formula(
+                    db,
+                    session,
+                    cell_id,
+                    formula,
+                    cached,
+                )
             case InsertRow(sheet_id=sheet_id, position=pos):
                 self._insert_row(db, session, sheet_id, pos)
             case InsertColumn(sheet_id=sheet_id, position=pos):
@@ -123,29 +134,33 @@ class GridLens:
     # Rendering helpers
     # ------------------------------------------------------------------
 
-    def _render_sheet(
-        self, sheet: Sheet, db: SecureGraphDB, session: Session
-    ) -> tuple[str, int]:
+    def _render_sheet(self, sheet: Sheet, db: SecureGraphDB, session: Session) -> tuple[str, int]:
         """Render a single sheet as an HTML table. Returns (html, node_count)."""
         sheet_id = sheet.meta.id
         cells = db.get_children(session, sheet_id)
         node_count = 1  # the sheet itself
 
         # Build grid
-        grid: dict[tuple[int, int], tuple[str, str]] = {}  # (row, col) -> (value, node_id)
         max_row = sheet.rows - 1 if sheet.rows > 0 else -1
         max_col = sheet.cols - 1 if sheet.cols > 0 else -1
+
+        # (row, col) -> (display_value, node_id, formula_or_none)
+        grid: dict[tuple[int, int], tuple[str, str, str | None]] = {}
 
         for cell in cells:
             if isinstance(cell, Cell):
                 val = str(cell.value) if cell.value is not None else ""
-                grid[(cell.row, cell.col)] = (val, str(cell.meta.id))
+                grid[(cell.row, cell.col)] = (val, str(cell.meta.id), None)
                 max_row = max(max_row, cell.row)
                 max_col = max(max_col, cell.col)
                 node_count += 1
             elif isinstance(cell, FormulaCell):
                 val = str(cell.cached_value) if cell.cached_value is not None else ""
-                grid[(cell.row, cell.col)] = (val, str(cell.meta.id))
+                grid[(cell.row, cell.col)] = (
+                    val,
+                    str(cell.meta.id),
+                    cell.formula,
+                )
                 max_row = max(max_row, cell.row)
                 max_col = max(max_col, cell.col)
                 node_count += 1
@@ -155,28 +170,106 @@ class GridLens:
             tds: list[str] = []
             for c in range(max_col + 1):
                 if (r, c) in grid:
-                    val, nid = grid[(r, c)]
+                    val, nid, formula = grid[(r, c)]
+                    formula_attr = f' data-formula="{escape(formula)}"' if formula else ""
                     tds.append(
                         f'    <td data-node-id="{nid}" '
-                        f'data-row="{r}" data-col="{c}">'
+                        f'data-row="{r}" data-col="{c}"'
+                        f"{formula_attr}>"
                         f"{escape(val)}</td>"
                     )
                 else:
-                    tds.append(
-                        f'    <td data-row="{r}" data-col="{c}"></td>'
-                    )
+                    tds.append(f'    <td data-row="{r}" data-col="{c}"></td>')
             rows_html.append("  <tr>\n" + "\n".join(tds) + "\n  </tr>")
 
-        table_html = (
-            f'<table data-sheet-id="{sheet_id}">\n'
-            + "\n".join(rows_html)
-            + "\n</table>"
-        )
+        table_html = f'<table data-sheet-id="{sheet_id}">\n' + "\n".join(rows_html) + "\n</table>"
         return table_html, node_count
 
     # ------------------------------------------------------------------
     # Action helpers
     # ------------------------------------------------------------------
+
+    def _set_cell_formula(
+        self,
+        db: SecureGraphDB,
+        session: Session,
+        cell_id: NodeId,
+        formula: str,
+        cached_value: CellValue,
+    ) -> None:
+        """Set a formula on a cell, converting Cell -> FormulaCell if needed."""
+        existing = db.get_node(session, cell_id)
+        if existing is None:
+            return
+        if isinstance(existing, FormulaCell):
+            updated_fc = FormulaCell(
+                meta=existing.meta,
+                formula=formula,
+                cached_value=cached_value,
+                row=existing.row,
+                col=existing.col,
+            )
+            db.update_node(session, updated_fc)
+        elif isinstance(existing, Cell):
+            # Convert Cell -> FormulaCell (reuse same ID via metadata)
+            fc = FormulaCell(
+                meta=NodeMetadata(
+                    id=existing.meta.id,
+                    node_type=NodeType.FORMULA_CELL,
+                    created_at=existing.meta.created_at,
+                    updated_at=utc_now(),
+                    owner=existing.meta.owner,
+                    layout=existing.meta.layout,
+                ),
+                formula=formula,
+                cached_value=cached_value,
+                row=existing.row,
+                col=existing.col,
+            )
+            db.update_node(session, fc)
+
+    def recalculate_sheet(
+        self,
+        db: SecureGraphDB,
+        session: Session,
+        sheet_id: NodeId,
+    ) -> None:
+        """Re-evaluate all FormulaCell nodes in a sheet."""
+        cells = db.get_children(session, sheet_id)
+
+        # Build value lookup from all cells
+        cell_values: dict[tuple[int, int], CellValue] = {}
+        formula_cells: list[FormulaCell] = []
+        for cell in cells:
+            if isinstance(cell, Cell):
+                cell_values[(cell.row, cell.col)] = cell.value
+            elif isinstance(cell, FormulaCell):
+                formula_cells.append(cell)
+                cell_values[(cell.row, cell.col)] = cell.cached_value
+
+        # Evaluate each formula cell
+        for fc in formula_cells:
+
+            def _getter(
+                row: int,
+                col: int,
+                *,
+                _vals: dict[tuple[int, int], CellValue] = cell_values,
+            ) -> CellValue:
+                return _vals.get((row, col))
+
+            new_val = evaluate_formula(fc.formula, _getter)
+            if new_val != fc.cached_value:
+                updated = FormulaCell(
+                    meta=fc.meta,
+                    formula=fc.formula,
+                    cached_value=new_val,
+                    row=fc.row,
+                    col=fc.col,
+                )
+                db.update_node(session, updated)
+                # Update lookup so later formulas see the new value
+                cell_values[(fc.row, fc.col)] = new_val
 
     def _set_cell_value(
         self, db: SecureGraphDB, session: Session, cell_id: NodeId, value: CellValue
@@ -187,7 +280,10 @@ class GridLens:
             return
         if isinstance(existing, Cell):
             updated = Cell(
-                meta=existing.meta, value=value, row=existing.row, col=existing.col,
+                meta=existing.meta,
+                value=value,
+                row=existing.row,
+                col=existing.col,
             )
             db.update_node(session, updated)
         elif isinstance(existing, FormulaCell):
@@ -214,7 +310,10 @@ class GridLens:
         for cell in cells:
             if isinstance(cell, Cell) and cell.row >= position:
                 updated = Cell(
-                    meta=cell.meta, value=cell.value, row=cell.row + 1, col=cell.col,
+                    meta=cell.meta,
+                    value=cell.value,
+                    row=cell.row + 1,
+                    col=cell.col,
                 )
                 db.update_node(session, updated)
             elif isinstance(cell, FormulaCell) and cell.row >= position:
@@ -230,7 +329,10 @@ class GridLens:
         # Create new empty cells for the row
         for c in range(sheet.cols):
             new_cell = Cell(
-                meta=make_node_metadata(NodeType.CELL), value=None, row=position, col=c,
+                meta=make_node_metadata(NodeType.CELL),
+                value=None,
+                row=position,
+                col=c,
             )
             cid = db.create_node(session, new_cell)
             edge = Edge(
@@ -244,7 +346,10 @@ class GridLens:
 
         # Update sheet dimensions
         updated_sheet = Sheet(
-            meta=sheet.meta, title=sheet.title, rows=sheet.rows + 1, cols=sheet.cols,
+            meta=sheet.meta,
+            title=sheet.title,
+            rows=sheet.rows + 1,
+            cols=sheet.cols,
         )
         db.update_node(session, updated_sheet)
 
@@ -262,7 +367,10 @@ class GridLens:
         for cell in cells:
             if isinstance(cell, Cell) and cell.col >= position:
                 updated = Cell(
-                    meta=cell.meta, value=cell.value, row=cell.row, col=cell.col + 1,
+                    meta=cell.meta,
+                    value=cell.value,
+                    row=cell.row,
+                    col=cell.col + 1,
                 )
                 db.update_node(session, updated)
             elif isinstance(cell, FormulaCell) and cell.col >= position:
@@ -278,7 +386,10 @@ class GridLens:
         # Create new empty cells for the column
         for r in range(sheet.rows):
             new_cell = Cell(
-                meta=make_node_metadata(NodeType.CELL), value=None, row=r, col=position,
+                meta=make_node_metadata(NodeType.CELL),
+                value=None,
+                row=r,
+                col=position,
             )
             cid = db.create_node(session, new_cell)
             edge = Edge(
@@ -292,7 +403,10 @@ class GridLens:
 
         # Update sheet dimensions
         updated_sheet = Sheet(
-            meta=sheet.meta, title=sheet.title, rows=sheet.rows, cols=sheet.cols + 1,
+            meta=sheet.meta,
+            title=sheet.title,
+            rows=sheet.rows,
+            cols=sheet.cols + 1,
         )
         db.update_node(session, updated_sheet)
 
@@ -321,7 +435,10 @@ class GridLens:
                 # Shift up
                 if isinstance(cell, Cell):
                     updated = Cell(
-                        meta=cell.meta, value=cell.value, row=row - 1, col=cell.col,
+                        meta=cell.meta,
+                        value=cell.value,
+                        row=row - 1,
+                        col=cell.col,
                     )
                     db.update_node(session, updated)
                 elif isinstance(cell, FormulaCell):
@@ -337,7 +454,10 @@ class GridLens:
         # Update sheet dimensions
         new_rows = max(sheet.rows - 1, 0)
         updated_sheet = Sheet(
-            meta=sheet.meta, title=sheet.title, rows=new_rows, cols=sheet.cols,
+            meta=sheet.meta,
+            title=sheet.title,
+            rows=new_rows,
+            cols=sheet.cols,
         )
         db.update_node(session, updated_sheet)
 
@@ -366,7 +486,10 @@ class GridLens:
                 # Shift left
                 if isinstance(cell, Cell):
                     updated = Cell(
-                        meta=cell.meta, value=cell.value, row=cell.row, col=col - 1,
+                        meta=cell.meta,
+                        value=cell.value,
+                        row=cell.row,
+                        col=col - 1,
                     )
                     db.update_node(session, updated)
                 elif isinstance(cell, FormulaCell):
@@ -382,7 +505,10 @@ class GridLens:
         # Update sheet dimensions
         new_cols = max(sheet.cols - 1, 0)
         updated_sheet = Sheet(
-            meta=sheet.meta, title=sheet.title, rows=sheet.rows, cols=new_cols,
+            meta=sheet.meta,
+            title=sheet.title,
+            rows=sheet.rows,
+            cols=new_cols,
         )
         db.update_node(session, updated_sheet)
 

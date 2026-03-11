@@ -57,6 +57,15 @@ class SetCellValue:
 
 
 @dataclass(frozen=True, slots=True)
+class SetCellFormula:
+    """Set a formula on a cell."""
+
+    cell_id: NodeId
+    formula: str
+    cached_value: CellValue
+
+
+@dataclass(frozen=True, slots=True)
 class InsertRow:
     """Insert a row of empty cells at a position."""
 
@@ -207,6 +216,7 @@ type LensAction = (
     | DeleteText
     | FormatText
     | SetCellValue
+    | SetCellFormula
     | InsertRow
     | InsertColumn
     | DeleteRow

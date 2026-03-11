@@ -116,8 +116,8 @@ class TestCreateSpreadsheetFromDashboard:
             browser.close()
 
 
-class TestCellClickOpensModal:
-    def test_click_cell_shows_modal(self, server_url: str) -> None:
+class TestCellClickInlineEdit:
+    def test_click_cell_shows_inline_input(self, server_url: str) -> None:
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
@@ -130,10 +130,10 @@ class TestCellClickOpensModal:
 
             # Click the first cell
             page.locator("td[data-row][data-col]").first.click()
-            page.wait_for_selector(".cell-edit-overlay", timeout=3000)
+            page.wait_for_selector(".cell-inline-input", timeout=3000)
 
-            modal = page.locator(".cell-edit-overlay")
-            assert modal.count() == 1
+            inline_input = page.locator(".cell-inline-input")
+            assert inline_input.count() == 1
             browser.close()
 
 

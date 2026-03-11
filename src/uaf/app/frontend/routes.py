@@ -28,11 +28,12 @@ from uaf.app.lenses.actions import (
     InsertText,
     RenameArtifact,
     ReorderNodes,
+    SetCellFormula,
     SetCellValue,
 )
 from uaf.core.errors import AuthenticationError
-from uaf.core.node_id import NodeId
-from uaf.core.nodes import Artifact, NodeType
+from uaf.core.node_id import NodeId, utc_now
+from uaf.core.nodes import Artifact, Cell, FormulaCell, NodeType, Sheet
 from uaf.security.auth import TokenCredentials
 from uaf.security.secure_graph_db import SecureGraphDB, Session
 
@@ -75,7 +76,8 @@ def _get_token(request: Request) -> str | None:
 
 
 def _get_session_or_none(
-    request: Request, db: SecureGraphDB,
+    request: Request,
+    db: SecureGraphDB,
 ) -> Session | None:
     """Try to authenticate from cookie; return None on failure."""
     token = _get_token(request)
@@ -123,7 +125,9 @@ def _user_ctx(session: Session) -> dict[str, Any]:
 
 
 def _register_imported_artifact(
-    db: SecureGraphDB, session: Session, art_id: NodeId,
+    db: SecureGraphDB,
+    session: Session,
+    art_id: NodeId,
 ) -> None:
     """Register an artifact (and its children) imported via raw GraphDB in the security layer."""
     from uaf.core.node_id import utc_now
@@ -168,7 +172,10 @@ def _detect_artifact_type(children: list[object]) -> str:
 
 
 def _parse_doc_blocks(
-    content: str, db: SecureGraphDB, session: Session, artifact_id: NodeId,
+    content: str,
+    db: SecureGraphDB,
+    session: Session,
+    artifact_id: NodeId,
 ) -> list[dict[str, str]]:
     """Parse DocLens HTML into per-block dicts for the template."""
     children = db.get_children(session, artifact_id)
@@ -196,24 +203,23 @@ def _render_single_block(node: object) -> tuple[str, str, str]:
             lang_cls = f' class="language-{escape(language)}"' if language else ""
             return (
                 f"<pre><code{lang_cls}>{escape(source)}</code></pre>",
-                source, "code_block",
+                source,
+                "code_block",
             )
         case MathBlock(source=source, equation_number=eq_num):
-            eq_html = (
-                f' <span class="eq-number">{escape(eq_num)}</span>'
-                if eq_num else ""
-            )
+            eq_html = f' <span class="eq-number">{escape(eq_num)}</span>' if eq_num else ""
             return (
-                f'<div class="math-block"><code>{escape(source)}</code>'
-                f"{eq_html}</div>",
-                source, "math_block",
+                f'<div class="math-block"><code>{escape(source)}</code>{eq_html}</div>',
+                source,
+                "math_block",
             )
         case TextBlock(text=text):
             return f'<div class="text-block">{escape(text)}</div>', text, "text_block"
         case Image(uri=uri, alt_text=alt_text):
             return (
                 f'<img src="{escape(uri)}" alt="{escape(alt_text)}" />',
-                alt_text, "image",
+                alt_text,
+                "image",
             )
         case _:
             return "", "", ""
@@ -319,13 +325,15 @@ def dashboard(
             atype = art.artifact_type
             if atype == "doc":
                 atype = _detect_artifact_type(children)
-            items.append({
-                "id": str(art.meta.id),
-                "title": art.title,
-                "child_count": len(children),
-                "updated_at": art.meta.updated_at,
-                "artifact_type": atype,
-            })
+            items.append(
+                {
+                    "id": str(art.meta.id),
+                    "title": art.title,
+                    "child_count": len(children),
+                    "updated_at": art.meta.updated_at,
+                    "artifact_type": atype,
+                }
+            )
 
     ctx: dict[str, Any] = {
         "request": request,
@@ -383,13 +391,15 @@ def delete_artifact(
             atype = art.artifact_type
             if atype == "doc":
                 atype = _detect_artifact_type(children)
-            items.append({
-                "id": str(art.meta.id),
-                "title": art.title,
-                "child_count": len(children),
-                "updated_at": art.meta.updated_at,
-                "artifact_type": atype,
-            })
+            items.append(
+                {
+                    "id": str(art.meta.id),
+                    "title": art.title,
+                    "child_count": len(children),
+                    "updated_at": art.meta.updated_at,
+                    "artifact_type": atype,
+                }
+            )
     ctx: dict[str, Any] = {"request": request, "artifacts": items}
     return templates.TemplateResponse("partials/artifact_list.html", ctx)
 
@@ -418,7 +428,9 @@ def import_artifact(
     stem = Path(original_name).stem
 
     with tempfile.NamedTemporaryFile(
-        prefix=f"{stem}_", suffix=suffix, delete=False,
+        prefix=f"{stem}_",
+        suffix=suffix,
+        delete=False,
     ) as tmp:
         content = file.file.read()
         tmp.write(content)
@@ -570,7 +582,9 @@ def insert_block(
     lens = registry.get("doc")
     if lens is not None:
         lens.apply_action(
-            db, session, aid,
+            db,
+            session,
+            aid,
             InsertText(parent_id=aid, text=text, position=position, style=style),
         )
 
@@ -667,7 +681,9 @@ def move_block_up(
         lens = registry.get("doc")
         if lens is not None:
             lens.apply_action(
-                db, session, aid,
+                db,
+                session,
+                aid,
                 ReorderNodes(parent_id=aid, new_order=tuple(child_ids)),
             )
 
@@ -701,7 +717,9 @@ def move_block_down(
         lens = registry.get("doc")
         if lens is not None:
             lens.apply_action(
-                db, session, aid,
+                db,
+                session,
+                aid,
                 ReorderNodes(parent_id=aid, new_order=tuple(child_ids)),
             )
 
@@ -806,8 +824,86 @@ def set_cell_value(
 
     lens = registry.get("grid")
     if lens is not None:
-        cell_value = _parse_cell_value(value)
-        lens.apply_action(db, session, aid, SetCellValue(cell_id=cid, value=cell_value))
+        if value.startswith("="):
+            from uaf.core.formula import evaluate_formula
+            from uaf.core.nodes import Cell as CellNode
+            from uaf.core.nodes import FormulaCell as FCNode
+
+            # Build cell lookup for the sheet so formula can resolve refs
+            children = db.get_children(session, aid)
+            sheet_id = None
+            for child in children:
+                if isinstance(child, Sheet):
+                    sheet_id = child.meta.id
+                    break
+
+            cell_values: dict[tuple[int, int], str | int | float | bool | None] = {}
+            if sheet_id is not None:
+                for sc in db.get_children(session, sheet_id):
+                    if isinstance(sc, CellNode):
+                        cell_values[(sc.row, sc.col)] = sc.value
+                    elif isinstance(sc, FCNode):
+                        cell_values[(sc.row, sc.col)] = sc.cached_value
+
+            def _getter(
+                row: int,
+                col: int,
+                *,
+                _vals: dict[tuple[int, int], str | int | float | bool | None] = cell_values,
+            ) -> str | int | float | bool | None:
+                return _vals.get((row, col))
+
+            cached = evaluate_formula(value, _getter)
+            lens.apply_action(
+                db,
+                session,
+                aid,
+                SetCellFormula(cell_id=cid, formula=value, cached_value=cached),
+            )
+            # Recalculate dependent formulas
+            if sheet_id is not None:
+                from uaf.app.lenses.grid_lens import GridLens
+
+                if isinstance(lens, GridLens):
+                    lens.recalculate_sheet(db, session, sheet_id)
+        else:
+            cell_value = _parse_cell_value(value)
+            # If overwriting a FormulaCell with plain value, convert back
+            existing = db.get_node(session, cid)
+            if isinstance(existing, FormulaCell):
+                from uaf.core.nodes import NodeMetadata as NMeta
+
+                plain_cell = Cell(
+                    meta=NMeta(
+                        id=existing.meta.id,
+                        node_type=NodeType.CELL,
+                        created_at=existing.meta.created_at,
+                        updated_at=utc_now(),
+                        owner=existing.meta.owner,
+                        layout=existing.meta.layout,
+                    ),
+                    value=cell_value,
+                    row=existing.row,
+                    col=existing.col,
+                )
+                db.update_node(session, plain_cell)
+            else:
+                lens.apply_action(
+                    db,
+                    session,
+                    aid,
+                    SetCellValue(cell_id=cid, value=cell_value),
+                )
+            # Recalculate dependent formulas
+            children = db.get_children(session, aid)
+            for child in children:
+                if isinstance(child, Sheet):
+                    from uaf.app.lenses.grid_lens import GridLens
+
+                    if isinstance(lens, GridLens):
+                        lens.recalculate_sheet(db, session, child.meta.id)
+                    break
+
         view = lens.render(db, session, aid)
         grid_html = view.content
     else:
@@ -916,7 +1012,10 @@ def delete_row(
     lens = registry.get("grid")
     if lens is not None and sheet_id is not None and rows > 0:
         lens.apply_action(
-            db, session, aid, DeleteRow(sheet_id=sheet_id, position=rows - 1),
+            db,
+            session,
+            aid,
+            DeleteRow(sheet_id=sheet_id, position=rows - 1),
         )
         view = lens.render(db, session, aid)
         grid_html = view.content
@@ -953,7 +1052,10 @@ def delete_col(
     lens = registry.get("grid")
     if lens is not None and sheet_id is not None and cols > 0:
         lens.apply_action(
-            db, session, aid, DeleteColumn(sheet_id=sheet_id, position=cols - 1),
+            db,
+            session,
+            aid,
+            DeleteColumn(sheet_id=sheet_id, position=cols - 1),
         )
         view = lens.render(db, session, aid)
         grid_html = view.content
@@ -990,14 +1092,44 @@ def create_cell(
             break
 
     if sheet_id is not None:
-        cell_value = _parse_cell_value(value)
-        cell = Cell(
-            meta=make_node_metadata(NodeType.CELL),
-            value=cell_value,
-            row=row,
-            col=col,
-        )
-        cid = db.create_node(session, cell)
+        if value.startswith("="):
+            from uaf.core.formula import evaluate_formula
+            from uaf.core.nodes import FormulaCell as FCNode
+
+            # Build cell lookup for formula evaluation
+            cell_values: dict[tuple[int, int], str | int | float | bool | None] = {}
+            for sc in db.get_children(session, sheet_id):
+                if isinstance(sc, Cell):
+                    cell_values[(sc.row, sc.col)] = sc.value
+                elif isinstance(sc, FCNode):
+                    cell_values[(sc.row, sc.col)] = sc.cached_value
+
+            def _getter(
+                r: int,
+                c: int,
+                *,
+                _vals: dict[tuple[int, int], str | int | float | bool | None] = cell_values,
+            ) -> str | int | float | bool | None:
+                return _vals.get((r, c))
+
+            cached = evaluate_formula(value, _getter)
+            fc = FCNode(
+                meta=make_node_metadata(NodeType.FORMULA_CELL),
+                formula=value,
+                cached_value=cached,
+                row=row,
+                col=col,
+            )
+            cid = db.create_node(session, fc)
+        else:
+            cell_value = _parse_cell_value(value)
+            cell = Cell(
+                meta=make_node_metadata(NodeType.CELL),
+                value=cell_value,
+                row=row,
+                col=col,
+            )
+            cid = db.create_node(session, cell)
         edge = Edge(
             id=EdgeId.generate(),
             source=sheet_id,
@@ -1006,6 +1138,13 @@ def create_cell(
             created_at=utc_now(),
         )
         db.create_edge(session, edge)
+
+        # Recalculate dependent formulas
+        from uaf.app.lenses.grid_lens import GridLens
+
+        lens_check = registry.get("grid")
+        if isinstance(lens_check, GridLens):
+            lens_check.recalculate_sheet(db, session, sheet_id)
 
     lens = registry.get("grid")
     if lens is not None:
@@ -1039,7 +1178,8 @@ def create_project(
     )
     art_id = db.create_node(session, art)
     return RedirectResponse(
-        url=f"/artifacts/{art_id}/flow", status_code=303,
+        url=f"/artifacts/{art_id}/flow",
+        status_code=303,
     )
 
 
@@ -1100,7 +1240,8 @@ def create_spreadsheet(
             )
 
     return RedirectResponse(
-        url=f"/artifacts/{art_id}/grid", status_code=303,
+        url=f"/artifacts/{art_id}/grid",
+        status_code=303,
     )
 
 
@@ -1124,7 +1265,8 @@ def flow_page(
     lens = registry.get("flow")
     if lens is None:
         raise HTTPException(
-            status_code=500, detail="FlowLens not registered",
+            status_code=500,
+            detail="FlowLens not registered",
         )
 
     view = lens.render(db, session, aid)
@@ -1183,7 +1325,9 @@ def flow_rename(
     lens = registry.get("flow")
     if lens is not None:
         lens.apply_action(
-            db, session, aid,
+            db,
+            session,
+            aid,
             RenameArtifact(artifact_id=aid, title=title),
         )
         view = lens.render(db, session, aid)
@@ -1228,7 +1372,10 @@ def flow_create_task(
         ed = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=UTC)
     elif mode == "list":
         ed = datetime.now(tz=UTC).replace(
-            hour=0, minute=0, second=0, microsecond=0,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
         ) + timedelta(days=7)
     else:
         ed = None
@@ -1236,7 +1383,9 @@ def flow_create_task(
     lens = registry.get("flow")
     if lens is not None:
         lens.apply_action(
-            db, session, aid,
+            db,
+            session,
+            aid,
             CreateTask(
                 parent_id=aid,
                 title=title,
@@ -1342,7 +1491,9 @@ def flow_update_task_dates(
         sd = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UTC)
         ed = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=UTC)
         lens.apply_action(
-            db, session, aid,
+            db,
+            session,
+            aid,
             SetDateRange(task_id=nid, start_date=sd, end_date=ed),
         )
     view = lens.render(db, session, aid, mode="list")
@@ -1374,10 +1525,7 @@ def flow_update_task_due(
     lens = registry.get("flow")
     if not isinstance(lens, FlowLens):
         return HTMLResponse("")
-    dd = (
-        datetime.strptime(due_date, "%Y-%m-%d").replace(tzinfo=UTC)
-        if due_date else None
-    )
+    dd = datetime.strptime(due_date, "%Y-%m-%d").replace(tzinfo=UTC) if due_date else None
     lens.apply_action(db, session, aid, SetDueDate(task_id=nid, due_date=dd))
     view = lens.render(db, session, aid, mode="list")
     return HTMLResponse(view.content)
@@ -1407,7 +1555,9 @@ def flow_set_dependency(
     if lens is not None:
         with contextlib.suppress(ValueError):
             lens.apply_action(
-                db, session, aid,
+                db,
+                session,
+                aid,
                 SetDependency(source_task_id=src, target_task_id=tgt),
             )
         view = lens.render(db, session, aid)
@@ -1438,9 +1588,12 @@ def flow_remove_dependency(
     lens = registry.get("flow")
     if lens is not None:
         lens.apply_action(
-            db, session, aid,
+            db,
+            session,
+            aid,
             RemoveDependency(
-                source_task_id=src, target_task_id=tgt,
+                source_task_id=src,
+                target_task_id=tgt,
             ),
         )
         view = lens.render(db, session, aid)
@@ -1470,7 +1623,10 @@ def flow_delete_task(
     lens = registry.get("flow")
     if lens is not None:
         lens.apply_action(
-            db, session, aid, DeleteNode(node_id=nid),
+            db,
+            session,
+            aid,
+            DeleteNode(node_id=nid),
         )
         if isinstance(lens, FlowLens):
             view = lens.render(db, session, aid, mode=mode)
