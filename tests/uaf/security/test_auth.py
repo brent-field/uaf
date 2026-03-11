@@ -115,6 +115,19 @@ class TestTokenAuth:
             auth.authenticate(TokenCredentials(token=token))
 
 
+class TestFindByDisplayName:
+    def test_find_existing(self) -> None:
+        auth = LocalAuthProvider()
+        p = auth.create_principal("Alice", "secret123")
+        found = auth.find_by_display_name("Alice")
+        assert found is not None
+        assert found.id == p.id
+
+    def test_find_nonexistent(self) -> None:
+        auth = LocalAuthProvider()
+        assert auth.find_by_display_name("Nobody") is None
+
+
 class TestAuthProviderProtocol:
     def test_local_auth_is_auth_provider(self) -> None:
         from uaf.security.auth import AuthProvider

@@ -12,8 +12,6 @@ from uaf.app.api.schemas import (
     TokenResponse,
 )
 from uaf.core.errors import AuthenticationError, RegistrationNotSupportedError
-from uaf.security.auth import PasswordCredentials
-from uaf.security.primitives import PrincipalId
 from uaf.security.secure_graph_db import SecureGraphDB, Session
 
 router = APIRouter()
@@ -23,12 +21,7 @@ router = APIRouter()
 def login(body: LoginRequest, db: SecureGraphDB = Depends(get_db)) -> TokenResponse:
     """Authenticate and return a session token."""
     try:
-        session = db.authenticate(
-            PasswordCredentials(
-                principal_id=PrincipalId(value=body.principal_id),
-                password=body.password,
-            )
-        )
+        session = db.authenticate_by_display_name(body.display_name, body.password)
     except AuthenticationError as e:
         raise HTTPException(status_code=401, detail=str(e)) from e
     return TokenResponse(

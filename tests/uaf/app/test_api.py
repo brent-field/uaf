@@ -53,14 +53,11 @@ def _auth(token: str) -> dict[str, str]:
 
 class TestAuth:
     def test_login(self) -> None:
-        client, _, token = _setup()
-        # Get principal_id from the token we already have
-        resp = client.get("/api/auth/me", headers=_auth(token))
-        pid = resp.json()["principal_id"]
+        client, _, _ = _setup()
 
         resp = client.post(
             "/api/auth/login",
-            json={"principal_id": pid, "password": "secret123"},
+            json={"display_name": "TestUser", "password": "secret123"},
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -68,13 +65,11 @@ class TestAuth:
         assert data["display_name"] == "TestUser"
 
     def test_login_bad_password(self) -> None:
-        client, _, token = _setup()
-        resp = client.get("/api/auth/me", headers=_auth(token))
-        pid = resp.json()["principal_id"]
+        client, _, _ = _setup()
 
         resp = client.post(
             "/api/auth/login",
-            json={"principal_id": pid, "password": "wrong"},
+            json={"display_name": "TestUser", "password": "wrong"},
         )
         assert resp.status_code == 401
 
@@ -88,6 +83,23 @@ class TestAuth:
         data = resp.json()
         assert data["display_name"] == "NewUser"
         assert "token" in data
+
+    def test_register_then_login_by_display_name(self) -> None:
+        """Register a user, then login using their display_name (not UUID)."""
+        client, _, _ = _setup()
+        # Register
+        resp = client.post(
+            "/api/auth/register",
+            json={"display_name": "Alice", "password": "pass123"},
+        )
+        assert resp.status_code == 200
+        # Login using display_name
+        resp = client.post(
+            "/api/auth/login",
+            json={"display_name": "Alice", "password": "pass123"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["display_name"] == "Alice"
 
     def test_me(self) -> None:
         client, _, token = _setup()
@@ -427,7 +439,7 @@ class TestPersistentLogin:
 
         resp = client2.post(
             "/api/auth/login",
-            json={"principal_id": principal_id, "password": "pw123"},
+            json={"display_name": "Persist", "password": "pw123"},
         )
         assert resp.status_code == 200
         token = resp.json()["token"]

@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from uaf.core.edges import EdgeType
-from uaf.core.errors import PermissionDeniedError, RegistrationNotSupportedError
+from uaf.core.errors import (
+    AuthenticationError,
+    PermissionDeniedError,
+    RegistrationNotSupportedError,
+)
 from uaf.core.node_id import utc_now
 from uaf.core.nodes import Artifact, NodeType
 from uaf.core.operations import (
@@ -77,6 +81,21 @@ class SecureGraphDB:
         else:
             token = ""
         return Session(principal=principal, token=token)
+
+    def authenticate_by_display_name(self, display_name: str, password: str) -> Session:
+        """Look up a principal by display name, then authenticate with password."""
+        from uaf.security.auth import LocalAuthProvider, PasswordCredentials
+
+        if not isinstance(self._auth, LocalAuthProvider):
+            msg = "Display name login requires LocalAuthProvider"
+            raise AuthenticationError(msg)
+        principal = self._auth.find_by_display_name(display_name)
+        if principal is None:
+            msg = "Invalid credentials"
+            raise AuthenticationError(msg)
+        return self.authenticate(
+            PasswordCredentials(principal_id=principal.id, password=password)
+        )
 
     def register_principal(
         self,

@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 
 class LoginRequest(BaseModel):
-    principal_id: str
+    display_name: str
     password: str
 
 
