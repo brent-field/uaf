@@ -510,6 +510,17 @@ input:focus, select:focus {
 }
 .grid-content td { cursor: pointer; }
 .grid-content td:hover { background: #e8f0fe; }
+.grid-content thead th { text-align: center; }
+.grid-content tbody th {
+    background: var(--bg-alt);
+    font-weight: 600;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    text-align: center;
+    min-width: 2rem;
+    width: 2rem;
+    user-select: none;
+}
 
 .grid-toolbar {
     display: flex;

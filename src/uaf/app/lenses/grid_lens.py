@@ -165,9 +165,17 @@ class GridLens:
                 max_col = max(max_col, cell.col)
                 node_count += 1
 
+        # Column letter headers (A, B, C, ...)
+        col_headers = [f"    <th>{chr(ord('A') + c)}</th>" for c in range(max_col + 1)]
+        thead = (
+            "  <thead>\n  <tr>\n    <th></th>\n"
+            + "\n".join(col_headers)
+            + "\n  </tr>\n  </thead>"
+        )
+
         rows_html: list[str] = []
         for r in range(max_row + 1):
-            tds: list[str] = []
+            tds: list[str] = [f"    <th>{r + 1}</th>"]
             for c in range(max_col + 1):
                 if (r, c) in grid:
                     val, nid, formula = grid[(r, c)]
@@ -182,7 +190,13 @@ class GridLens:
                     tds.append(f'    <td data-row="{r}" data-col="{c}"></td>')
             rows_html.append("  <tr>\n" + "\n".join(tds) + "\n  </tr>")
 
-        table_html = f'<table data-sheet-id="{sheet_id}">\n' + "\n".join(rows_html) + "\n</table>"
+        table_html = (
+            f'<table data-sheet-id="{sheet_id}">\n'
+            + thead
+            + "\n"
+            + "\n".join(rows_html)
+            + "\n</table>"
+        )
         return table_html, node_count
 
     # ------------------------------------------------------------------
