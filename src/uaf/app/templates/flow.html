@@ -98,22 +98,24 @@
     var sourceHandle = null;
     var card = content.closest('.card');
 
-    // --- Mousedown on .drag-handle starts the link gesture ---
+    // --- Mousedown on .drag-handle or .dag-node starts the link gesture ---
     content.addEventListener('mousedown', function(e) {
         var handle = e.target.closest('.drag-handle');
-        if (!handle) return;
-        var row = handle.closest('[data-node-id]');
-        if (!row) return;
+        var dagNode = !handle ? e.target.closest('.dag-node') : null;
+        var trigger = handle || dagNode;
+        if (!trigger) return;
+        var row = trigger.closest('[data-node-id]') || trigger;
+        if (!row || !row.getAttribute('data-node-id')) return;
         e.preventDefault();
         dragging = true;
         sourceRow = row;
-        sourceHandle = handle;
+        sourceHandle = trigger;
         sourceId = row.getAttribute('data-node-id');
         row.classList.add('drag-source');
         feedback.style.display = 'flex';
         feedbackText.textContent = 'Release on another task to create dependency...';
         line.style.display = 'block';
-        var rect = handle.getBoundingClientRect();
+        var rect = trigger.getBoundingClientRect();
         var cRect = card.getBoundingClientRect();
         line.style.left = (rect.left + rect.width / 2 - cRect.left) + 'px';
         line.style.top = (rect.top + rect.height / 2 - cRect.top) + 'px';
@@ -200,6 +202,31 @@
             el.classList.remove('drop-target');
         });
     }
+
+    // --- Click on DAG edge group to remove dependency ---
+    document.addEventListener('click', function(e) {
+        var group = e.target.closest('.dag-edge-group');
+        if (!group) return;
+        var sourceEdgeId = group.dataset.source;
+        var targetEdgeId = group.dataset.target;
+        if (!sourceEdgeId || !targetEdgeId) return;
+        var form = document.createElement('form');
+        form.style.display = 'none';
+        form.setAttribute('hx-post',
+            '/artifacts/' + artifactId + '/flow/remove-dependency');
+        form.setAttribute('hx-target', '#flow-content');
+        form.setAttribute('hx-swap', 'innerHTML');
+        var s = document.createElement('input');
+        s.name = 'source_id'; s.value = sourceEdgeId;
+        var t = document.createElement('input');
+        t.name = 'target_id'; t.value = targetEdgeId;
+        form.appendChild(s);
+        form.appendChild(t);
+        document.body.appendChild(form);
+        htmx.process(form);
+        htmx.trigger(form, 'submit');
+        setTimeout(function() { form.remove(); }, 500);
+    });
 })();
 </script>
 
@@ -336,19 +363,33 @@
                 if (!dep) return;
                 var fromR = dep.getBoundingClientRect();
                 var toR = node.getBoundingClientRect();
-                // Draw from right-center of dependency to left-center of dependent
                 var x1 = fromR.right - rect.left;
                 var y1 = fromR.top + fromR.height / 2 - rect.top;
                 var x2 = toR.left - rect.left;
                 var y2 = toR.top + toR.height / 2 - rect.top;
                 var cx = (x1 + x2) / 2;
+                var d = 'M' + x1 + ',' + y1 +
+                    ' C' + cx + ',' + y1 + ' ' + cx + ',' + y2 + ' ' + x2 + ',' + y2;
+
+                // Wrap edge elements in a group for hover/click
+                var group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                group.setAttribute('class', 'dag-edge-group');
+                group.dataset.source = node.dataset.nodeId;
+                group.dataset.target = depId;
+
+                // Wide invisible hit area
+                var hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                hitPath.setAttribute('class', 'dag-edge-hit');
+                hitPath.setAttribute('d', d);
+                group.appendChild(hitPath);
+
+                // Visible path
                 var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                 path.setAttribute('class', 'dag-edge-path');
-                path.setAttribute('d',
-                    'M' + x1 + ',' + y1 +
-                    ' C' + cx + ',' + y1 + ' ' + cx + ',' + y2 + ' ' + x2 + ',' + y2
-                );
-                svg.appendChild(path);
+                path.setAttribute('d', d);
+                group.appendChild(path);
+
+                // Arrow
                 var arrow = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
                 arrow.setAttribute('class', 'dag-edge-arrow');
                 arrow.setAttribute('points',
@@ -356,18 +397,23 @@
                     (x2 + 6) + ',' + (y2 + 4) + ' ' +
                     x2 + ',' + y2
                 );
-                svg.appendChild(arrow);
+                group.appendChild(arrow);
+
+                // Tooltip
+                var title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                title.textContent = 'Click to remove';
+                group.appendChild(title);
+
+                svg.appendChild(group);
             });
         });
     }
 
-    // Draw on initial load
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', drawDagEdges);
     } else {
         requestAnimationFrame(drawDagEdges);
     }
-    // Redraw after HTMX swaps
     var content = document.getElementById('flow-content');
     if (content) {
         content.addEventListener('htmx:afterSwap', function() {
@@ -652,11 +698,16 @@
 .flow-dag-table th { font-weight: 600; font-size: 0.75rem; color: #666; }
 .dag-task-name { width: 30%; font-weight: 500; white-space: nowrap; }
 .dag-cell { position: relative; height: 1.25rem; }
-.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.05rem 0.25rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; }
+.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.05rem 0.25rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; cursor: grab; }
+.dag-node:active { cursor: grabbing; }
 .dag-label { font-weight: 500; font-size: 0.65rem; }
 .dag-edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-.dag-edge-path { fill: none; stroke: #999; stroke-width: 2; }
-.dag-edge-arrow { fill: #999; }
+.dag-edge-group { pointer-events: auto; }
+.dag-edge-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: pointer; }
+.dag-edge-path { fill: none; stroke: #999; stroke-width: 2; pointer-events: none; }
+.dag-edge-arrow { fill: #999; pointer-events: none; }
+.dag-edge-group:hover .dag-edge-path { stroke: #e11d48; }
+.dag-edge-group:hover .dag-edge-arrow { fill: #e11d48; }
 
 /* Kanban */
 .flow-kanban { display: flex; gap: 1rem; min-height: 200px; }
