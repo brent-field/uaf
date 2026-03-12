@@ -58,6 +58,19 @@
         if (td) activateCell(td);
     });
 
+    document.body.addEventListener('keydown', function(e) {
+        if (e.key !== 'Enter' || activeInput) return;
+        var focused = document.activeElement;
+        if (!focused || !focused.matches('td[data-row][data-col]')) return;
+        e.preventDefault();
+        var nextRow = parseInt(focused.getAttribute('data-row'), 10) + 1;
+        var col = focused.getAttribute('data-col');
+        var next = document.querySelector(
+            'td[data-row="' + nextRow + '"][data-col="' + col + '"]'
+        );
+        if (next) { next.focus(); next.click(); }
+    });
+
     function commitCell(td, input) {
         if (!input || input !== activeInput) return;
         activeInput = null;
@@ -112,6 +125,8 @@
         input.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
+                var nextRow = parseInt(td.getAttribute('data-row'), 10) + 1;
+                pendingCell = { row: nextRow, col: td.getAttribute('data-col') };
                 commitCell(td, input);
             } else if (e.key === 'Escape') {
                 e.preventDefault();
