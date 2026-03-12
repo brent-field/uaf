@@ -57,6 +57,10 @@
         <button class="btn btn-sm"
                 onclick="document.getElementById('add-task-form').style.display='flex'">
             + Task</button>
+        <span class="toolbar-sep"></span>
+        <button class="btn btn-sm" id="zoom-out" title="Zoom out">−</button>
+        <span id="zoom-level" style="font-size:0.75rem;min-width:2.5rem;text-align:center;">100%</span>
+        <button class="btn btn-sm" id="zoom-in" title="Zoom in">+</button>
         <span class="htmx-indicator">Saving...</span>
     </div>
 
@@ -380,6 +384,47 @@
 </script>
 
 <script>
+// Gantt bar positioning — compute left/width from date attributes.
+(function() {
+    function positionGanttBars() {
+        var table = document.querySelector('.flow-gantt');
+        if (!table) return;
+        var tlStart = new Date(table.dataset.timelineStart);
+        var tlEnd = new Date(table.dataset.timelineEnd);
+        var range = tlEnd - tlStart;
+        if (range <= 0) return;
+
+        table.querySelectorAll('.gantt-bar').forEach(function(bar) {
+            var s = new Date(bar.dataset.start);
+            var e = new Date(bar.dataset.end);
+            var left = ((s - tlStart) / range) * 100;
+            var width = ((e - s) / range) * 100;
+            bar.style.left = Math.max(0, left) + '%';
+            bar.style.width = Math.max(1, width) + '%';
+        });
+
+        table.querySelectorAll('.gantt-milestone').forEach(function(ms) {
+            var d = new Date(ms.dataset.date);
+            var left = ((d - tlStart) / range) * 100;
+            ms.style.left = Math.max(0, Math.min(100, left)) + '%';
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', positionGanttBars);
+    } else {
+        requestAnimationFrame(positionGanttBars);
+    }
+    var content = document.getElementById('flow-content');
+    if (content) {
+        content.addEventListener('htmx:afterSwap', function() {
+            requestAnimationFrame(positionGanttBars);
+        });
+    }
+})();
+</script>
+
+<script>
 // Kanban drag-and-drop
 (function() {
     function initKanban() {
@@ -428,8 +473,45 @@
 })();
 </script>
 
+<script>
+// Zoom controls for flow content.
+(function() {
+    var KEY = 'flow-zoom-level';
+    var zoomLevel = parseFloat(sessionStorage.getItem(KEY)) || 1.0;
+    var content = document.getElementById('flow-content');
+    var display = document.getElementById('zoom-level');
+    var zoomIn = document.getElementById('zoom-in');
+    var zoomOut = document.getElementById('zoom-out');
+    if (!content) return;
+
+    function applyZoom() {
+        zoomLevel = Math.round(zoomLevel * 10) / 10;
+        content.style.transform = 'scale(' + zoomLevel + ')';
+        content.style.width = (100 / zoomLevel) + '%';
+        if (display) display.textContent = Math.round(zoomLevel * 100) + '%';
+        sessionStorage.setItem(KEY, zoomLevel);
+    }
+
+    applyZoom();
+
+    if (zoomIn) zoomIn.addEventListener('click', function() {
+        if (zoomLevel < 2.0) { zoomLevel += 0.1; applyZoom(); }
+    });
+    if (zoomOut) zoomOut.addEventListener('click', function() {
+        if (zoomLevel > 0.5) { zoomLevel -= 0.1; applyZoom(); }
+    });
+
+    content.addEventListener('wheel', function(e) {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        if (e.deltaY < 0 && zoomLevel < 2.0) { zoomLevel += 0.1; applyZoom(); }
+        else if (e.deltaY > 0 && zoomLevel > 0.5) { zoomLevel -= 0.1; applyZoom(); }
+    }, { passive: false });
+})();
+</script>
+
 <style>
-.flow-content { padding: 1rem 0; }
+.flow-content { padding: 1rem 0; transform-origin: top left; transition: transform 0.1s ease; }
 .add-task-form { padding: 0.75rem 1rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }
 
 /* Empty state */
@@ -485,16 +567,19 @@
 
 /* Gantt */
 .flow-gantt { width: 100%; border-collapse: collapse; }
-.flow-gantt th, .flow-gantt td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-gantt th, .flow-gantt td { padding: 0.25rem 0.5rem; border-bottom: 1px solid #eee; text-align: left; }
 .flow-gantt th { font-weight: 600; font-size: 0.85rem; color: #666; }
 .task-name { white-space: nowrap; }
 .task-name.status-done { text-decoration: line-through; color: #999; }
 .task-name.status-in_progress { color: #2563eb; font-weight: 500; }
-.gantt-cell { min-width: 200px; }
-.gantt-bar { height: 20px; background: #3b82f6; border-radius: 3px; min-width: 40px; }
+.gantt-cell { min-width: 200px; position: relative; height: 1.5rem; }
+.gantt-bar { position: absolute; top: 50%; transform: translateY(-50%); height: 14px; background: #3b82f6; border-radius: 3px; min-width: 4px; }
 .gantt-bar.status-done { background: #22c55e; }
 .gantt-bar.status-in_progress { background: #f59e0b; }
-.gantt-milestone { font-size: 1.2rem; color: #e11d48; }
+.gantt-milestone { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 1rem; color: #e11d48; }
+.gantt-timeline-header { position: relative; min-width: 200px; }
+.gantt-date-labels { position: relative; height: 1rem; }
+.gantt-date-label { position: absolute; transform: translateX(-50%); font-size: 0.7rem; color: #999; white-space: nowrap; }
 
 /* List-view data grid */
 .flow-list-grid { width: 100%; border-collapse: collapse; }
@@ -557,17 +642,17 @@
 
 /* Dependencies */
 .flow-deps { width: 100%; border-collapse: collapse; }
-.flow-deps th, .flow-deps td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-deps th, .flow-deps td { padding: 0.25rem 0.5rem; border-bottom: 1px solid #eee; text-align: left; }
 .flow-deps th { font-weight: 600; font-size: 0.85rem; color: #666; }
 
 /* DAG */
 .dag-container { position: relative; }
 .flow-dag-table { width: 100%; border-collapse: collapse; }
-.flow-dag-table th, .flow-dag-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-dag-table th, .flow-dag-table td { padding: 0.25rem 0.5rem; border-bottom: 1px solid #eee; text-align: left; }
 .flow-dag-table th { font-weight: 600; font-size: 0.85rem; color: #666; }
 .dag-task-name { width: 30%; font-weight: 500; white-space: nowrap; }
-.dag-cell { position: relative; height: 2.5rem; }
-.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.25rem 0.75rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; }
+.dag-cell { position: relative; height: 2rem; }
+.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.15rem 0.5rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; }
 .dag-label { font-weight: 500; font-size: 0.85rem; }
 .dag-edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .dag-edge-path { fill: none; stroke: #999; stroke-width: 2; }

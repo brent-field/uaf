@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING
 
@@ -210,12 +211,62 @@ class FlowLens:
             )
             rows.append(f'<tr data-node-id="{nid}">{left}{right}{actions}</tr>')
 
+        # Compute timeline range from all task dates
+        all_dates: list[datetime] = []
+        for t in tasks:
+            if t.start_date is not None:
+                all_dates.append(
+                    t.start_date if isinstance(t.start_date, datetime)
+                    else datetime.combine(t.start_date, datetime.min.time())
+                )
+            if t.end_date is not None:
+                all_dates.append(
+                    t.end_date if isinstance(t.end_date, datetime)
+                    else datetime.combine(t.end_date, datetime.min.time())
+                )
+            if t.due_date is not None:
+                all_dates.append(
+                    t.due_date if isinstance(t.due_date, datetime)
+                    else datetime.combine(t.due_date, datetime.min.time())
+                )
+
+        if all_dates:
+            min_date = min(all_dates) - timedelta(days=1)
+            max_date = max(all_dates) + timedelta(days=1)
+        else:
+            now = datetime.now()
+            min_date = now
+            max_date = now + timedelta(days=30)
+
+        # Generate ~5 evenly-spaced date labels
+        total_days = (max_date - min_date).total_seconds()
+        date_labels: list[tuple[float, str]] = []
+        num_labels = 5
+        for i in range(num_labels):
+            frac = i / (num_labels - 1) if num_labels > 1 else 0.0
+            d = min_date + timedelta(seconds=frac * total_days)
+            pct = frac * 100
+            label = d.strftime("%b %-d")
+            date_labels.append((pct, label))
+
+        timeline_header = (
+            '<th class="gantt-timeline-header"><div class="gantt-date-labels">'
+            + "".join(
+                f'<span class="gantt-date-label" style="left:{pct}%">'
+                f"{label}</span>"
+                for pct, label in date_labels
+            )
+            + "</div></th>"
+        )
+
         return (
-            '<table class="flow-gantt">'
-            "<thead><tr><th>Task</th><th>Timeline</th>"
-            "<th></th></tr></thead>"
+            f'<table class="flow-gantt"'
+            f' data-timeline-start="{min_date.isoformat()}"'
+            f' data-timeline-end="{max_date.isoformat()}">'
+            f"<thead><tr><th>Task</th>{timeline_header}"
+            f"<th></th></tr></thead>"
             f'<tbody>{"".join(rows)}</tbody>'
-            "</table>"
+            f"</table>"
         )
 
     def _render_list(
