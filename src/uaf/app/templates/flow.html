@@ -511,8 +511,8 @@
 </script>
 
 <style>
-.flow-content { padding: 1rem 0; transform-origin: top left; transition: transform 0.1s ease; }
-.add-task-form { padding: 0.75rem 1rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }
+.flow-content { padding: 0.5rem 0; transform-origin: top left; transition: transform 0.1s ease; }
+.add-task-form { padding: 0.5rem 0.75rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }
 
 /* Empty state */
 .flow-empty { padding: 2rem; text-align: center; color: #888; }
@@ -521,13 +521,13 @@
 
 /* Drag feedback banner */
 .drag-feedback {
-    padding: 0.5rem 1rem;
+    padding: 0.35rem 0.75rem;
     background: #dbeafe;
     border: 1px solid #93c5fd;
     border-radius: 4px;
     margin-bottom: 0.5rem;
     align-items: center;
-    font-size: 0.9rem;
+    font-size: 0.8rem;
     color: #1e40af;
 }
 
@@ -549,7 +549,7 @@
 
 /* Dependency info in Gantt */
 .task-dep-info {
-    display: block; font-size: 0.75rem; color: #888;
+    display: block; font-size: 0.65rem; color: #888;
     font-weight: normal; font-style: italic;
 }
 
@@ -557,7 +557,7 @@
 .dep-chip {
     display: inline-flex; align-items: center; gap: 0.25rem;
     background: #f0f4ff; border: 1px solid #c7d2fe; border-radius: 4px;
-    padding: 0.1rem 0.4rem; font-size: 0.8rem; margin-right: 0.25rem;
+    padding: 0.05rem 0.3rem; font-size: 0.7rem; margin-right: 0.25rem;
 }
 .dep-remove {
     background: none; border: none; cursor: pointer; color: #999;
@@ -567,32 +567,32 @@
 
 /* Gantt */
 .flow-gantt { width: 100%; border-collapse: collapse; }
-.flow-gantt th, .flow-gantt td { padding: 0.25rem 0.5rem; border-bottom: 1px solid #eee; text-align: left; }
-.flow-gantt th { font-weight: 600; font-size: 0.85rem; color: #666; }
+.flow-gantt th, .flow-gantt td { padding: 0.15rem 0.35rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-gantt th { font-weight: 600; font-size: 0.75rem; color: #666; }
 .task-name { white-space: nowrap; }
 .task-name.status-done { text-decoration: line-through; color: #999; }
 .task-name.status-in_progress { color: #2563eb; font-weight: 500; }
-.gantt-cell { min-width: 200px; position: relative; height: 1.5rem; }
-.gantt-bar { position: absolute; top: 50%; transform: translateY(-50%); height: 14px; background: #3b82f6; border-radius: 3px; min-width: 4px; }
+.gantt-cell { min-width: 200px; position: relative; height: 1.25rem; }
+.gantt-bar { position: absolute; top: 50%; transform: translateY(-50%); height: 10px; background: #3b82f6; border-radius: 3px; min-width: 4px; }
 .gantt-bar.status-done { background: #22c55e; }
 .gantt-bar.status-in_progress { background: #f59e0b; }
-.gantt-milestone { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 1rem; color: #e11d48; }
+.gantt-milestone { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 0.85rem; color: #e11d48; }
 .gantt-timeline-header { position: relative; min-width: 200px; }
-.gantt-date-labels { position: relative; height: 1rem; }
-.gantt-date-label { position: absolute; transform: translateX(-50%); font-size: 0.7rem; color: #999; white-space: nowrap; }
+.gantt-date-labels { position: relative; height: 0.75rem; }
+.gantt-date-label { position: absolute; transform: translateX(-50%); font-size: 0.6rem; color: #999; white-space: nowrap; }
 
 /* List-view data grid */
 .flow-list-grid { width: 100%; border-collapse: collapse; }
 .flow-list-grid thead th {
-    font-weight: 600; font-size: 0.8rem; color: #999;
+    font-weight: 600; font-size: 0.7rem; color: #999;
     text-transform: uppercase; letter-spacing: 0.03em;
-    padding: 0.35rem 0.5rem; border-bottom: 2px solid #eee; text-align: left;
+    padding: 0.2rem 0.35rem; border-bottom: 2px solid #eee; text-align: left;
 }
-.flow-list-grid td { padding: 0.15rem 0.25rem; border-bottom: 1px solid #f0f0f0; }
+.flow-list-grid td { padding: 0.1rem 0.2rem; border-bottom: 1px solid #f0f0f0; }
 .flow-list-grid tbody tr:hover { background: #f8f9fa; }
-.col-status { width: 2.5rem; }
+.col-status { width: 2rem; }
 .col-date { width: 9rem; }
-.col-actions { width: 2.5rem; }
+.col-actions { width: 2rem; }
 .list-hidden { display: none; }
 
 /* Grid cells — shared focus ring */
@@ -600,8 +600,8 @@
 
 /* Status toggle */
 .flow-list-grid .list-check {
-    background: none; border: none; cursor: pointer; font-size: 1.1rem;
-    padding: 0.2rem 0.35rem; border-radius: 3px; line-height: 1;
+    background: none; border: none; cursor: pointer; font-size: 0.95rem;
+    padding: 0.1rem 0.25rem; border-radius: 3px; line-height: 1;
 }
 .flow-list-grid .list-check:hover { background: #e0e7ff; }
 
@@ -609,7 +609,7 @@
    input[type="text"] rule in style.css (specificity 0-1-1). */
 .flow-list-grid .list-cell-input {
     border: 1px solid transparent; background: transparent;
-    padding: 0.3rem 0.4rem; border-radius: 3px; font: inherit;
+    padding: 0.15rem 0.3rem; border-radius: 3px; font: inherit;
     width: 100%; box-sizing: border-box;
     margin: 0; box-shadow: none;
 }
@@ -620,8 +620,8 @@
 
 .flow-list-grid .list-cell-date {
     border: 1px solid transparent; background: transparent;
-    padding: 0.25rem 0.3rem; border-radius: 3px; font: inherit;
-    color: #888; font-size: 0.85rem; width: 100%; box-sizing: border-box;
+    padding: 0.15rem 0.25rem; border-radius: 3px; font: inherit;
+    color: #888; font-size: 0.75rem; width: 100%; box-sizing: border-box;
     margin: 0; box-shadow: none;
 }
 .flow-list-grid .list-cell-date:hover { border-color: #ddd; }
@@ -630,7 +630,7 @@
 /* Delete button — visible on hover */
 .flow-list-grid .list-row-delete {
     background: none; border: none; cursor: pointer; color: transparent;
-    font-size: 1rem; padding: 0.2rem 0.4rem; border-radius: 3px;
+    font-size: 0.85rem; padding: 0.1rem 0.3rem; border-radius: 3px;
 }
 .flow-list-grid tbody tr:hover .list-row-delete { color: #ccc; }
 .list-row-delete:hover { color: #e11d48 !important; background: #fee2e2; }
@@ -642,36 +642,36 @@
 
 /* Dependencies */
 .flow-deps { width: 100%; border-collapse: collapse; }
-.flow-deps th, .flow-deps td { padding: 0.25rem 0.5rem; border-bottom: 1px solid #eee; text-align: left; }
-.flow-deps th { font-weight: 600; font-size: 0.85rem; color: #666; }
+.flow-deps th, .flow-deps td { padding: 0.15rem 0.35rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-deps th { font-weight: 600; font-size: 0.75rem; color: #666; }
 
 /* DAG */
 .dag-container { position: relative; }
 .flow-dag-table { width: 100%; border-collapse: collapse; }
-.flow-dag-table th, .flow-dag-table td { padding: 0.25rem 0.5rem; border-bottom: 1px solid #eee; text-align: left; }
-.flow-dag-table th { font-weight: 600; font-size: 0.85rem; color: #666; }
+.flow-dag-table th, .flow-dag-table td { padding: 0.15rem 0.35rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-dag-table th { font-weight: 600; font-size: 0.75rem; color: #666; }
 .dag-task-name { width: 30%; font-weight: 500; white-space: nowrap; }
-.dag-cell { position: relative; height: 2rem; }
-.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.15rem 0.5rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; }
-.dag-label { font-weight: 500; font-size: 0.85rem; }
+.dag-cell { position: relative; height: 1.5rem; }
+.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.1rem 0.35rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; }
+.dag-label { font-weight: 500; font-size: 0.75rem; }
 .dag-edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .dag-edge-path { fill: none; stroke: #999; stroke-width: 2; }
 .dag-edge-arrow { fill: #999; }
 
 /* Kanban */
 .flow-kanban { display: flex; gap: 1rem; min-height: 200px; }
-.kanban-column { flex: 1; background: #f8f8f8; border-radius: 8px; padding: 0.75rem; }
-.kanban-column h3 { margin: 0 0 0.75rem 0; font-size: 0.9rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
-.kanban-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; }
+.kanban-column { flex: 1; background: #f8f8f8; border-radius: 8px; padding: 0.5rem; }
+.kanban-column h3 { margin: 0 0 0.5rem 0; font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+.kanban-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.35rem; }
 .kanban-card:hover { border-color: #3b82f6; }
 .card-title { font-weight: 500; }
 .due-date { display: block; font-size: 0.8rem; color: #888; margin-top: 0.25rem; }
 .kanban-toggle { float: right; padding: 0 0.3rem; font-size: 0.75rem; }
-.kanban-empty { color: #aaa; font-size: 0.85rem; text-align: center; padding: 1rem; }
+.kanban-empty { color: #aaa; font-size: 0.75rem; text-align: center; padding: 0.5rem; }
 
 /* Task actions row */
 .flow-gantt tr:hover, .flow-deps tr:hover { background: #f8f8f8; }
 .task-actions { white-space: nowrap; }
-.task-actions .btn { padding: 0.15rem 0.4rem; font-size: 0.75rem; }
+.task-actions .btn { padding: 0.1rem 0.3rem; font-size: 0.7rem; }
 </style>
 {% endblock %}
