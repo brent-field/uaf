@@ -49,6 +49,17 @@
         </div>
         <span class="toolbar-sep"></span>
         <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/undo"
+                hx-target="#doc-content"
+                hx-swap="innerHTML"
+                title="Undo (Ctrl+Z)">Undo</button>
+        <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/redo"
+                hx-target="#doc-content"
+                hx-swap="innerHTML"
+                title="Redo (Ctrl+Shift+Z)">Redo</button>
+        <span class="toolbar-sep"></span>
+        <button class="btn btn-sm"
                 hx-post="/artifacts/{{ artifact_id }}/action/insert-at"
                 hx-vals='{"position": "999", "style": "paragraph", "text": ""}'
                 hx-target="#doc-content"
@@ -66,8 +77,12 @@
         <button type="button" data-cmd="code" title="Code"><code>&lt;&gt;</code></button>
     </div>
 </div>
+<script src="/static/editor-core.js"></script>
 <script src="/static/layout-inspector.js"></script>
 <script src="/static/doc-editor.js"></script>
+<script>
+UAF.initUndoShortcuts('{{ artifact_id }}', 'doc-content');
+</script>
 <script>
 // Close export dropdown when clicking outside
 document.addEventListener('click', function(e) {

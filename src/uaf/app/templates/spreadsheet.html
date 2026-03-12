@@ -23,6 +23,16 @@
     {% if sheet_id %}
     <div class="grid-toolbar">
         <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/undo"
+                hx-target="#grid-content"
+                hx-swap="innerHTML"
+                title="Undo (Ctrl+Z)">Undo</button>
+        <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/redo"
+                hx-target="#grid-content"
+                hx-swap="innerHTML"
+                title="Redo (Ctrl+Shift+Z)">Redo</button>
+        <button class="btn btn-sm"
                 hx-post="/artifacts/{{ artifact_id }}/grid/add-row"
                 hx-target="#grid-content"
                 hx-swap="innerHTML">+ Row</button>
@@ -39,6 +49,10 @@
     </div>
 </div>
 
+<script src="/static/editor-core.js"></script>
+<script>
+UAF.initUndoShortcuts('{{ artifact_id }}', 'grid-content');
+</script>
 <script>
 (function() {
     var artifactId = '{{ artifact_id }}';

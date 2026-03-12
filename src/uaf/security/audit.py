@@ -27,6 +27,8 @@ class AuditAction(Enum):
     REVOKE_PERMISSION = "revoke_permission"
     READ_NODE = "read_node"
     QUERY = "query"
+    UNDO = "undo"
+    REDO = "redo"
 
 
 @unique

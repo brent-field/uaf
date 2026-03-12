@@ -157,4 +157,17 @@ UAF.saveCESync = function(url, data) {
     xhr.send(new URLSearchParams(data).toString());
 };
 
+UAF.initUndoShortcuts = function(artifactId, targetId) {
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+            e.preventDefault();
+            htmx.ajax('POST', '/artifacts/' + artifactId + '/undo', {target: '#' + targetId, swap: 'innerHTML'});
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) {
+            e.preventDefault();
+            htmx.ajax('POST', '/artifacts/' + artifactId + '/redo', {target: '#' + targetId, swap: 'innerHTML'});
+        }
+    });
+};
+
 window.UAF = UAF;

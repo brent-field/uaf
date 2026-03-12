@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from uaf.db.graph_db import GraphDB
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from uaf.core.edges import Edge
     from uaf.core.node_id import BlobId, EdgeId, NodeId, OperationId
     from uaf.core.nodes import NodeType
@@ -111,6 +114,24 @@ class JournaledGraphDB:
             edge_id=edge_id, parent_ops=parent_ops, timestamp=utc_now()
         )
         self.apply(op)
+
+    # ------------------------------------------------------------------
+    # Undo / Redo
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def action_group(self, principal_id: str) -> Iterator[str]:
+        """Context manager grouping operations into a single undo step."""
+        with self._db.action_group(principal_id) as group_id:
+            yield group_id
+
+    def undo(self, principal_id: str) -> list[OperationId]:
+        """Undo the most recent action group. Compensating ops are journaled."""
+        return self._db.undo(principal_id)
+
+    def redo(self, principal_id: str) -> list[OperationId]:
+        """Redo the most recently undone action group."""
+        return self._db.redo(principal_id)
 
     # ------------------------------------------------------------------
     # Query (delegates to GraphDB)
