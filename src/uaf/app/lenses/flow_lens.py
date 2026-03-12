@@ -42,6 +42,7 @@ _SUPPORTED = frozenset({NodeType.ARTIFACT, NodeType.TASK})
 # Status cycle for ToggleTask
 _STATUS_CYCLE = {"todo": "in_progress", "in_progress": "done", "done": "todo"}
 _STATUS_ICONS = {"todo": "&#9744;", "in_progress": "&#9634;", "done": "&#9745;"}
+_STATUS_LABELS = {"todo": "To Do", "in_progress": "In Progress", "done": "Done"}
 _TOGGLE_LABELS = {
     "todo": "Start &#x25B6;",
     "in_progress": "Done &#x2713;",
@@ -79,7 +80,7 @@ class FlowLens:
 
     def render(
         self, db: SecureGraphDB, session: Session, artifact_id: NodeId,
-        *, mode: str = "gantt",
+        *, mode: str = "list",
     ) -> LensView:
         """Render the project artifact. Default view is Gantt."""
         artifact = db.get_node(session, artifact_id)
@@ -101,7 +102,7 @@ class FlowLens:
             case "gantt":
                 content = self._render_gantt(task_list, artifact_id, db, session)
             case "list":
-                content = self._render_list(task_list, artifact_id)
+                content = self._render_list(task_list, artifact_id, db, session)
             case "deps":
                 content = self._render_deps(task_list, artifact_id, db, session)
             case "dag":
@@ -183,8 +184,8 @@ class FlowLens:
             elif task.due_date:
                 right = (
                     f'<td class="gantt-cell">'
-                    f'<span class="gantt-milestone" '
-                    f'data-date="{task.due_date.isoformat()}">&#9670;</span>'
+                    f'<div class="gantt-milestone" '
+                    f'data-date="{task.due_date.isoformat()}"></div>'
                     f"</td>"
                 )
             else:
@@ -271,6 +272,7 @@ class FlowLens:
 
     def _render_list(
         self, tasks: list[Task], artifact_id: NodeId,
+        db: SecureGraphDB, session: Session,
     ) -> str:
         """Render List view — data-grid with full keyboard navigation."""
         aid = artifact_id
@@ -278,6 +280,17 @@ class FlowLens:
             ' hx-target="#flow-content" hx-swap="innerHTML"'
             ' hx-sync="closest table:replace"'
         )
+
+        # Build dependency map for inline display
+        task_map = {t.meta.id: t for t in tasks}
+        dep_map: dict[NodeId, list[tuple[NodeId, str]]] = {}
+        for task in tasks:
+            edges = db._db.get_edges_from(task.meta.id)
+            dep_map[task.meta.id] = [
+                (e.target, escape(task_map[e.target].title))
+                for e in edges
+                if e.edge_type == EdgeType.DEPENDS_ON and e.target in task_map
+            ]
 
         rows: list[str] = []
         for ri, task in enumerate(tasks):
@@ -296,10 +309,16 @@ class FlowLens:
                 f"{_status_icon(task.status)}</button></td>"
             )
 
-            # Col 1: title — uses custom "save" trigger to avoid
-            # blur-triggered swaps that destroy the focus target.
+            # Col 1: status badge
+            status_label = _STATUS_LABELS.get(task.status, task.status)
             c1 = (
-                f'<td><input data-row="{ri}" data-col="1"'
+                f'<td><span class="list-status-badge {status_cls}">'
+                f"{status_label}</span></td>"
+            )
+
+            # Col 2: title
+            c2 = (
+                f'<td><input data-row="{ri}" data-col="2"'
                 f' class="gc list-cell-input {status_cls}"'
                 f' type="text" value="{name}" name="title"'
                 f' hx-post="/artifacts/{aid}/flow/update-task"'
@@ -308,13 +327,13 @@ class FlowLens:
                 f' data-action="update" /></td>'
             )
 
-            # Col 2: start date — uses custom "save" trigger like title
+            # Col 3: start date
             sd = (
                 task.start_date.strftime("%Y-%m-%d")
                 if task.start_date else ""
             )
-            c2 = (
-                f'<td><input data-row="{ri}" data-col="2"'
+            c3 = (
+                f'<td><input data-row="{ri}" data-col="3"'
                 f' class="gc list-cell-date"'
                 f' type="date" value="{sd}" name="start_date"'
                 f' hx-post="/artifacts/{aid}/flow/update-task-dates"'
@@ -323,13 +342,13 @@ class FlowLens:
                 f' data-action="update" /></td>'
             )
 
-            # Col 3: end date — uses custom "save" trigger like title
+            # Col 4: end date
             ed = (
                 task.end_date.strftime("%Y-%m-%d")
                 if task.end_date else ""
             )
-            c3 = (
-                f'<td><input data-row="{ri}" data-col="3"'
+            c4 = (
+                f'<td><input data-row="{ri}" data-col="4"'
                 f' class="gc list-cell-date"'
                 f' type="date" value="{ed}" name="end_date"'
                 f' hx-post="/artifacts/{aid}/flow/update-task-dates"'
@@ -338,9 +357,27 @@ class FlowLens:
                 f' data-action="update" /></td>'
             )
 
-            # Col 4: delete
-            c4 = (
-                f'<td><button data-row="{ri}" data-col="4"'
+            # Col 5: deps
+            dep_list = dep_map.get(nid, [])
+            dep_chips: list[str] = []
+            for dep_id, dep_name in dep_list:
+                dep_chips.append(
+                    f'<span class="dep-chip">'
+                    f"&#8594; {dep_name}"
+                    f'<button class="dep-remove" '
+                    f'hx-post="/artifacts/{aid}/flow/remove-dependency"'
+                    f" hx-vals='{{\"source_id\": \"{nid}\","
+                    f' "target_id": "{dep_id}"}}\''
+                    f' hx-target="#flow-content" hx-swap="innerHTML"'
+                    f' title="Remove">&times;</button>'
+                    f"</span>"
+                )
+            dep_html = " ".join(dep_chips)
+            c5 = f'<td class="dep-arrows">{dep_html}</td>'
+
+            # Col 6: delete
+            c6 = (
+                f'<td><button data-row="{ri}" data-col="6"'
                 f' class="gc list-row-delete"'
                 f' hx-post="/artifacts/{aid}/flow/delete-task"'
                 f" hx-vals='{vals}'{hx}"
@@ -357,10 +394,10 @@ class FlowLens:
 
             rows.append(
                 f'<tr data-node-id="{nid}">'
-                f"{c0}{c1}{c2}{c3}{c4}{hidden}</tr>"
+                f"{c0}{c1}{c2}{c3}{c4}{c5}{c6}{hidden}</tr>"
             )
 
-        # New-row placeholder — includes date inputs so Tab works
+        # New-row placeholder
         nr = len(tasks)
         new_hx = (
             f' hx-post="/artifacts/{aid}/flow/create-task"'
@@ -373,18 +410,20 @@ class FlowLens:
         new_row = (
             f'<tr class="list-row-new">'
             f"<td></td>"
-            f'<td><input data-row="{nr}" data-col="1"'
+            f"<td></td>"
+            f'<td><input data-row="{nr}" data-col="2"'
             f' class="gc list-cell-input"'
             f' type="text" name="title" placeholder="Add a task\u2026"'
             f"{new_hx} /></td>"
-            f'<td><input data-row="{nr}" data-col="2"'
+            f'<td><input data-row="{nr}" data-col="3"'
             f' class="gc list-cell-date"'
             f' type="date" name="start_date"'
             f"{new_hx} /></td>"
-            f'<td><input data-row="{nr}" data-col="3"'
+            f'<td><input data-row="{nr}" data-col="4"'
             f' class="gc list-cell-date"'
             f' type="date" name="end_date"'
             f"{new_hx} /></td>"
+            f"<td></td>"
             f"<td></td>"
             f"</tr>"
         )
@@ -393,9 +432,11 @@ class FlowLens:
             '<table class="flow-list-grid" role="grid">'
             "<thead><tr>"
             '<th class="col-status"></th>'
+            '<th class="col-status">Status</th>'
             "<th>Task</th>"
             '<th class="col-date">Start</th>'
             '<th class="col-date">End</th>'
+            "<th>Deps</th>"
             '<th class="col-actions"></th>'
             "</tr></thead>"
             f'<tbody>{"".join(rows)}{new_row}</tbody>'

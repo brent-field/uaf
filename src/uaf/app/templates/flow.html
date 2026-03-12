@@ -22,24 +22,18 @@
 
     <div class="toolbar">
         <div class="view-toggle">
-            <button class="btn btn-sm view-mode-btn {% if view_mode == 'gantt' %}active{% endif %}"
-                    hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=gantt"
-                    hx-target="#flow-content"
-                    hx-swap="innerHTML"
-                    onclick="document.querySelectorAll('.view-mode-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');">
-                Gantt</button>
             <button class="btn btn-sm view-mode-btn {% if view_mode == 'list' %}active{% endif %}"
                     hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=list"
                     hx-target="#flow-content"
                     hx-swap="innerHTML"
                     onclick="document.querySelectorAll('.view-mode-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');">
                 List</button>
-            <button class="btn btn-sm view-mode-btn {% if view_mode == 'deps' %}active{% endif %}"
-                    hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=deps"
+            <button class="btn btn-sm view-mode-btn {% if view_mode == 'gantt' %}active{% endif %}"
+                    hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=gantt"
                     hx-target="#flow-content"
                     hx-swap="innerHTML"
                     onclick="document.querySelectorAll('.view-mode-btn').forEach(b=>b.classList.remove('active'));this.classList.add('active');">
-                Dependencies</button>
+                Gantt</button>
             <button class="btn btn-sm view-mode-btn {% if view_mode == 'dag' %}active{% endif %}"
                     hx-get="/artifacts/{{ artifact_id }}/flow/view?mode=dag"
                     hx-target="#flow-content"
@@ -238,7 +232,7 @@
 
         if (pendingAction === 'create') {
             row = max;  // new-row placeholder
-            col = 1;
+            col = 2;
         } else if (pendingAction === 'delete') {
             if (row > max - 1) row = Math.max(max - 1, 0);
         }
@@ -248,7 +242,7 @@
     });
 
     // Editable column indices for Tab navigation (skip status/delete buttons)
-    var tabCols = [1, 2, 3];
+    var tabCols = [2, 3, 4];
 
     // Arrow keys, Tab, Enter, Escape (delegated on #flow-content)
     content.addEventListener('keydown', function(e) {
@@ -511,8 +505,8 @@
 </script>
 
 <style>
-.flow-content { padding: 0.5rem 0; transform-origin: top left; transition: transform 0.1s ease; }
-.add-task-form { padding: 0.5rem 0.75rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }
+.flow-content { padding: 0.25rem 0; overflow-y: auto; max-height: calc(100vh - 10rem); transform-origin: top left; transition: transform 0.1s ease; }
+.add-task-form { padding: 0.35rem 0.5rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }
 
 /* Empty state */
 .flow-empty { padding: 2rem; text-align: center; color: #888; }
@@ -534,7 +528,7 @@
 /* Drag handle */
 .drag-handle {
     cursor: grab; display: inline-block; margin-right: 0.4rem;
-    padding: 0.1rem 0.2rem; font-size: 0.85rem; opacity: 0.4;
+    padding: 0.1rem 0.2rem; font-size: 0.75rem; opacity: 0.4;
     user-select: none; border-radius: 3px;
 }
 .drag-handle:hover { opacity: 1; background: #e0e7ff; }
@@ -567,16 +561,16 @@
 
 /* Gantt */
 .flow-gantt { width: 100%; border-collapse: collapse; }
-.flow-gantt th, .flow-gantt td { padding: 0.15rem 0.35rem; border-bottom: 1px solid #eee; text-align: left; }
-.flow-gantt th { font-weight: 600; font-size: 0.75rem; color: #666; }
+.flow-gantt th, .flow-gantt td { padding: 0.1rem 0.25rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-gantt th { font-weight: 600; font-size: 0.65rem; color: #666; }
 .task-name { white-space: nowrap; }
 .task-name.status-done { text-decoration: line-through; color: #999; }
 .task-name.status-in_progress { color: #2563eb; font-weight: 500; }
-.gantt-cell { min-width: 200px; position: relative; height: 1.25rem; }
-.gantt-bar { position: absolute; top: 50%; transform: translateY(-50%); height: 10px; background: #3b82f6; border-radius: 3px; min-width: 4px; }
+.gantt-cell { min-width: 200px; position: relative; height: 1rem; }
+.gantt-bar { position: absolute; top: 50%; transform: translateY(-50%); height: 8px; background: #3b82f6; border-radius: 3px; min-width: 4px; }
 .gantt-bar.status-done { background: #22c55e; }
 .gantt-bar.status-in_progress { background: #f59e0b; }
-.gantt-milestone { position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 0.85rem; color: #e11d48; }
+.gantt-milestone { position: absolute; top: 50%; width: 8px; height: 8px; background: #e11d48; border: 1px solid #be123c; transform: translate(-50%, -50%) rotate(45deg); }
 .gantt-timeline-header { position: relative; min-width: 200px; }
 .gantt-date-labels { position: relative; height: 0.75rem; }
 .gantt-date-label { position: absolute; transform: translateX(-50%); font-size: 0.6rem; color: #999; white-space: nowrap; }
@@ -586,12 +580,12 @@
 .flow-list-grid thead th {
     font-weight: 600; font-size: 0.7rem; color: #999;
     text-transform: uppercase; letter-spacing: 0.03em;
-    padding: 0.2rem 0.35rem; border-bottom: 2px solid #eee; text-align: left;
+    padding: 0.15rem 0.25rem; border-bottom: 2px solid #eee; text-align: left;
 }
-.flow-list-grid td { padding: 0.1rem 0.2rem; border-bottom: 1px solid #f0f0f0; }
+.flow-list-grid td { padding: 0.05rem 0.15rem; border-bottom: 1px solid #f0f0f0; }
 .flow-list-grid tbody tr:hover { background: #f8f9fa; }
 .col-status { width: 2rem; }
-.col-date { width: 9rem; }
+.col-date { width: 7.5rem; }
 .col-actions { width: 2rem; }
 .list-hidden { display: none; }
 
@@ -640,6 +634,12 @@
 .list-row-new .list-cell-input { color: #888; }
 .list-row-new .list-cell-input:focus { color: inherit; }
 
+/* Status badges */
+.list-status-badge { font-size: 0.6rem; padding: 0.05rem 0.25rem; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.02em; }
+.list-status-badge.status-todo { background: #f3f4f6; color: #6b7280; }
+.list-status-badge.status-in_progress { background: #dbeafe; color: #2563eb; }
+.list-status-badge.status-done { background: #d1fae5; color: #059669; }
+
 /* Dependencies */
 .flow-deps { width: 100%; border-collapse: collapse; }
 .flow-deps th, .flow-deps td { padding: 0.15rem 0.35rem; border-bottom: 1px solid #eee; text-align: left; }
@@ -648,21 +648,21 @@
 /* DAG */
 .dag-container { position: relative; }
 .flow-dag-table { width: 100%; border-collapse: collapse; }
-.flow-dag-table th, .flow-dag-table td { padding: 0.15rem 0.35rem; border-bottom: 1px solid #eee; text-align: left; }
+.flow-dag-table th, .flow-dag-table td { padding: 0.05rem 0.25rem; border-bottom: 1px solid #eee; text-align: left; }
 .flow-dag-table th { font-weight: 600; font-size: 0.75rem; color: #666; }
 .dag-task-name { width: 30%; font-weight: 500; white-space: nowrap; }
-.dag-cell { position: relative; height: 1.5rem; }
-.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.1rem 0.35rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; }
-.dag-label { font-weight: 500; font-size: 0.75rem; }
+.dag-cell { position: relative; height: 1.25rem; }
+.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.05rem 0.25rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; }
+.dag-label { font-weight: 500; font-size: 0.65rem; }
 .dag-edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .dag-edge-path { fill: none; stroke: #999; stroke-width: 2; }
 .dag-edge-arrow { fill: #999; }
 
 /* Kanban */
 .flow-kanban { display: flex; gap: 1rem; min-height: 200px; }
-.kanban-column { flex: 1; background: #f8f8f8; border-radius: 8px; padding: 0.5rem; }
-.kanban-column h3 { margin: 0 0 0.5rem 0; font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
-.kanban-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.5rem; margin-bottom: 0.35rem; }
+.kanban-column { flex: 1; background: #f8f8f8; border-radius: 8px; padding: 0.35rem; }
+.kanban-column h3 { margin: 0 0 0.5rem 0; font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+.kanban-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.35rem; margin-bottom: 0.35rem; }
 .kanban-card:hover { border-color: #3b82f6; }
 .card-title { font-weight: 500; }
 .due-date { display: block; font-size: 0.8rem; color: #888; margin-top: 0.25rem; }

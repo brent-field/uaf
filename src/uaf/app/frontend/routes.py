@@ -1497,7 +1497,7 @@ def flow_page(
         "artifact_id": artifact_id,
         "title": art.title,
         "flow_html": view.content,
-        "view_mode": "gantt",
+        "view_mode": "list",
     }
     return templates.TemplateResponse("flow.html", ctx)
 
@@ -1509,7 +1509,7 @@ def flow_page(
 def flow_view(
     request: Request,
     artifact_id: str,
-    mode: str = "gantt",
+    mode: str = "list",
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
@@ -1583,14 +1583,14 @@ def flow_create_task(
 
     if start_date:
         sd = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UTC)
-    elif mode == "list":
+    elif mode in ("list", "gantt"):
         sd = datetime.now(tz=UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     else:
         sd = None
 
     if end_date:
         ed = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=UTC)
-    elif mode == "list":
+    elif mode in ("list", "gantt"):
         ed = datetime.now(tz=UTC).replace(
             hour=0,
             minute=0,

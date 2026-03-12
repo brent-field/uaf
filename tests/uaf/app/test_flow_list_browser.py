@@ -152,15 +152,15 @@ class TestNewRow:
     def test_new_row_has_date_inputs(self, empty_list_page) -> None:  # type: ignore[no-untyped-def]
         """New-row placeholder should have Start and End date inputs."""
         page, _ = empty_list_page
-        start = page.locator('.list-row-new input.list-cell-date[data-col="2"]')
-        end = page.locator('.list-row-new input.list-cell-date[data-col="3"]')
+        start = page.locator('.list-row-new input.list-cell-date[data-col="3"]')
+        end = page.locator('.list-row-new input.list-cell-date[data-col="4"]')
         assert start.count() == 1, "New row should have a start-date input"
         assert end.count() == 1, "New row should have an end-date input"
 
     def test_tab_from_title_to_start_date(self, empty_list_page) -> None:  # type: ignore[no-untyped-def]
         """Tab from new-row title should focus the new-row start date."""
         page, js_errors = empty_list_page
-        title = page.locator('.list-row-new input.list-cell-input[data-col="1"]')
+        title = page.locator('.list-row-new input.list-cell-input[data-col="2"]')
         title.click()
         title.fill("My Task")
         page.wait_for_timeout(100)
@@ -168,7 +168,7 @@ class TestNewRow:
         page.keyboard.press("Tab")
         page.wait_for_timeout(150)
 
-        start = page.locator('.list-row-new input.list-cell-date[data-col="2"]')
+        start = page.locator('.list-row-new input.list-cell-date[data-col="3"]')
         focused = start.evaluate("el => el === document.activeElement")
         assert focused, (
             f"Tab from new-row title → start date. Active: {_active_info(page)}. "
@@ -178,7 +178,7 @@ class TestNewRow:
     def test_tab_title_start_end(self, empty_list_page) -> None:  # type: ignore[no-untyped-def]
         """Tab twice from title should reach end date."""
         page, _ = empty_list_page
-        title = page.locator('.list-row-new input.list-cell-input[data-col="1"]')
+        title = page.locator('.list-row-new input.list-cell-input[data-col="2"]')
         title.click()
         page.wait_for_timeout(100)
 
@@ -187,14 +187,14 @@ class TestNewRow:
         page.keyboard.press("Tab")
         page.wait_for_timeout(100)
 
-        end = page.locator('.list-row-new input.list-cell-date[data-col="3"]')
+        end = page.locator('.list-row-new input.list-cell-date[data-col="4"]')
         focused = end.evaluate("el => el === document.activeElement")
         assert focused, f"Two Tabs from title → end date. Active: {_active_info(page)}"
 
     def test_enter_creates_task(self, empty_list_page) -> None:  # type: ignore[no-untyped-def]
         """Enter in the new-row title input should create a task."""
         page, js_errors = empty_list_page
-        title = page.locator('.list-row-new input.list-cell-input[data-col="1"]')
+        title = page.locator('.list-row-new input.list-cell-input[data-col="2"]')
         title.click()
         title.fill("Created Task")
         page.keyboard.press("Enter")
@@ -209,7 +209,7 @@ class TestNewRow:
     def test_enter_on_date_creates_task(self, empty_list_page) -> None:  # type: ignore[no-untyped-def]
         """Enter on a new-row date input should also create the task."""
         page, js_errors = empty_list_page
-        title = page.locator('.list-row-new input.list-cell-input[data-col="1"]')
+        title = page.locator('.list-row-new input.list-cell-input[data-col="2"]')
         title.click()
         title.fill("Date Enter Task")
         page.wait_for_timeout(100)
@@ -228,7 +228,7 @@ class TestNewRow:
     def test_enter_creates_then_focus_new_row(self, empty_list_page) -> None:  # type: ignore[no-untyped-def]
         """After Enter creates a task, focus should land on the new-row input."""
         page, _ = empty_list_page
-        title = page.locator('.list-row-new input.list-cell-input[data-col="1"]')
+        title = page.locator('.list-row-new input.list-cell-input[data-col="2"]')
         title.click()
         title.fill("Focus After Create")
         page.keyboard.press("Enter")
@@ -244,7 +244,7 @@ class TestNewRow:
     def test_no_js_errors(self, empty_list_page) -> None:  # type: ignore[no-untyped-def]
         """No JS errors during new-row interaction."""
         page, js_errors = empty_list_page
-        title = page.locator('.list-row-new input.list-cell-input[data-col="1"]')
+        title = page.locator('.list-row-new input.list-cell-input[data-col="2"]')
         title.click()
         title.fill("Test")
         page.keyboard.press("Tab")
@@ -265,7 +265,7 @@ class TestExistingTasks:
     def test_click_date_input(self, list_page) -> None:  # type: ignore[no-untyped-def]
         """Clicking a date input should focus it."""
         page, _ = list_page
-        d = page.locator('input.list-cell-date[data-col="2"]').first
+        d = page.locator('input.list-cell-date[data-col="3"]').first
         d.click()
         page.wait_for_timeout(200)
         assert d.evaluate("el => el === document.activeElement"), (
@@ -274,44 +274,44 @@ class TestExistingTasks:
 
     def test_tab_title_to_start(self, list_page) -> None:  # type: ignore[no-untyped-def]
         page, _ = list_page
-        page.locator('input.list-cell-input[data-col="1"]').first.click()
+        page.locator('input.list-cell-input[data-col="2"]').first.click()
         page.wait_for_timeout(100)
         page.keyboard.press("Tab")
         page.wait_for_timeout(100)
-        s = page.locator('input.list-cell-date[data-col="2"]').first
+        s = page.locator('input.list-cell-date[data-col="3"]').first
         assert s.evaluate("el => el === document.activeElement"), (
             f"Tab title→start. Active: {_active_info(page)}"
         )
 
     def test_tab_start_to_end(self, list_page) -> None:  # type: ignore[no-untyped-def]
         page, _ = list_page
-        page.locator('input.list-cell-date[data-col="2"]').first.click()
+        page.locator('input.list-cell-date[data-col="3"]').first.click()
         page.wait_for_timeout(100)
         page.keyboard.press("Tab")
         page.wait_for_timeout(100)
-        e = page.locator('input.list-cell-date[data-col="3"]').first
+        e = page.locator('input.list-cell-date[data-col="4"]').first
         assert e.evaluate("el => el === document.activeElement"), (
             f"Tab start→end. Active: {_active_info(page)}"
         )
 
     def test_tab_end_wraps_to_next_row(self, list_page) -> None:  # type: ignore[no-untyped-def]
         page, _ = list_page
-        page.locator('input.list-cell-date[data-row="0"][data-col="3"]').click()
+        page.locator('input.list-cell-date[data-row="0"][data-col="4"]').click()
         page.wait_for_timeout(100)
         page.keyboard.press("Tab")
         page.wait_for_timeout(100)
-        t1 = page.locator('input.list-cell-input[data-row="1"][data-col="1"]')
+        t1 = page.locator('input.list-cell-input[data-row="1"][data-col="2"]')
         assert t1.evaluate("el => el === document.activeElement"), (
             f"Tab row0 end→row1 title. Active: {_active_info(page)}"
         )
 
     def test_shift_tab_reverses(self, list_page) -> None:  # type: ignore[no-untyped-def]
         page, _ = list_page
-        page.locator('input.list-cell-date[data-col="2"]').first.click()
+        page.locator('input.list-cell-date[data-col="3"]').first.click()
         page.wait_for_timeout(100)
         page.keyboard.press("Shift+Tab")
         page.wait_for_timeout(100)
-        t = page.locator('input.list-cell-input[data-col="1"]').first
+        t = page.locator('input.list-cell-input[data-col="2"]').first
         assert t.evaluate("el => el === document.activeElement"), (
             f"Shift-Tab start→title. Active: {_active_info(page)}"
         )
@@ -328,7 +328,7 @@ class TestExistingTasks:
     def test_date_not_obscured(self, list_page) -> None:  # type: ignore[no-untyped-def]
         """Date input center should be hittable (no CSS overlay)."""
         page, _ = list_page
-        d = page.locator('input.list-cell-date[data-col="2"]').first
+        d = page.locator('input.list-cell-date[data-col="3"]').first
         box = d.bounding_box()
         assert box is not None
         tag = page.evaluate(
@@ -340,7 +340,7 @@ class TestExistingTasks:
     def test_title_input_has_padding(self, list_page) -> None:  # type: ignore[no-untyped-def]
         """Title input should have visible padding (CSS specificity check)."""
         page, _ = list_page
-        padding = page.locator('input.list-cell-input[data-col="1"]').first.evaluate(
+        padding = page.locator('input.list-cell-input[data-col="2"]').first.evaluate(
             "el => getComputedStyle(el).paddingLeft"
         )
         # Should be ~0.4rem (6.4px), NOT 0px from a broken reset
