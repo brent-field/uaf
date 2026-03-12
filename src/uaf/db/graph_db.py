@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 from uaf.core.operations import (
@@ -16,8 +17,11 @@ from uaf.db.eavt import Datom, EAVTIndex
 from uaf.db.materializer import StateMaterializer
 from uaf.db.operation_log import OperationLog
 from uaf.db.query import QueryEngine
+from uaf.db.undo import UndoManager, compute_inverse
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from uaf.core.edges import Edge
     from uaf.core.node_id import BlobId, EdgeId, NodeId, OperationId
     from uaf.core.nodes import NodeType
@@ -37,6 +41,8 @@ class GraphDB:
         self._index = EAVTIndex()
         self._query = QueryEngine(self._materializer.state, self._index)
         self._blobs: dict[BlobId, bytes] = {}
+        self._undo = UndoManager()
+        self._applying_undo: bool = False
 
     # ------------------------------------------------------------------
     # Mutation
@@ -50,6 +56,10 @@ class GraphDB:
         op_id = self._log.append(op)
         entry = self._log.get(op_id)
         assert entry is not None
+
+        # Record in undo manager (skip during undo/redo to avoid loops)
+        if not self._applying_undo and op.principal_id is not None:
+            self._undo.record_op(op_id, op.principal_id)
 
         # Index old datoms for retraction on update
         match op:
@@ -113,6 +123,70 @@ class GraphDB:
 
         op = DeleteEdge(edge_id=edge_id, parent_ops=parent_ops, timestamp=utc_now())
         self.apply(op)
+
+    # ------------------------------------------------------------------
+    # Undo / Redo
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def action_group(self, principal_id: str) -> Iterator[str]:
+        """Context manager grouping operations into a single undo step."""
+        with self._undo.group(principal_id) as group_id:
+            yield group_id
+
+    def undo(self, principal_id: str) -> list[OperationId]:
+        """Undo the most recent action group for the given principal.
+
+        Returns the OperationIds of the compensating operations applied.
+        """
+        group = self._undo.pop_undo(principal_id)
+        if group is None:
+            return []
+
+        self._applying_undo = True
+        try:
+            result: list[OperationId] = []
+            # Process ops in reverse order
+            for op_id in reversed(group.op_ids):
+                entry = self._log.get(op_id)
+                if entry is None:
+                    continue
+                inverses = compute_inverse(
+                    entry, self._log, self._materializer.state,
+                )
+                for inv_op in inverses:
+                    rid = self.apply(inv_op)
+                    result.append(rid)
+            return result
+        finally:
+            self._applying_undo = False
+
+    def redo(self, principal_id: str) -> list[OperationId]:
+        """Redo the most recently undone action group for the given principal.
+
+        Returns the OperationIds of the compensating operations applied.
+        """
+        group = self._undo.pop_redo(principal_id)
+        if group is None:
+            return []
+
+        self._applying_undo = True
+        try:
+            result: list[OperationId] = []
+            # Process ops in reverse order (redo reverses the undo)
+            for op_id in reversed(group.op_ids):
+                entry = self._log.get(op_id)
+                if entry is None:
+                    continue
+                inverses = compute_inverse(
+                    entry, self._log, self._materializer.state,
+                )
+                for inv_op in inverses:
+                    rid = self.apply(inv_op)
+                    result.append(rid)
+            return result
+        finally:
+            self._applying_undo = False
 
     # ------------------------------------------------------------------
     # Query (delegates to QueryEngine)

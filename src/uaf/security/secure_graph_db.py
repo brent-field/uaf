@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -11,7 +12,7 @@ from uaf.core.errors import (
     PermissionDeniedError,
     RegistrationNotSupportedError,
 )
-from uaf.core.node_id import utc_now
+from uaf.core.node_id import NodeId, utc_now
 from uaf.core.nodes import Artifact, NodeType
 from uaf.core.operations import (
     CreateEdge,
@@ -25,10 +26,10 @@ from uaf.security.audit import AuditAction, AuditEntry, AuditLog, AuditOutcome
 from uaf.security.primitives import SYSTEM, Permission, PrincipalId, Role
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from uaf.core.edges import Edge
-    from uaf.core.node_id import EdgeId, NodeId
+    from uaf.core.node_id import EdgeId, OperationId
     from uaf.db.graph_db import GraphDB
     from uaf.db.journaled_graph_db import JournaledGraphDB
     from uaf.security.auth import AuthProvider, Credentials
@@ -284,6 +285,44 @@ class SecureGraphDB:
         self._record_audit(
             session, AuditAction.DELETE_EDGE, target_id, artifact_id, AuditOutcome.ALLOWED
         )
+
+    # ------------------------------------------------------------------
+    # Undo / Redo
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def action_group(
+        self, session: Session,
+    ) -> Iterator[str]:
+        """Context manager grouping operations into a single undo step."""
+        with self._db.action_group(session.principal.id.value) as gid:
+            yield gid
+
+    def undo(self, session: Session) -> list[OperationId]:
+        """Undo the most recent action group for the session principal."""
+        result = self._db.undo(session.principal.id.value)
+        if result:
+            self._record_audit(
+                session,
+                AuditAction.UNDO,
+                NodeId.generate(),
+                None,
+                AuditOutcome.ALLOWED,
+            )
+        return result
+
+    def redo(self, session: Session) -> list[OperationId]:
+        """Redo the most recently undone action group."""
+        result = self._db.redo(session.principal.id.value)
+        if result:
+            self._record_audit(
+                session,
+                AuditAction.REDO,
+                NodeId.generate(),
+                None,
+                AuditOutcome.ALLOWED,
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Queries (filtered by permissions)

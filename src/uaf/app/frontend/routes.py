@@ -933,6 +933,114 @@ def split_block(
 
 
 # ---------------------------------------------------------------------------
+# Undo / Redo / Revert (HTMX)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/artifacts/{artifact_id}/undo", response_class=HTMLResponse)
+def artifact_undo(
+    request: Request,
+    artifact_id: str,
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Undo the most recent action group and re-render the current view."""
+    session = _require_session(request, db)
+    db.undo(session)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    return _render_artifact_content(request, db, session, aid, artifact_id, registry)
+
+
+@router.post("/artifacts/{artifact_id}/redo", response_class=HTMLResponse)
+def artifact_redo(
+    request: Request,
+    artifact_id: str,
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Redo the most recently undone action group and re-render."""
+    session = _require_session(request, db)
+    db.redo(session)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    return _render_artifact_content(request, db, session, aid, artifact_id, registry)
+
+
+@router.post("/artifacts/{artifact_id}/revert", response_class=HTMLResponse)
+def artifact_revert(
+    request: Request,
+    artifact_id: str,
+    target_time: str = Form(...),
+    db: SecureGraphDB = Depends(get_db),
+    registry: LensRegistry = Depends(get_registry),
+) -> HTMLResponse:
+    """Revert the graph to a specific point in time and re-render."""
+    from datetime import datetime
+
+    from uaf.db.undo import compute_revert_ops
+
+    session = _require_session(request, db)
+    aid = NodeId(value=uuid.UUID(artifact_id))
+    ts = datetime.fromisoformat(target_time)
+    inner_db: Any = db._db
+    ops = compute_revert_ops(
+        ts, inner_db._log, inner_db._materializer.state,
+        session.principal.id.value,
+    )
+    with db.action_group(session):
+        for op in ops:
+            with contextlib.suppress(Exception):
+                inner_db.apply(op)
+
+    return _render_artifact_content(request, db, session, aid, artifact_id, registry)
+
+
+def _render_artifact_content(
+    request: Request,
+    db: SecureGraphDB,
+    session: Session,
+    aid: NodeId,
+    artifact_id: str,
+    registry: LensRegistry,
+) -> HTMLResponse:
+    """Re-render the appropriate content partial for undo/redo/revert."""
+    art = db.get_node(session, aid)
+    if art is None or not isinstance(art, Artifact):
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    atype = art.artifact_type
+    if atype == "doc":
+        children = db.get_children(session, aid)
+        atype = _detect_artifact_type(children)
+
+    if atype == "spreadsheet":
+        lens = registry.get("grid")
+        grid_html = ""
+        if lens is not None:
+            view = lens.render(db, session, aid)
+            grid_html = view.content
+        ctx: dict[str, Any] = {"request": request, "grid_html": grid_html}
+        return templates.TemplateResponse("partials/grid_table.html", ctx)
+
+    if atype == "project":
+        lens = registry.get("flow")
+        flow_html = ""
+        if lens is not None:
+            view = lens.render(db, session, aid)
+            flow_html = view.content
+        ctx = {"request": request, "flow_html": flow_html}
+        return HTMLResponse(flow_html)
+
+    # Default: doc blocks
+    blocks = _parse_doc_blocks("", db, session, aid)
+    ctx = {
+        "request": request,
+        "artifact_id": artifact_id,
+        "blocks": blocks,
+    }
+    return templates.TemplateResponse("partials/doc_blocks.html", ctx)
+
+
+# ---------------------------------------------------------------------------
 # Spreadsheet viewer/editor
 # ---------------------------------------------------------------------------
 

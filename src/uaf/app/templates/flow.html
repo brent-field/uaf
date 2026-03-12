@@ -49,6 +49,17 @@
         </div>
         <span class="toolbar-sep"></span>
         <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/undo"
+                hx-target="#flow-content"
+                hx-swap="innerHTML"
+                title="Undo (Ctrl+Z)">Undo</button>
+        <button class="btn btn-sm"
+                hx-post="/artifacts/{{ artifact_id }}/redo"
+                hx-target="#flow-content"
+                hx-swap="innerHTML"
+                title="Redo (Ctrl+Shift+Z)">Redo</button>
+        <span class="toolbar-sep"></span>
+        <button class="btn btn-sm"
                 onclick="document.getElementById('add-task-form').style.display='flex'">
             + Task</button>
         <span class="toolbar-sep"></span>
@@ -84,6 +95,10 @@
     </div>
 </div>
 
+<script src="/static/editor-core.js"></script>
+<script>
+UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
+</script>
 <script>
 (function() {
     var artifactId = '{{ artifact_id }}';
