@@ -77,7 +77,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'grid-content');
     }
 
     // After HTMX replaces the grid, activate the pending cell
-    document.body.addEventListener('htmx:afterSwap', function(e) {
+    document.body.addEventListener('htmx:after-swap', function(e) {
         if (!e.detail.target || e.detail.target.id !== 'grid-content') return;
         if (!pendingCell) return;
         var row = pendingCell.row;

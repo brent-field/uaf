@@ -62,7 +62,7 @@
     });
 
     // --- Flush before any HTMX request that would swap doc-content ---
-    document.body.addEventListener('htmx:beforeRequest', function(e) {
+    document.body.addEventListener('htmx:before-request', function(e) {
         var target = e.detail.target || (e.detail.elt && e.detail.elt.getAttribute('hx-target'));
         // Flush if any HTMX request targets doc-content (view toggles, inserts, etc.)
         if (_pendingEl) {
@@ -277,7 +277,7 @@
     });
 
     // --- Re-init after HTMX swaps ---
-    content.addEventListener('htmx:afterSwap', function() {
+    content.addEventListener('htmx:after-swap', function() {
         if (content._sortable) {
             content._sortable.destroy();
             content._sortable = null;
