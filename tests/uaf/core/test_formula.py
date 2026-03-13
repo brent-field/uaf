@@ -101,6 +101,26 @@ class TestEvaluateFormula:
         assert evaluate_formula("=  ", self._no_cells) == "#ERROR!"
 
 
+class TestCaseInsensitive:
+    """Function names and cell references should be case-insensitive."""
+
+    def test_mixed_case_function_name(self) -> None:
+        cells: dict[tuple[int, int], CellValue] = {(0, 0): 3, (1, 0): 7}
+        assert resolve_formula("=Max(A1:A2)", cells) == 7
+
+    def test_lowercase_function_name(self) -> None:
+        cells: dict[tuple[int, int], CellValue] = {(0, 0): 3, (1, 0): 7}
+        assert resolve_formula("=sum(A1:A2)", cells) == 10
+
+    def test_lowercase_cell_refs(self) -> None:
+        cells: dict[tuple[int, int], CellValue] = {(0, 0): 3, (1, 0): 7}
+        assert resolve_formula("=SUM(a1:a2)", cells) == 10
+
+    def test_both_lowercase(self) -> None:
+        cells: dict[tuple[int, int], CellValue] = {(0, 0): 3, (1, 0): 7}
+        assert resolve_formula("=max(a1:a2)", cells) == 7
+
+
 class TestFormulaSecurity:
     def _no_cells(self, row: int, col: int) -> CellValue:
         return None

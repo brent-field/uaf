@@ -27,15 +27,15 @@ def parse_cell_ref(ref: str) -> tuple[int, int]:
 
 # --- Range references ---
 
-_RANGE_REF_RE = re.compile(r"([A-Z])(\d+):([A-Z])(\d+)")
-_CELL_REF_RE = re.compile(r"[A-Z]\d+")
+_RANGE_REF_RE = re.compile(r"([A-Z])(\d+):([A-Z])(\d+)", re.IGNORECASE)
+_CELL_REF_RE = re.compile(r"[A-Z]\d+", re.IGNORECASE)
 
 
 def _expand_range(m: re.Match[str]) -> str:
     """Expand A1:B3 into comma-separated cell refs: A1,A2,A3,B1,B2,B3."""
-    col_start = ord(m.group(1))
+    col_start = ord(m.group(1).upper())
     row_start = int(m.group(2))
-    col_end = ord(m.group(3))
+    col_end = ord(m.group(3).upper())
     row_end = int(m.group(4))
     refs: list[str] = []
     for c in range(col_start, col_end + 1):
@@ -193,6 +193,7 @@ class _SafeValidator(ast.NodeVisitor):
         super().generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> None:
+        node.id = node.id.upper()
         if node.id not in _FUNCTION_REGISTRY:
             msg = f"Unknown function: {node.id}"
             raise ValueError(msg)
@@ -220,7 +221,7 @@ def evaluate_formula(
 
         # Step 2: Replace cell references with values
         def _replace_ref(m: re.Match[str]) -> str:
-            row, col = parse_cell_ref(m.group(0))
+            row, col = parse_cell_ref(m.group(0).upper())
             val = cell_getter(row, col)
             if val is None or val == "":
                 return "0"

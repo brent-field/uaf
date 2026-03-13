@@ -58,6 +58,23 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'grid-content');
     var artifactId = '{{ artifact_id }}';
     var activeInput = null;
     var pendingCell = null;  // {row, col} to activate after HTMX swap
+    var insertingRef = false;
+
+    function isFormulaOpen(value, cursorPos) {
+        var before = value.substring(0, cursorPos);
+        var trimmed = before.replace(/\s+$/, '');
+        if (!trimmed) return false;
+        var lastChar = trimmed[trimmed.length - 1];
+        return '(,+-*/=<>'.indexOf(lastChar) >= 0;
+    }
+
+    function colToLetter(col) {
+        return String.fromCharCode(65 + parseInt(col, 10));
+    }
+
+    function cellRef(row, col) {
+        return colToLetter(col) + (parseInt(row, 10) + 1);
+    }
 
     // After HTMX replaces the grid, activate the pending cell
     document.body.addEventListener('htmx:afterSwap', function(e) {
@@ -156,6 +173,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'grid-content');
 
         input.addEventListener('blur', function() {
             setTimeout(function() {
+                if (insertingRef) { insertingRef = false; return; }
                 if (activeInput === input) commitCell(td, input);
             }, 100);
         });
@@ -165,8 +183,22 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'grid-content');
         var td = e.target.closest('td[data-row][data-col]');
         if (!td) return;
         if (e.target.tagName === 'INPUT') return;
+
+        // Formula mode: insert cell reference instead of navigating
         if (activeInput) {
-            // Commit current cell, then activate clicked cell after swap
+            var val = activeInput.value;
+            if (val.trimStart().startsWith('=') && isFormulaOpen(val, activeInput.selectionStart)) {
+                var ref = cellRef(td.getAttribute('data-row'), td.getAttribute('data-col'));
+                var start = activeInput.selectionStart;
+                var end = activeInput.selectionEnd;
+                activeInput.value = val.substring(0, start) + ref + val.substring(end);
+                activeInput.selectionStart = activeInput.selectionEnd = start + ref.length;
+                insertingRef = true;
+                activeInput.focus();
+                e.stopPropagation();
+                return;
+            }
+            // Not in formula mode — commit and navigate
             pendingCell = {
                 row: td.getAttribute('data-row'),
                 col: td.getAttribute('data-col'),
