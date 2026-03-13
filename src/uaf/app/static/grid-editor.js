@@ -181,7 +181,7 @@
     }
 
     // Re-init after HTMX swaps
-    content.addEventListener('htmx:afterSwap', function() {
+    content.addEventListener('htmx:after-swap', function() {
         selectedCell = null;
         editingCell = null;
     });

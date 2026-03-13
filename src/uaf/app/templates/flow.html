@@ -249,7 +249,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 // List-view data grid navigation.
 // Tab/Shift-Tab: handled by the browser natively (inputs are in DOM order).
 // Arrow keys: move between rows. Enter: save. Escape: blur.
-// Focus is restored after HTMX swaps via htmx:beforeRequest/afterSwap.
+// Focus is restored after HTMX swaps via htmx:before-request/after-swap.
 (function() {
     var content = document.getElementById('flow-content');
     if (!content) return;
@@ -257,7 +257,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
     var pendingAction = null;
 
     // Before HTMX request: record which cell triggered it
-    content.addEventListener('htmx:beforeRequest', function(e) {
+    content.addEventListener('htmx:before-request', function(e) {
         var el = e.detail.elt;
         if (el && el.dataset && el.dataset.row != null) {
             pendingFocus = {row: +el.dataset.row, col: +(el.dataset.col || 1)};
@@ -266,7 +266,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
     });
 
     // After HTMX swap: restore focus to the right cell
-    content.addEventListener('htmx:afterSwap', function() {
+    content.addEventListener('htmx:after-swap', function() {
         if (!pendingFocus) return;
         var row = pendingFocus.row;
         var col = pendingFocus.col;
@@ -431,7 +431,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
     }
     var content = document.getElementById('flow-content');
     if (content) {
-        content.addEventListener('htmx:afterSwap', function() {
+        content.addEventListener('htmx:after-swap', function() {
             requestAnimationFrame(drawDagEdges);
         });
     }
@@ -472,7 +472,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
     }
     var content = document.getElementById('flow-content');
     if (content) {
-        content.addEventListener('htmx:afterSwap', function() {
+        content.addEventListener('htmx:after-swap', function() {
             requestAnimationFrame(positionGanttBars);
         });
     }
@@ -521,7 +521,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
     initKanban();
     var content = document.getElementById('flow-content');
     if (content) {
-        content.addEventListener('htmx:afterSwap', function() {
+        content.addEventListener('htmx:after-swap', function() {
             requestAnimationFrame(initKanban);
         });
     }
