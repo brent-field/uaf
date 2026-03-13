@@ -894,34 +894,51 @@ def split_block(
     aid = NodeId(value=uuid.UUID(artifact_id))
     nid = NodeId(value=uuid.UUID(node_id))
 
-    # Update existing block with text before cursor
-    existing = db.get_node(session, nid)
-    if existing is not None:
-        match existing:
-            case Heading(meta=meta, level=level):
-                db.update_node(session, Heading(meta=meta, text=before_text, level=level))
-            case Paragraph(meta=meta, style=style):
-                db.update_node(
-                    session, Paragraph(meta=meta, text=before_text, style=style),
-                )
-            case CodeBlock(meta=meta, language=lang):
-                db.update_node(
-                    session, CodeBlock(meta=meta, source=before_text, language=lang),
-                )
-            case TextBlock(meta=meta):
-                db.update_node(session, TextBlock(meta=meta, text=before_text))
+    with db._db.action_group(session.principal.id.value):
+        # Update existing block with text before cursor
+        existing = db.get_node(session, nid)
+        if existing is not None:
+            match existing:
+                case Heading(meta=meta, level=level):
+                    db.update_node(
+                        session,
+                        Heading(meta=meta, text=before_text, level=level),
+                    )
+                case Paragraph(meta=meta, style=style):
+                    db.update_node(
+                        session,
+                        Paragraph(meta=meta, text=before_text, style=style),
+                    )
+                case CodeBlock(meta=meta, language=lang):
+                    db.update_node(
+                        session,
+                        CodeBlock(
+                            meta=meta, source=before_text, language=lang,
+                        ),
+                    )
+                case TextBlock(meta=meta):
+                    db.update_node(
+                        session, TextBlock(meta=meta, text=before_text),
+                    )
 
-    # Find position of current block and insert new one after it
-    children = db.get_children(session, aid)
-    child_ids = [c.meta.id for c in children]
-    pos = child_ids.index(nid) + 1 if nid in child_ids else len(child_ids)
-
-    lens = registry.get("doc")
-    if lens is not None:
-        lens.apply_action(
-            db, session, aid,
-            InsertText(parent_id=aid, text=after_text, position=pos, style="paragraph"),
+        # Find position of current block and insert new one after it
+        children = db.get_children(session, aid)
+        child_ids = [c.meta.id for c in children]
+        pos = (
+            child_ids.index(nid) + 1
+            if nid in child_ids
+            else len(child_ids)
         )
+
+        lens = registry.get("doc")
+        if lens is not None:
+            lens.apply_action(
+                db, session, aid,
+                InsertText(
+                    parent_id=aid, text=after_text,
+                    position=pos, style="paragraph",
+                ),
+            )
 
     blocks = _parse_doc_blocks("", db, session, aid)
     ctx: dict[str, Any] = {

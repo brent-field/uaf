@@ -312,33 +312,8 @@ class TestGraphDBUndoRedo:
         assert db.get_node(node.meta.id) is None
 
         db.redo("u")
-        # After redo, the undo of the create (DeleteNode) is undone,
-        # but the redo re-applies that inverse. Actually redo pops from
-        # redo stack (which has the original create's group) and
-        # computes its inverse, which is DeleteNode again.
-        # Let's check the actual behavior:
-        # The redo pops the original group (CreateNode op) from redo,
-        # then computes inverse of CreateNode => DeleteNode.
-        # So after redo, the node is deleted again.
-        # This is correct: redo re-applies the undo.
-        # Wait, that's not right. Let me reconsider.
-        #
-        # Actually: undo pops original group, applies inverse (DeleteNode).
-        # The original group goes to redo stack.
-        # redo pops original group from redo, applies inverse of the
-        # original ops. But inverse of CreateNode is DeleteNode.
-        # That means redo deletes it again, which is wrong.
-        #
-        # The issue is that redo should apply the inverse of the
-        # UNDO operations, not the original. But that's not tracked.
-        #
-        # For proper redo: we need to track what the undo did and redo
-        # should reverse that. Since the current implementation
-        # re-computes inverse on the ORIGINAL ops, redo of a create
-        # will try to delete again. But it's already deleted after undo.
-        #
-        # This reveals a design issue - let me verify what actually happens.
-        pass  # See test_undo_update_node for a more meaningful test
+        # Redo re-applies the original CreateNode, restoring the node.
+        assert db.get_node(node.meta.id) is not None
 
     def test_undo_update_node(self) -> None:
         db = GraphDB()
@@ -463,3 +438,81 @@ class TestComputeRevertOps:
         )
         # Should produce CreateNode to restore the deleted node
         assert any(isinstance(op, CreateNode) for op in ops)
+
+
+# ---------------------------------------------------------------------------
+# Redo bug regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestRedoBug:
+    """Verify that redo re-applies the original operations (not inverses)."""
+
+    def test_redo_restores_update(self) -> None:
+        """Create a node, update it, undo, verify old value, redo, verify new."""
+        db = GraphDB()
+        node = _make_paragraph("v1")
+        db.apply(CreateNode(
+            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+        ))
+        updated = Paragraph(meta=node.meta, text="v2")
+        db.apply(UpdateNode(
+            node=updated, parent_ops=(), timestamp=utc_now(), principal_id="u",
+        ))
+        result = db.get_node(node.meta.id)
+        assert result is not None
+        assert result.text == "v2"
+
+        # Undo should revert to v1
+        db.undo("u")
+        result = db.get_node(node.meta.id)
+        assert result is not None
+        assert result.text == "v1"
+
+        # Redo should restore v2
+        db.redo("u")
+        result = db.get_node(node.meta.id)
+        assert result is not None
+        assert result.text == "v2"
+
+    def test_redo_restores_create(self) -> None:
+        """Create a node, undo (deletes it), redo, verify it exists again."""
+        db = GraphDB()
+        node = _make_paragraph("restored")
+        db.apply(CreateNode(
+            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+        ))
+        assert db.get_node(node.meta.id) is not None
+
+        db.undo("u")
+        assert db.get_node(node.meta.id) is None
+
+        db.redo("u")
+        result = db.get_node(node.meta.id)
+        assert result is not None
+        assert result.text == "restored"
+
+
+# ---------------------------------------------------------------------------
+# Nested action group tests
+# ---------------------------------------------------------------------------
+
+
+class TestNestedActionGroups:
+    """Verify that nested action groups collapse into a single undo step."""
+
+    def test_nested_groups_produce_single_undo(self) -> None:
+        mgr = UndoManager()
+        oid1 = _fake_op_id("a")
+        oid2 = _fake_op_id("b")
+        oid3 = _fake_op_id("c")
+        with mgr.group("user1"):
+            mgr.record_op(oid1, "user1")
+            with mgr.group("user1"):
+                mgr.record_op(oid2, "user1")
+                mgr.record_op(oid3, "user1")
+        group = mgr.pop_undo("user1")
+        assert group is not None
+        assert group.op_ids == (oid1, oid2, oid3)
+        # Only one group should have been created
+        assert mgr.pop_undo("user1") is None

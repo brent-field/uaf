@@ -55,18 +55,34 @@ class UndoManager:
         self._current_group: str | None = None
         self._current_group_ops: list[OperationId] = []
         self._current_group_principal: str | None = None
+        self._group_depth: int = 0
 
     def begin_group(self, principal_id: str) -> str:
-        """Start a new undo group. Returns the group_id."""
+        """Start a new undo group. Returns the group_id.
+
+        Supports nesting: if a group is already open, the depth counter
+        increments and the existing group keeps collecting operations.
+        Only the outermost ``end_group`` finalises the group.
+        """
+        if self._current_group is not None:
+            self._group_depth += 1
+            return self._current_group
         group_id = uuid.uuid4().hex[:16]
         self._current_group = group_id
         self._current_group_ops = []
         self._current_group_principal = principal_id
+        self._group_depth = 1
         return group_id
 
     def end_group(self) -> None:
-        """Close the current group and push it to the undo stack."""
+        """Close the current group and push it to the undo stack.
+
+        When nested, only the outermost call finalises the group.
+        """
         if self._current_group is None:
+            return
+        self._group_depth -= 1
+        if self._group_depth > 0:
             return
         if self._current_group_ops and self._current_group_principal is not None:
             group = UndoGroup(

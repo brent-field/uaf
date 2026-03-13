@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -162,10 +163,14 @@ class GraphDB:
             self._applying_undo = False
 
     def redo(self, principal_id: str) -> list[OperationId]:
-        """Redo the most recently undone action group for the given principal.
+        """Redo the most recently undone action group.
 
-        Returns the OperationIds of the compensating operations applied.
+        Re-applies the original operations in forward order with fresh
+        timestamps instead of computing inverses (which would just repeat
+        the undo).
         """
+        from uaf.core.node_id import utc_now
+
         group = self._undo.pop_redo(principal_id)
         if group is None:
             return []
@@ -173,17 +178,17 @@ class GraphDB:
         self._applying_undo = True
         try:
             result: list[OperationId] = []
-            # Process ops in reverse order (redo reverses the undo)
-            for op_id in reversed(group.op_ids):
+            # Re-apply original operations in forward order
+            for op_id in group.op_ids:
                 entry = self._log.get(op_id)
                 if entry is None:
                     continue
-                inverses = compute_inverse(
-                    entry, self._log, self._materializer.state,
+                # Clone op with fresh timestamp
+                new_op = dataclasses.replace(
+                    entry.operation, timestamp=utc_now(), parent_ops=(),
                 )
-                for inv_op in inverses:
-                    rid = self.apply(inv_op)
-                    result.append(rid)
+                rid = self.apply(new_op)
+                result.append(rid)
             return result
         finally:
             self._applying_undo = False
