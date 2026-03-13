@@ -120,18 +120,18 @@ class JournaledGraphDB:
     # ------------------------------------------------------------------
 
     @contextmanager
-    def action_group(self, principal_id: str) -> Iterator[str]:
+    def action_group(self, principal_id: str, artifact_id: str) -> Iterator[str]:
         """Context manager grouping operations into a single undo step."""
-        with self._db.action_group(principal_id) as group_id:
+        with self._db.action_group(principal_id, artifact_id) as group_id:
             yield group_id
 
-    def undo(self, principal_id: str) -> list[OperationId]:
+    def undo(self, principal_id: str, artifact_id: str) -> list[OperationId]:
         """Undo the most recent action group. Compensating ops are journaled."""
-        return self._db.undo(principal_id)
+        return self._db.undo(principal_id, artifact_id)
 
-    def redo(self, principal_id: str) -> list[OperationId]:
+    def redo(self, principal_id: str, artifact_id: str) -> list[OperationId]:
         """Redo the most recently undone action group."""
-        return self._db.redo(principal_id)
+        return self._db.redo(principal_id, artifact_id)
 
     # ------------------------------------------------------------------
     # Query (delegates to GraphDB)
