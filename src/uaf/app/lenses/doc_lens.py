@@ -397,55 +397,58 @@ class DocLens:
         style: str,
     ) -> None:
         """Insert a text node as a child of parent_id."""
-        new_node: Heading | CodeBlock | Paragraph
-        if style == "heading":
-            new_node = Heading(
-                meta=make_node_metadata(NodeType.HEADING), text=text, level=1,
-            )
-        elif style == "code_block":
-            new_node = CodeBlock(
-                meta=make_node_metadata(NodeType.CODE_BLOCK), source=text, language="",
-            )
-        else:
-            new_node = Paragraph(
-                meta=make_node_metadata(NodeType.PARAGRAPH), text=text,
-            )
+        with db._db.action_group(session.principal.id.value):
+            new_node: Heading | CodeBlock | Paragraph
+            if style == "heading":
+                new_node = Heading(
+                    meta=make_node_metadata(NodeType.HEADING), text=text, level=1,
+                )
+            elif style == "code_block":
+                new_node = CodeBlock(
+                    meta=make_node_metadata(NodeType.CODE_BLOCK),
+                    source=text, language="",
+                )
+            else:
+                new_node = Paragraph(
+                    meta=make_node_metadata(NodeType.PARAGRAPH), text=text,
+                )
 
-        node_id = db.create_node(session, new_node)
-        edge = Edge(
-            id=EdgeId.generate(),
-            source=parent_id,
-            target=node_id,
-            edge_type=EdgeType.CONTAINS,
-            created_at=utc_now(),
-        )
-        db.create_edge(session, edge)
+            node_id = db.create_node(session, new_node)
+            edge = Edge(
+                id=EdgeId.generate(),
+                source=parent_id,
+                target=node_id,
+                edge_type=EdgeType.CONTAINS,
+                created_at=utc_now(),
+            )
+            db.create_edge(session, edge)
 
-        # Reorder to place at requested position
-        children = db.get_children(session, parent_id)
-        child_ids = [c.meta.id for c in children]
-        # node_id is already at the end from create_edge; move it to position
-        if node_id in child_ids:
-            child_ids.remove(node_id)
-        child_ids.insert(min(position, len(child_ids)), node_id)
-        op = ReorderChildren(
-            parent_id=parent_id,
-            new_order=tuple(child_ids),
-            parent_ops=(),
-            timestamp=utc_now(),
-            principal_id=session.principal.id.value,
-        )
-        db._db.apply(op)
+            # Reorder to place at requested position
+            children = db.get_children(session, parent_id)
+            child_ids = [c.meta.id for c in children]
+            # node_id is already at the end from create_edge; move it to position
+            if node_id in child_ids:
+                child_ids.remove(node_id)
+            child_ids.insert(min(position, len(child_ids)), node_id)
+            op = ReorderChildren(
+                parent_id=parent_id,
+                new_order=tuple(child_ids),
+                parent_ops=(),
+                timestamp=utc_now(),
+                principal_id=session.principal.id.value,
+            )
+            db._db.apply(op)
 
     def _delete_text(
         self, db: SecureGraphDB, session: Session, node_id: NodeId
     ) -> None:
         """Delete a text node and its CONTAINS edge."""
-        state = db._db._materializer.state
-        for eid, edge in list(state.edges.items()):
-            if edge.target == node_id and edge.edge_type == EdgeType.CONTAINS:
-                db.delete_edge(session, eid)
-        db.delete_node(session, node_id)
+        with db._db.action_group(session.principal.id.value):
+            state = db._db._materializer.state
+            for eid, edge in list(state.edges.items()):
+                if edge.target == node_id and edge.edge_type == EdgeType.CONTAINS:
+                    db.delete_edge(session, eid)
+            db.delete_node(session, node_id)
 
     def _format_text(
         self,
