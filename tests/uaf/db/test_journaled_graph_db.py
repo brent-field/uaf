@@ -383,3 +383,86 @@ class TestJournaledGraphDBUndoPersistence:
         # Undo returns empty since no undo journal was found
         result = db2.undo("u", "art1")
         assert result == []
+
+    def test_multiple_undo_groups_survive_restart(self, tmp_path: Path) -> None:
+        """Create 3 groups, restart, verify all 3 are undoable in order."""
+        root = tmp_path / "store"
+        config = StoreConfig(root=root)
+
+        store1 = Store.open_or_create(config)
+        db1 = JournaledGraphDB(store1)
+
+        p1 = _make_paragraph("first")
+        p2 = _make_paragraph("second")
+        p3 = _make_paragraph("third")
+        for p in [p1, p2, p3]:
+            with db1.action_group("u", "art1"):
+                db1.apply(CreateNode(
+                    node=p, parent_ops=(), timestamp=utc_now(), principal_id="u",
+                ))
+        store1.journal.close()
+        store1.undo_journal.close()
+
+        # Restart
+        store2 = Store.open_or_create(config)
+        db2 = JournaledGraphDB(store2)
+
+        # All three nodes exist
+        assert db2.get_node(p1.meta.id) is not None
+        assert db2.get_node(p2.meta.id) is not None
+        assert db2.get_node(p3.meta.id) is not None
+
+        # Undo removes in reverse order: third, second, first
+        db2.undo("u", "art1")
+        assert db2.get_node(p3.meta.id) is None
+        assert db2.get_node(p2.meta.id) is not None
+
+        db2.undo("u", "art1")
+        assert db2.get_node(p2.meta.id) is None
+        assert db2.get_node(p1.meta.id) is not None
+
+        db2.undo("u", "art1")
+        assert db2.get_node(p1.meta.id) is None
+
+        # Stack exhausted
+        assert db2.undo("u", "art1") == []
+
+    def test_redo_cleared_survives_restart(self, tmp_path: Path) -> None:
+        """Create group, undo, restart, new op clears redo, restart, redo empty."""
+        root = tmp_path / "store"
+        config = StoreConfig(root=root)
+
+        # Phase 1: create and undo
+        store1 = Store.open_or_create(config)
+        db1 = JournaledGraphDB(store1)
+
+        p1 = _make_paragraph("will-be-undone")
+        with db1.action_group("u", "art1"):
+            db1.apply(CreateNode(
+                node=p1, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+        db1.undo("u", "art1")
+        assert db1.get_node(p1.meta.id) is None
+        store1.journal.close()
+        store1.undo_journal.close()
+
+        # Phase 2: restart, new op clears redo
+        store2 = Store.open_or_create(config)
+        db2 = JournaledGraphDB(store2)
+
+        p2 = _make_paragraph("new-action")
+        with db2.action_group("u", "art1"):
+            db2.apply(CreateNode(
+                node=p2, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+        # Redo for p1 should be gone
+        assert db2.redo("u", "art1") == []
+        store2.journal.close()
+        store2.undo_journal.close()
+
+        # Phase 3: restart again, redo still empty
+        store3 = Store.open_or_create(config)
+        db3 = JournaledGraphDB(store3)
+
+        assert db3.redo("u", "art1") == []
+        assert db3.get_node(p2.meta.id) is not None
