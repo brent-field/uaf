@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 def _fake_op_id(val: str = "a") -> OperationId:
     """Create a fake OperationId for testing."""
-    return OperationId(hex_digest=val.ljust(64, "a"))
+    return OperationId(hex_digest=val.ljust(64, "0"))
 
 
 class TestUndoJournal:

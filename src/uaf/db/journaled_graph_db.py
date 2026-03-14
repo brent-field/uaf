@@ -208,6 +208,9 @@ class JournaledGraphDB:
     def _replay(self) -> None:
         """Replay journal to rebuild in-memory state."""
         self._replaying = True
+        # Suppress undo recording during op replay — stacks are rebuilt
+        # from the undo journal, not from individual operations.
+        self._db._applying_undo = True
         try:
             ops = self._store.journal.read_all()
             for op in ops:
@@ -216,6 +219,7 @@ class JournaledGraphDB:
             undo_events = self._store.undo_journal.read_all()
             self._db._undo.replay_events(undo_events)
         finally:
+            self._db._applying_undo = False
             self._replaying = False
 
     def _on_undo_event(self, event: UndoEvent) -> None:

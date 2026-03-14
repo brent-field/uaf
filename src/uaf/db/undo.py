@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from uaf.core.node_id import utc_now
 from uaf.core.operations import (
@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+UndoEventType = Literal["created", "undone", "redone", "redo_cleared"]
+
+
 @dataclass(frozen=True, slots=True)
 class UndoGroup:
     """A group of operations that should be undone/redone together."""
@@ -40,6 +43,16 @@ class UndoGroup:
     op_ids: tuple[OperationId, ...]
     principal_id: str
     artifact_id: str
+
+    def to_event(self, event_type: UndoEventType) -> UndoEvent:
+        """Create an UndoEvent from this group."""
+        return UndoEvent(
+            event_type=event_type,
+            group_id=self.group_id,
+            op_ids=self.op_ids,
+            principal_id=self.principal_id,
+            artifact_id=self.artifact_id,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +64,7 @@ class UndoGroup:
 class UndoEvent:
     """Event emitted when the undo/redo stacks change."""
 
-    event_type: str  # "created", "undone", "redone", "redo_cleared"
+    event_type: UndoEventType
     group_id: str
     op_ids: tuple[OperationId, ...]
     principal_id: str
@@ -121,13 +134,7 @@ class UndoManager:
             key = (self._current_group_principal, self._current_group_artifact)
             stack = self._undo_stacks.setdefault(key, [])
             stack.append(group)
-            self._emit(UndoEvent(
-                event_type="created",
-                group_id=group.group_id,
-                op_ids=group.op_ids,
-                principal_id=group.principal_id,
-                artifact_id=group.artifact_id,
-            ))
+            self._emit(group.to_event("created"))
         self._current_group = None
         self._current_group_ops = []
         self._current_group_principal = None
@@ -152,13 +159,7 @@ class UndoManager:
             key = (principal_id, artifact_id)
             stack = self._undo_stacks.setdefault(key, [])
             stack.append(group)
-            self._emit(UndoEvent(
-                event_type="created",
-                group_id=group.group_id,
-                op_ids=group.op_ids,
-                principal_id=group.principal_id,
-                artifact_id=group.artifact_id,
-            ))
+            self._emit(group.to_event("created"))
 
         # Clear redo stack on new action — only for the specific artifact
         redo_key: tuple[str, str] | None = None
@@ -170,13 +171,7 @@ class UndoManager:
             cleared = self._redo_stacks.pop(redo_key, None)
             if cleared:
                 for g in cleared:
-                    self._emit(UndoEvent(
-                        event_type="redo_cleared",
-                        group_id=g.group_id,
-                        op_ids=g.op_ids,
-                        principal_id=g.principal_id,
-                        artifact_id=g.artifact_id,
-                    ))
+                    self._emit(g.to_event("redo_cleared"))
 
     def pop_undo(self, principal_id: str, artifact_id: str) -> UndoGroup | None:
         """Pop the most recent undo group, move it to the redo stack."""
@@ -187,13 +182,7 @@ class UndoManager:
         group = stack.pop()
         redo_stack = self._redo_stacks.setdefault(key, [])
         redo_stack.append(group)
-        self._emit(UndoEvent(
-            event_type="undone",
-            group_id=group.group_id,
-            op_ids=group.op_ids,
-            principal_id=group.principal_id,
-            artifact_id=group.artifact_id,
-        ))
+        self._emit(group.to_event("undone"))
         return group
 
     def pop_redo(self, principal_id: str, artifact_id: str) -> UndoGroup | None:
@@ -205,13 +194,7 @@ class UndoManager:
         group = stack.pop()
         undo_stack = self._undo_stacks.setdefault(key, [])
         undo_stack.append(group)
-        self._emit(UndoEvent(
-            event_type="redone",
-            group_id=group.group_id,
-            op_ids=group.op_ids,
-            principal_id=group.principal_id,
-            artifact_id=group.artifact_id,
-        ))
+        self._emit(group.to_event("redone"))
         return group
 
     @contextmanager
