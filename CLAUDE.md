@@ -74,7 +74,7 @@ docs/         # Architecture and design documents
 ## Workflow
 
 - **Use worktrees for feature work:** When implementing changes, use an isolated git worktree so the main working tree stays clean.
-- **Never commit or merge directly to `main`:** All changes must go through a feature branch and pull request.
+- **Never commit or merge directly to `main`:** All changes must go through a worktree feature branch and pull request.
 
 ## Key Files
 
