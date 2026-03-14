@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from uaf.db.materializer import StateMaterializer
     from uaf.db.operation_log import LogEntry, OperationLog
     from uaf.db.store import Store
+    from uaf.db.undo import UndoEvent
 
 
 class JournaledGraphDB:
@@ -30,7 +31,8 @@ class JournaledGraphDB:
 
     def __init__(self, store: Store) -> None:
         self._store = store
-        self._db = GraphDB()
+        self._replaying = False
+        self._db = GraphDB(on_undo_event=self._on_undo_event)
         self._replay()
 
     # ------------------------------------------------------------------
@@ -127,11 +129,15 @@ class JournaledGraphDB:
 
     def undo(self, principal_id: str, artifact_id: str) -> list[OperationId]:
         """Undo the most recent action group. Compensating ops are journaled."""
-        return self._db.undo(principal_id, artifact_id)
+        return self._db.undo(
+            principal_id, artifact_id, apply_fn=self.apply,
+        )
 
     def redo(self, principal_id: str, artifact_id: str) -> list[OperationId]:
         """Redo the most recently undone action group."""
-        return self._db.redo(principal_id, artifact_id)
+        return self._db.redo(
+            principal_id, artifact_id, apply_fn=self.apply,
+        )
 
     # ------------------------------------------------------------------
     # Query (delegates to GraphDB)
@@ -201,6 +207,22 @@ class JournaledGraphDB:
 
     def _replay(self) -> None:
         """Replay journal to rebuild in-memory state."""
-        ops = self._store.journal.read_all()
-        for op in ops:
-            self._db.apply(op)
+        self._replaying = True
+        # Suppress undo recording during op replay — stacks are rebuilt
+        # from the undo journal, not from individual operations.
+        self._db._applying_undo = True
+        try:
+            ops = self._store.journal.read_all()
+            for op in ops:
+                self._db.apply(op)
+            # Rebuild undo/redo stacks from undo journal
+            undo_events = self._store.undo_journal.read_all()
+            self._db._undo.replay_events(undo_events)
+        finally:
+            self._db._applying_undo = False
+            self._replaying = False
+
+    def _on_undo_event(self, event: UndoEvent) -> None:
+        """Persist undo events to the undo journal (skipped during replay)."""
+        if not self._replaying:
+            self._store.undo_journal.append(event)

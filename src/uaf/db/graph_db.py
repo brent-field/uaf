@@ -21,12 +21,13 @@ from uaf.db.query import QueryEngine
 from uaf.db.undo import UndoManager, compute_inverse
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from uaf.core.edges import Edge
     from uaf.core.node_id import BlobId, EdgeId, NodeId, OperationId
     from uaf.core.nodes import NodeType
     from uaf.db.operation_log import LogEntry
+    from uaf.db.undo import UndoEvent
 
 
 class GraphDB:
@@ -36,13 +37,16 @@ class GraphDB:
     All queries delegate to QueryEngine.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        on_undo_event: Callable[[UndoEvent], None] | None = None,
+    ) -> None:
         self._log = OperationLog()
         self._materializer = StateMaterializer()
         self._index = EAVTIndex()
         self._query = QueryEngine(self._materializer.state, self._index)
         self._blobs: dict[BlobId, bytes] = {}
-        self._undo = UndoManager()
+        self._undo = UndoManager(on_event=on_undo_event)
         self._applying_undo: bool = False
         self._current_artifact_id: str | None = None
 
@@ -141,15 +145,25 @@ class GraphDB:
         finally:
             self._current_artifact_id = old
 
-    def undo(self, principal_id: str, artifact_id: str) -> list[OperationId]:
+    def undo(
+        self,
+        principal_id: str,
+        artifact_id: str,
+        *,
+        apply_fn: Callable[[Any], OperationId] | None = None,
+    ) -> list[OperationId]:
         """Undo the most recent action group for the given principal and artifact.
 
         Returns the OperationIds of the compensating operations applied.
+        When *apply_fn* is provided it is used instead of ``self.apply``
+        so that callers (e.g. ``JournaledGraphDB``) can inject their own
+        persistence-aware apply method.
         """
         group = self._undo.pop_undo(principal_id, artifact_id)
         if group is None:
             return []
 
+        do_apply = apply_fn if apply_fn is not None else self.apply
         self._applying_undo = True
         try:
             result: list[OperationId] = []
@@ -162,13 +176,19 @@ class GraphDB:
                     entry, self._log, self._materializer.state,
                 )
                 for inv_op in inverses:
-                    rid = self.apply(inv_op)
+                    rid = do_apply(inv_op)
                     result.append(rid)
             return result
         finally:
             self._applying_undo = False
 
-    def redo(self, principal_id: str, artifact_id: str) -> list[OperationId]:
+    def redo(
+        self,
+        principal_id: str,
+        artifact_id: str,
+        *,
+        apply_fn: Callable[[Any], OperationId] | None = None,
+    ) -> list[OperationId]:
         """Redo the most recently undone action group.
 
         Re-applies the original operations in forward order with fresh
@@ -181,6 +201,7 @@ class GraphDB:
         if group is None:
             return []
 
+        do_apply = apply_fn if apply_fn is not None else self.apply
         self._applying_undo = True
         try:
             result: list[OperationId] = []
@@ -193,7 +214,7 @@ class GraphDB:
                 new_op = dataclasses.replace(
                     entry.operation, timestamp=utc_now(), parent_ops=(),
                 )
-                rid = self.apply(new_op)
+                rid = do_apply(new_op)
                 result.append(rid)
             return result
         finally:
