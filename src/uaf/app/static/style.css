@@ -879,3 +879,209 @@ input:focus, select:focus {
     .view-toggle { display: none !important; }
     .toolbar-sep { display: none !important; }
 }
+
+/* Bullet list item */
+.doc-block[data-type="bullet_list_item"] .block-body {
+    padding-left: 1.5rem;
+    position: relative;
+}
+.doc-block[data-type="bullet_list_item"] .block-body::before {
+    content: "\2022";
+    position: absolute;
+    left: 0.25rem;
+    color: var(--text-muted);
+    font-size: 1.2em;
+    line-height: 1.5;
+}
+
+/* Numbered list item */
+.doc-block[data-type="numbered_list_item"] .block-body {
+    padding-left: 1.5rem;
+    position: relative;
+}
+.doc-block[data-type="numbered_list_item"] .block-body::before {
+    content: counter(list-item) ".";
+    counter-increment: list-item;
+    position: absolute;
+    left: 0.25rem;
+    color: var(--text-muted);
+    font-size: 0.9em;
+    line-height: 1.5;
+}
+/* Reset counter on non-list blocks */
+.doc-block:not([data-type="numbered_list_item"]) + .doc-block[data-type="numbered_list_item"] {
+    counter-reset: list-item;
+}
+.doc-block[data-type="numbered_list_item"]:first-child {
+    counter-reset: list-item;
+}
+
+/* Blockquote */
+.doc-block[data-type="blockquote"] .block-body {
+    border-left: 3px solid var(--border);
+    padding-left: 1rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Divider */
+.block-divider {
+    padding: 0.5rem 0 !important;
+    min-height: auto !important;
+}
+.block-divider hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 0;
+}
+
+/* App Layout with Sidebar */
+.app-layout {
+    display: flex;
+    min-height: calc(100vh - 52px);
+}
+
+.sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    transition: width var(--transition-fast), min-width var(--transition-fast);
+}
+
+.sidebar-collapsed .sidebar {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    border-right: none;
+}
+
+.main-content {
+    flex: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+    min-width: 0;
+}
+
+.sidebar-inner {
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.sidebar-new {
+    margin-bottom: 0.5rem;
+}
+
+.sidebar-new-dropdown {
+    position: relative;
+}
+
+.sidebar-new-btn {
+    width: 100%;
+}
+
+.sidebar-dropdown {
+    left: 0;
+    right: 0;
+    min-width: auto;
+}
+
+.sidebar-dropdown .dropdown-item {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0.4rem 0.75rem;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text);
+}
+
+.sidebar-dropdown .dropdown-item:hover {
+    background: var(--bg-alt);
+}
+
+.sidebar-section {
+    margin-bottom: 0.5rem;
+}
+
+.sidebar-section-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 0.25rem 0.5rem;
+    font-weight: 600;
+}
+
+.sidebar-item {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: var(--radius);
+    text-decoration: none;
+    color: var(--text);
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-item:hover {
+    background: var(--bg-alt);
+}
+
+.sidebar-item-active {
+    background: var(--bg-alt);
+    font-weight: 600;
+}
+
+.sidebar-item-icon {
+    flex-shrink: 0;
+    font-size: 0.9em;
+}
+
+.sidebar-item-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-empty {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    padding: 0.25rem 0.5rem;
+    font-style: italic;
+}
+
+.sidebar-footer {
+    margin-top: auto;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--border);
+}
+
+.sidebar-import-btn {
+    width: 100%;
+    text-align: center;
+    cursor: pointer;
+}
+
+.sidebar-toggle {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: inherit;
+    padding: 0.25rem;
+}
+
+.nav-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}

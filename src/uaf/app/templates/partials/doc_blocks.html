@@ -2,12 +2,19 @@
 <div class="doc-block" data-node-id="{{ block.id }}" data-type="{{ block.type }}">
     <div class="block-wrapper">
         <div class="block-handle" title="Drag to reorder">&#x2630;</div>
+        {% if block.type == 'divider' %}
+        <div class="block-body block-divider"
+             data-node-id="{{ block.id }}"
+             data-type="{{ block.type }}"
+             data-artifact-id="{{ artifact_id }}"><hr></div>
+        {% else %}
         <div class="block-body"
              contenteditable="true"
              data-node-id="{{ block.id }}"
              data-type="{{ block.type }}"
              data-artifact-id="{{ artifact_id }}"
              spellcheck="true">{% if block.type == 'code_block' %}<code>{{ block.text }}</code>{% elif block.content_format == 'html' %}{{ block.text | safe }}{% else %}{{ block.text }}{% endif %}</div>
+        {% endif %}
         <div class="block-menu">
             <span class="block-type-label">{{ block.type_label }}</span>
             <button class="btn btn-sm btn-danger block-delete"

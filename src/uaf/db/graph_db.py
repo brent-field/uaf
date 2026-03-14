@@ -330,11 +330,15 @@ class GraphDB:
         from uaf.core.nodes import (
             Artifact,
             ArtifactACL,
+            Blockquote,
+            BulletListItem,
             Cell,
             CodeBlock,
+            Divider,
             FormulaCell,
             Heading,
             Image,
+            NumberedListItem,
             Paragraph,
             Shape,
             Sheet,
@@ -388,6 +392,14 @@ class GraphDB:
                 if default_role is not None:
                     fields.append(("default_role", default_role))
                 fields.append(("public_read", str(public_read)))
+            case BulletListItem(text=text):
+                fields.append(("text", text))
+            case NumberedListItem(text=text):
+                fields.append(("text", text))
+            case Blockquote(text=text):
+                fields.append(("text", text))
+            case Divider():
+                pass
             case _:
                 pass
         return fields

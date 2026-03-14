@@ -13,8 +13,11 @@ from uaf.core.node_id import BlobId, EdgeId, NodeId, OperationId
 from uaf.core.nodes import (
     Artifact,
     ArtifactACL,
+    Blockquote,
+    BulletListItem,
     Cell,
     CodeBlock,
+    Divider,
     FontAnnotation,
     FormulaCell,
     Heading,
@@ -23,6 +26,7 @@ from uaf.core.nodes import (
     MathBlock,
     NodeMetadata,
     NodeType,
+    NumberedListItem,
     Paragraph,
     RawNode,
     Shape,
@@ -55,6 +59,10 @@ _NODE_TYPE_NAME: dict[type[Any], str] = {
     Image: "Image",
     ArtifactACL: "ArtifactACL",
     RawNode: "RawNode",
+    BulletListItem: "BulletListItem",
+    NumberedListItem: "NumberedListItem",
+    Blockquote: "Blockquote",
+    Divider: "Divider",
 }
 
 _NAME_TO_NODE_TYPE: dict[str, type[Any]] = {v: k for k, v in _NODE_TYPE_NAME.items()}
@@ -315,6 +323,19 @@ def node_to_dict(node: Any) -> dict[str, Any]:
         case ArtifactACL(default_role=default_role, public_read=public_read):
             d["default_role"] = default_role
             d["public_read"] = public_read
+        case BulletListItem(text=text, indent_level=indent, content_format=cf):
+            d["text"] = text
+            d["indent_level"] = indent
+            d["content_format"] = cf
+        case NumberedListItem(text=text, indent_level=indent, content_format=cf):
+            d["text"] = text
+            d["indent_level"] = indent
+            d["content_format"] = cf
+        case Blockquote(text=text, content_format=cf):
+            d["text"] = text
+            d["content_format"] = cf
+        case Divider():
+            pass
         case RawNode(raw=raw, original_type=original_type):
             d["raw"] = raw
             d["original_type"] = original_type
@@ -414,6 +435,25 @@ def node_from_dict(d: dict[str, Any]) -> Any:
                 default_role=d.get("default_role"),
                 public_read=d.get("public_read", False),
             )
+        case _ if node_cls is BulletListItem:
+            return BulletListItem(
+                meta=meta, text=d["text"],
+                indent_level=d.get("indent_level", 0),
+                content_format=d.get("content_format", "plain"),
+            )
+        case _ if node_cls is NumberedListItem:
+            return NumberedListItem(
+                meta=meta, text=d["text"],
+                indent_level=d.get("indent_level", 0),
+                content_format=d.get("content_format", "plain"),
+            )
+        case _ if node_cls is Blockquote:
+            return Blockquote(
+                meta=meta, text=d["text"],
+                content_format=d.get("content_format", "plain"),
+            )
+        case _ if node_cls is Divider:
+            return Divider(meta=meta)
         case _ if node_cls is RawNode:
             return RawNode(meta=meta, raw=d["raw"], original_type=d["original_type"])
         case _:  # pragma: no cover

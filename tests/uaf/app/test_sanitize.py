@@ -52,3 +52,12 @@ class TestSanitizeHtml:
     def test_img_stripped(self) -> None:
         result = sanitize_html('<img src="x" onerror="alert(1)">')
         assert "<img" not in result
+
+    def test_underline_allowed(self) -> None:
+        assert sanitize_html("<u>underlined</u>") == "<u>underlined</u>"
+
+    def test_strikethrough_allowed(self) -> None:
+        assert sanitize_html("<s>struck</s>") == "<s>struck</s>"
+
+    def test_del_allowed(self) -> None:
+        assert sanitize_html("<del>deleted</del>") == "<del>deleted</del>"

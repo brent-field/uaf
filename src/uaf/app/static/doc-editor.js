@@ -19,7 +19,7 @@
         var nodeId = el.dataset.nodeId;
         var text = el.innerText;
         var fmt = 'plain';
-        if (el.innerHTML !== el.innerText && el.innerHTML.match(/<[biu]>|<code>|<a /)) {
+        if (el.innerHTML !== el.innerText && el.innerHTML.match(/<[biusd]>|<code>|<a |<del>/)) {
             text = el.innerHTML;
             fmt = 'html';
         }
@@ -144,7 +144,8 @@
             var data = {
                 node_id: body.dataset.nodeId,
                 before_text: preDiv.innerText || '',
-                after_text: postDiv.innerText || ''
+                after_text: postDiv.innerText || '',
+                inherit_type: body.dataset.type || 'paragraph'
             };
             fetch('/artifacts/' + artifactId + '/action/split-block', {
                 method: 'POST',
@@ -200,6 +201,11 @@
         if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
             e.preventDefault();
             document.execCommand('italic');
+            debouncedSave(body);
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+            e.preventDefault();
+            document.execCommand('underline');
             debouncedSave(body);
         }
     });
@@ -259,6 +265,20 @@
         var cmd = btn.dataset.cmd;
         if (cmd === 'bold') document.execCommand('bold');
         else if (cmd === 'italic') document.execCommand('italic');
+        else if (cmd === 'underline') document.execCommand('underline');
+        else if (cmd === 'strikethrough') document.execCommand('strikeThrough');
+        else if (cmd === 'link') {
+            var url = prompt('Enter URL:');
+            if (url) {
+                // Only allow http/https/mailto URLs to prevent javascript: XSS
+                if (/^(https?:\/\/|mailto:)/i.test(url)) {
+                    document.execCommand('createLink', false, url);
+                } else if (!/^[a-z]+:/i.test(url)) {
+                    // No scheme — assume https
+                    document.execCommand('createLink', false, 'https://' + url);
+                }
+            }
+        }
         else if (cmd === 'code') {
             var sel = window.getSelection();
             if (sel && sel.rangeCount) {
@@ -283,5 +303,15 @@
             content._sortable = null;
         }
         initSortable();
+        autoFocusEmpty();
     });
+
+    // --- Auto-focus first empty block ---
+    function autoFocusEmpty() {
+        var first = content.querySelector('.block-body');
+        if (first && first.innerText.trim() === '') {
+            first.focus();
+        }
+    }
+    autoFocusEmpty();
 })();

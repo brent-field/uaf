@@ -1,0 +1,47 @@
+<div class="sidebar-inner">
+    <div class="sidebar-new">
+        <div class="sidebar-new-dropdown">
+            <button class="btn btn-primary btn-sm sidebar-new-btn"
+                    onclick="this.nextElementSibling.classList.toggle('show')">+ New</button>
+            <div class="dropdown-menu sidebar-dropdown">
+                <form method="post" action="/artifacts/create">
+                    <button type="submit" class="dropdown-item">Document</button>
+                </form>
+                <form method="post" action="/artifacts/create-spreadsheet">
+                    <button type="submit" class="dropdown-item">Spreadsheet</button>
+                </form>
+                <form method="post" action="/artifacts/create-project">
+                    <button type="submit" class="dropdown-item">Project</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    {% for section in sections %}
+    <div class="sidebar-section">
+        <div class="sidebar-section-title">{{ section.title }}</div>
+        {% for item in section.entries %}
+        <a href="{{ item.url }}"
+           class="sidebar-item{% if item.active %} sidebar-item-active{% endif %}">
+            <span class="sidebar-item-icon">{{ item.icon }}</span>
+            <span class="sidebar-item-label">{{ item.label }}</span>
+        </a>
+        {% endfor %}
+        {% if not section.entries %}
+        <div class="sidebar-empty">No {{ section.title | lower }} yet</div>
+        {% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="sidebar-footer">
+        <form method="post" action="/artifacts/import" enctype="multipart/form-data" class="sidebar-import">
+            <label class="btn btn-sm sidebar-import-btn">
+                Import file
+                <input type="file" name="file"
+                       accept=".md,.csv,.txt,.docx,.pdf,.json,.tex,.uaf"
+                       style="display:none;"
+                       onchange="this.form.submit();" />
+            </label>
+        </form>
+    </div>
+</div>

@@ -31,6 +31,10 @@ class NodeType(Enum):
     IMAGE = "image"
     ARTIFACT_ACL = "artifact_acl"
     RAW = "raw"
+    BULLET_LIST_ITEM = "bullet_list_item"
+    NUMBERED_LIST_ITEM = "numbered_list_item"
+    BLOCKQUOTE = "blockquote"
+    DIVIDER = "divider"
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +275,42 @@ class ArtifactACL:
 
 
 @dataclass(frozen=True, slots=True)
+class BulletListItem:
+    """A bullet list item."""
+
+    meta: NodeMetadata
+    text: str
+    indent_level: int = 0
+    content_format: str = "plain"
+
+
+@dataclass(frozen=True, slots=True)
+class NumberedListItem:
+    """A numbered list item."""
+
+    meta: NodeMetadata
+    text: str
+    indent_level: int = 0
+    content_format: str = "plain"
+
+
+@dataclass(frozen=True, slots=True)
+class Blockquote:
+    """A blockquote."""
+
+    meta: NodeMetadata
+    text: str
+    content_format: str = "plain"
+
+
+@dataclass(frozen=True, slots=True)
+class Divider:
+    """A horizontal divider / separator."""
+
+    meta: NodeMetadata
+
+
+@dataclass(frozen=True, slots=True)
 class RawNode:
     """Fallback node for unknown types during schema evolution."""
 
@@ -299,4 +339,8 @@ type NodeData = (
     | Image
     | ArtifactACL
     | RawNode
+    | BulletListItem
+    | NumberedListItem
+    | Blockquote
+    | Divider
 )

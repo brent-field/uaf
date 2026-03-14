@@ -1091,3 +1091,73 @@ class TestDocLensLayoutRender:
 
         view = lens.render_layout(sdb, session, art_id)
         assert "transform:" not in view.content
+
+
+class TestNodeFromStyle:
+    def test_paragraph(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+        from uaf.core.nodes import Paragraph
+
+        node = _node_from_style("paragraph", "hello")
+        assert isinstance(node, Paragraph)
+        assert node.text == "hello"
+
+    def test_heading(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+        from uaf.core.nodes import Heading
+
+        node = _node_from_style("heading", "title", level=2)
+        assert isinstance(node, Heading)
+        assert node.text == "title"
+        assert node.level == 2
+
+    def test_bulleted_list(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+        from uaf.core.nodes import BulletListItem
+
+        node = _node_from_style("bulleted_list", "item")
+        assert isinstance(node, BulletListItem)
+        assert node.text == "item"
+
+    def test_numbered_list(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+        from uaf.core.nodes import NumberedListItem
+
+        node = _node_from_style("numbered_list", "step")
+        assert isinstance(node, NumberedListItem)
+
+    def test_quote(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+        from uaf.core.nodes import Blockquote
+
+        node = _node_from_style("quote", "words")
+        assert isinstance(node, Blockquote)
+
+    def test_divider(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+        from uaf.core.nodes import Divider
+
+        node = _node_from_style("divider", "")
+        assert isinstance(node, Divider)
+
+    def test_code_block(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+        from uaf.core.nodes import CodeBlock
+
+        node = _node_from_style("code_block", "print(1)")
+        assert isinstance(node, CodeBlock)
+        assert node.source == "print(1)"
+
+    def test_unknown_returns_none(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+
+        assert _node_from_style("unknown_style", "text") is None
+
+    def test_with_existing_meta(self) -> None:
+        from uaf.app.lenses.doc_lens import _node_from_style
+        from uaf.core.nodes import Heading
+
+        meta = make_node_metadata(NodeType.HEADING)
+        node = _node_from_style("heading", "title", meta=meta)
+        assert isinstance(node, Heading)
+        assert node.meta is meta

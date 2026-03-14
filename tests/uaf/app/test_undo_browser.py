@@ -79,15 +79,16 @@ def _create_doc_and_add_block(page, server_url: str) -> None:  # type: ignore[no
     """Register, create a new doc, and add an empty block."""
     _register_user(page, server_url)
 
-    # Click "+ Document"
-    page.click('form[action="/artifacts/create"] button')
+    # Click "+ New Document" on the dashboard
+    page.click('.dashboard-header form[action="/artifacts/create"] button')
     page.wait_for_selector("#doc-content", timeout=5000)
 
-    # Click "Add a block" (from the empty state) or "+ Block" (from toolbar)
-    add_btn = page.locator(
-        'button:has-text("Add a block"), button:has-text("+ Block")'
-    )
-    add_btn.first.click()
+    # New docs auto-create an empty paragraph; if not present add one
+    if page.locator(".block-body").count() == 0:
+        add_btn = page.locator(
+            'button:has-text("Add a block"), button:has-text("+ Block")'
+        )
+        add_btn.first.click()
     # Wait for the block to appear
     page.wait_for_selector(".block-body", timeout=5000)
 

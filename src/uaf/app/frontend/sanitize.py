@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from html.parser import HTMLParser
 
-_ALLOWED_TAGS: frozenset[str] = frozenset({"b", "i", "code", "a", "br"})
+_ALLOWED_TAGS: frozenset[str] = frozenset({"b", "i", "u", "s", "del", "code", "a", "br"})
 _ALLOWED_ATTRS: dict[str, frozenset[str]] = {"a": frozenset({"href"})}
 
 

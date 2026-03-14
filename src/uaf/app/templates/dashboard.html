@@ -41,10 +41,15 @@
                 <div class="meta">{{ art.child_count }} blocks &middot; {{ art.updated_at.strftime('%b %d, %H:%M') }}</div>
             </div>
             <div class="artifact-actions">
+                {% if art.artifact_type == 'doc' %}
                 <a href="/artifacts/{{ art.id }}/edit" class="btn btn-sm">Edit</a>
-                <a href="/artifacts/{{ art.id }}/grid" class="btn btn-sm">Grid</a>
-                <a href="/artifacts/{{ art.id }}/flow" class="btn btn-sm">Flow</a>
-                <a href="/api/artifacts/{{ art.id }}/export?format=markdown" class="btn btn-sm">Export</a>
+                <a href="/api/artifacts/{{ art.id }}/export?format=markdown" class="btn btn-sm">Export .md</a>
+                {% elif art.artifact_type == 'spreadsheet' %}
+                <a href="/artifacts/{{ art.id }}/grid" class="btn btn-sm">Open</a>
+                <a href="/api/artifacts/{{ art.id }}/export?format=csv" class="btn btn-sm">Export .csv</a>
+                {% elif art.artifact_type == 'project' %}
+                <a href="/artifacts/{{ art.id }}/flow" class="btn btn-sm">Open</a>
+                {% endif %}
                 <button class="btn btn-sm btn-danger"
                         hx-delete="/artifacts/{{ art.id }}"
                         hx-target="#artifact-list"
