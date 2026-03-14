@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 from uaf.core.serialization import blob_hash
 from uaf.db.journal import Journal, JournalConfig
+from uaf.db.undo_journal import UndoJournal, UndoJournalConfig
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,6 +45,10 @@ class Store:
             path=config.root / "operations.jsonl",
             flush_on_write=config.flush_on_write,
         ))
+        self._undo_journal = UndoJournal(UndoJournalConfig(
+            path=config.root / "undo_groups.jsonl",
+            flush_on_write=config.flush_on_write,
+        ))
 
     @classmethod
     def open_or_create(cls, config: StoreConfig) -> Store:
@@ -69,6 +74,11 @@ class Store:
     def journal(self) -> Journal:
         """The operation journal."""
         return self._journal
+
+    @property
+    def undo_journal(self) -> UndoJournal:
+        """The undo event journal."""
+        return self._undo_journal
 
     # ------------------------------------------------------------------
     # Blob storage
@@ -115,6 +125,7 @@ class Store:
     def delete_all(self) -> None:
         """Delete the entire store directory. Dev-only wipe."""
         self._journal.close()
+        self._undo_journal.close()
         if self._config.root.exists():
             shutil.rmtree(self._config.root)
 

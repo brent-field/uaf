@@ -17,6 +17,7 @@ from uaf.core.operations import (
 )
 from uaf.db.graph_db import GraphDB
 from uaf.db.undo import (
+    UndoEvent,
     UndoManager,
     compute_inverse,
     compute_revert_ops,
@@ -650,3 +651,179 @@ class TestPerArtifactUndo:
         # Second undo should return empty
         result = db.undo("u", "art_a")
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# UndoManager callback tests
+# ---------------------------------------------------------------------------
+
+
+class TestUndoManagerCallback:
+    """Verify on_event callback is invoked with correct UndoEvent objects."""
+
+    def test_auto_group_emits_created(self) -> None:
+        events: list[UndoEvent] = []
+        mgr = UndoManager(on_event=events.append)
+        oid = _fake_op_id("a")
+        mgr.record_op(oid, "user1", "art1")
+        assert len(events) == 1
+        assert events[0].event_type == "created"
+        assert events[0].op_ids == (oid,)
+
+    def test_explicit_group_emits_created(self) -> None:
+        events: list[UndoEvent] = []
+        mgr = UndoManager(on_event=events.append)
+        oid1 = _fake_op_id("a")
+        oid2 = _fake_op_id("b")
+        mgr.begin_group("user1", "art1")
+        mgr.record_op(oid1, "user1")
+        mgr.record_op(oid2, "user1")
+        mgr.end_group()
+        # Only one "created" event for the whole group
+        created = [e for e in events if e.event_type == "created"]
+        assert len(created) == 1
+        assert created[0].op_ids == (oid1, oid2)
+
+    def test_pop_undo_emits_undone(self) -> None:
+        events: list[UndoEvent] = []
+        mgr = UndoManager(on_event=events.append)
+        oid = _fake_op_id("a")
+        mgr.record_op(oid, "user1", "art1")
+        events.clear()
+        mgr.pop_undo("user1", "art1")
+        assert len(events) == 1
+        assert events[0].event_type == "undone"
+
+    def test_pop_redo_emits_redone(self) -> None:
+        events: list[UndoEvent] = []
+        mgr = UndoManager(on_event=events.append)
+        oid = _fake_op_id("a")
+        mgr.record_op(oid, "user1", "art1")
+        mgr.pop_undo("user1", "art1")
+        events.clear()
+        mgr.pop_redo("user1", "art1")
+        assert len(events) == 1
+        assert events[0].event_type == "redone"
+
+    def test_redo_cleared_emits_event(self) -> None:
+        events: list[UndoEvent] = []
+        mgr = UndoManager(on_event=events.append)
+        oid1 = _fake_op_id("a")
+        oid2 = _fake_op_id("b")
+        mgr.record_op(oid1, "user1", "art1")
+        mgr.pop_undo("user1", "art1")
+        events.clear()
+        # New op should clear redo and emit redo_cleared
+        mgr.record_op(oid2, "user1", "art1")
+        cleared = [e for e in events if e.event_type == "redo_cleared"]
+        assert len(cleared) == 1
+        assert cleared[0].op_ids == (oid1,)
+
+
+# ---------------------------------------------------------------------------
+# UndoManager replay_events tests
+# ---------------------------------------------------------------------------
+
+
+class TestUndoManagerReplay:
+    """Verify replay_events rebuilds stacks correctly."""
+
+    def test_replay_created(self) -> None:
+        mgr = UndoManager()
+        oid = _fake_op_id("a")
+        mgr.replay_events([UndoEvent(
+            event_type="created",
+            group_id="g1",
+            op_ids=(oid,),
+            principal_id="user1",
+            artifact_id="art1",
+        )])
+        group = mgr.pop_undo("user1", "art1")
+        assert group is not None
+        assert group.op_ids == (oid,)
+
+    def test_replay_created_then_undone(self) -> None:
+        mgr = UndoManager()
+        oid = _fake_op_id("a")
+        mgr.replay_events([
+            UndoEvent(
+                event_type="created",
+                group_id="g1",
+                op_ids=(oid,),
+                principal_id="user1",
+                artifact_id="art1",
+            ),
+            UndoEvent(
+                event_type="undone",
+                group_id="g1",
+                op_ids=(oid,),
+                principal_id="user1",
+                artifact_id="art1",
+            ),
+        ])
+        # Undo stack should be empty
+        assert mgr.pop_undo("user1", "art1") is None
+        # Redo stack should have the group
+        group = mgr.pop_redo("user1", "art1")
+        assert group is not None
+        assert group.op_ids == (oid,)
+
+    def test_replay_created_undone_redone(self) -> None:
+        mgr = UndoManager()
+        oid = _fake_op_id("a")
+        mgr.replay_events([
+            UndoEvent(
+                event_type="created",
+                group_id="g1",
+                op_ids=(oid,),
+                principal_id="user1",
+                artifact_id="art1",
+            ),
+            UndoEvent(
+                event_type="undone",
+                group_id="g1",
+                op_ids=(oid,),
+                principal_id="user1",
+                artifact_id="art1",
+            ),
+            UndoEvent(
+                event_type="redone",
+                group_id="g1",
+                op_ids=(oid,),
+                principal_id="user1",
+                artifact_id="art1",
+            ),
+        ])
+        # Should be back on undo stack
+        group = mgr.pop_undo("user1", "art1")
+        assert group is not None
+        assert group.op_ids == (oid,)
+
+    def test_replay_redo_cleared(self) -> None:
+        mgr = UndoManager()
+        oid = _fake_op_id("a")
+        mgr.replay_events([
+            UndoEvent(
+                event_type="created",
+                group_id="g1",
+                op_ids=(oid,),
+                principal_id="user1",
+                artifact_id="art1",
+            ),
+            UndoEvent(
+                event_type="undone",
+                group_id="g1",
+                op_ids=(oid,),
+                principal_id="user1",
+                artifact_id="art1",
+            ),
+            UndoEvent(
+                event_type="redo_cleared",
+                group_id="g1",
+                op_ids=(oid,),
+                principal_id="user1",
+                artifact_id="art1",
+            ),
+        ])
+        # Redo stack should be empty
+        assert mgr.pop_redo("user1", "art1") is None

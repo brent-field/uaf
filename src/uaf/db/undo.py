@@ -19,7 +19,7 @@ from uaf.core.operations import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from uaf.core.node_id import NodeId, OperationId
     from uaf.core.operations import Operation
@@ -43,6 +43,22 @@ class UndoGroup:
 
 
 # ---------------------------------------------------------------------------
+# UndoEvent
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class UndoEvent:
+    """Event emitted when the undo/redo stacks change."""
+
+    event_type: str  # "created", "undone", "redone", "redo_cleared"
+    group_id: str
+    op_ids: tuple[OperationId, ...]
+    principal_id: str
+    artifact_id: str
+
+
+# ---------------------------------------------------------------------------
 # UndoManager
 # ---------------------------------------------------------------------------
 
@@ -50,7 +66,10 @@ class UndoGroup:
 class UndoManager:
     """Per-principal, per-artifact undo/redo stack manager."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        on_event: Callable[[UndoEvent], None] | None = None,
+    ) -> None:
         self._undo_stacks: dict[tuple[str, str], list[UndoGroup]] = {}
         self._redo_stacks: dict[tuple[str, str], list[UndoGroup]] = {}
         self._current_group: str | None = None
@@ -58,6 +77,7 @@ class UndoManager:
         self._current_group_principal: str | None = None
         self._current_group_artifact: str | None = None
         self._group_depth: int = 0
+        self._on_event = on_event
 
     def begin_group(self, principal_id: str, artifact_id: str) -> str:
         """Start a new undo group. Returns the group_id.
@@ -101,6 +121,13 @@ class UndoManager:
             key = (self._current_group_principal, self._current_group_artifact)
             stack = self._undo_stacks.setdefault(key, [])
             stack.append(group)
+            self._emit(UndoEvent(
+                event_type="created",
+                group_id=group.group_id,
+                op_ids=group.op_ids,
+                principal_id=group.principal_id,
+                artifact_id=group.artifact_id,
+            ))
         self._current_group = None
         self._current_group_ops = []
         self._current_group_principal = None
@@ -125,6 +152,13 @@ class UndoManager:
             key = (principal_id, artifact_id)
             stack = self._undo_stacks.setdefault(key, [])
             stack.append(group)
+            self._emit(UndoEvent(
+                event_type="created",
+                group_id=group.group_id,
+                op_ids=group.op_ids,
+                principal_id=group.principal_id,
+                artifact_id=group.artifact_id,
+            ))
 
         # Clear redo stack on new action — only for the specific artifact
         redo_key: tuple[str, str] | None = None
@@ -133,7 +167,16 @@ class UndoManager:
         elif artifact_id is not None:
             redo_key = (principal_id, artifact_id)
         if redo_key is not None:
-            self._redo_stacks.pop(redo_key, None)
+            cleared = self._redo_stacks.pop(redo_key, None)
+            if cleared:
+                for g in cleared:
+                    self._emit(UndoEvent(
+                        event_type="redo_cleared",
+                        group_id=g.group_id,
+                        op_ids=g.op_ids,
+                        principal_id=g.principal_id,
+                        artifact_id=g.artifact_id,
+                    ))
 
     def pop_undo(self, principal_id: str, artifact_id: str) -> UndoGroup | None:
         """Pop the most recent undo group, move it to the redo stack."""
@@ -144,6 +187,13 @@ class UndoManager:
         group = stack.pop()
         redo_stack = self._redo_stacks.setdefault(key, [])
         redo_stack.append(group)
+        self._emit(UndoEvent(
+            event_type="undone",
+            group_id=group.group_id,
+            op_ids=group.op_ids,
+            principal_id=group.principal_id,
+            artifact_id=group.artifact_id,
+        ))
         return group
 
     def pop_redo(self, principal_id: str, artifact_id: str) -> UndoGroup | None:
@@ -155,6 +205,13 @@ class UndoManager:
         group = stack.pop()
         undo_stack = self._undo_stacks.setdefault(key, [])
         undo_stack.append(group)
+        self._emit(UndoEvent(
+            event_type="redone",
+            group_id=group.group_id,
+            op_ids=group.op_ids,
+            principal_id=group.principal_id,
+            artifact_id=group.artifact_id,
+        ))
         return group
 
     @contextmanager
@@ -165,6 +222,51 @@ class UndoManager:
             yield group_id
         finally:
             self.end_group()
+
+    # ------------------------------------------------------------------
+    # Event helpers
+    # ------------------------------------------------------------------
+
+    def _emit(self, event: UndoEvent) -> None:
+        """Emit an undo event to the registered callback, if any."""
+        if self._on_event is not None:
+            self._on_event(event)
+
+    def replay_events(self, events: list[UndoEvent]) -> None:
+        """Rebuild undo/redo stacks from a list of persisted events."""
+        for event in events:
+            key = (event.principal_id, event.artifact_id)
+            group = UndoGroup(
+                group_id=event.group_id,
+                op_ids=event.op_ids,
+                principal_id=event.principal_id,
+                artifact_id=event.artifact_id,
+            )
+            if event.event_type == "created":
+                stack = self._undo_stacks.setdefault(key, [])
+                stack.append(group)
+            elif event.event_type == "undone":
+                undo_stack = self._undo_stacks.get(key)
+                if undo_stack:
+                    undo_stack.pop()
+                redo_stack = self._redo_stacks.setdefault(key, [])
+                redo_stack.append(group)
+            elif event.event_type == "redone":
+                redo_stack_r = self._redo_stacks.get(key)
+                if redo_stack_r:
+                    redo_stack_r.pop()
+                undo_stack_r = self._undo_stacks.setdefault(key, [])
+                undo_stack_r.append(group)
+            elif event.event_type == "redo_cleared":
+                redo_stack_c = self._redo_stacks.get(key)
+                if redo_stack_c:
+                    # Remove the specific group from redo stack
+                    self._redo_stacks[key] = [
+                        g for g in redo_stack_c
+                        if g.group_id != event.group_id
+                    ]
+                    if not self._redo_stacks[key]:
+                        del self._redo_stacks[key]
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ from uaf.core.nodes import (
     Paragraph,
     make_node_metadata,
 )
+from uaf.core.operations import CreateNode
 from uaf.db.journaled_graph_db import JournaledGraphDB
 from uaf.db.store import Store, StoreConfig
 
@@ -266,3 +267,119 @@ class TestJournaledGraphDBMetadata:
 
         meta = store.read_metadata()
         assert meta["operation_count"] == 2
+
+
+class TestJournaledGraphDBUndoPersistence:
+    """Tests for undo/redo stack persistence across restarts."""
+
+    def test_undo_survives_restart(self, tmp_path: Path) -> None:
+        """Create nodes, restart, undo still works."""
+        root = tmp_path / "store"
+        config = StoreConfig(root=root)
+
+        store1 = Store.open_or_create(config)
+        db1 = JournaledGraphDB(store1)
+
+        art = _make_artifact("Doc")
+        art_id = db1.create_node(art)
+        p = _make_paragraph("text")
+        with db1.action_group("u", "art1"):
+            op = CreateNode(
+                node=p, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            )
+            db1.apply(op)
+        store1.journal.close()
+        store1.undo_journal.close()
+
+        # Restart
+        store2 = Store.open_or_create(config)
+        db2 = JournaledGraphDB(store2)
+
+        assert db2.get_node(p.meta.id) is not None
+
+        # Undo should remove the paragraph
+        db2.undo("u", "art1")
+        assert db2.get_node(p.meta.id) is None
+        # Artifact should still be there
+        assert db2.get_node(art_id) is not None
+
+    def test_redo_survives_restart(self, tmp_path: Path) -> None:
+        """Create, undo, restart, redo still works."""
+        root = tmp_path / "store"
+        config = StoreConfig(root=root)
+
+        store1 = Store.open_or_create(config)
+        db1 = JournaledGraphDB(store1)
+
+        p = _make_paragraph("redoable")
+        with db1.action_group("u", "art1"):
+            op = CreateNode(
+                node=p, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            )
+            db1.apply(op)
+        db1.undo("u", "art1")
+        assert db1.get_node(p.meta.id) is None
+        store1.journal.close()
+        store1.undo_journal.close()
+
+        # Restart
+        store2 = Store.open_or_create(config)
+        db2 = JournaledGraphDB(store2)
+
+        assert db2.get_node(p.meta.id) is None
+        # Redo should restore the paragraph
+        db2.redo("u", "art1")
+        assert db2.get_node(p.meta.id) is not None
+
+    def test_compensating_ops_journaled(self, tmp_path: Path) -> None:
+        """Undo, restart — graph state reflects the undo."""
+        root = tmp_path / "store"
+        config = StoreConfig(root=root)
+
+        store1 = Store.open_or_create(config)
+        db1 = JournaledGraphDB(store1)
+
+        p = _make_paragraph("will-undo")
+        with db1.action_group("u", "art1"):
+            op = CreateNode(
+                node=p, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            )
+            db1.apply(op)
+        db1.undo("u", "art1")
+        # Node should be gone
+        assert db1.get_node(p.meta.id) is None
+        store1.journal.close()
+        store1.undo_journal.close()
+
+        # Restart — compensating ops were journaled, so state is correct
+        store2 = Store.open_or_create(config)
+        db2 = JournaledGraphDB(store2)
+
+        assert db2.get_node(p.meta.id) is None
+
+    def test_no_undo_journal_backward_compat(self, tmp_path: Path) -> None:
+        """Old store without undo_groups.jsonl starts fine."""
+        root = tmp_path / "store"
+        config = StoreConfig(root=root)
+
+        # Create store and write an operation, but no undo journal file
+        store1 = Store.open_or_create(config)
+        db1 = JournaledGraphDB(store1)
+        p = _make_paragraph("old-store")
+        db1.create_node(p)
+        store1.journal.close()
+        store1.undo_journal.close()
+
+        # Delete the undo journal file to simulate an old store
+        undo_path = root / "undo_groups.jsonl"
+        if undo_path.exists():
+            undo_path.unlink()
+
+        # Restart should work — no undo history, but no crash
+        store2 = Store.open_or_create(config)
+        db2 = JournaledGraphDB(store2)
+
+        assert db2.get_node(p.meta.id) is not None
+        # Undo returns empty since no undo journal was found
+        result = db2.undo("u", "art1")
+        assert result == []
