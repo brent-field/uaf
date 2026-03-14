@@ -59,8 +59,8 @@ class TestUndoManager:
     def test_record_op_auto_group(self) -> None:
         mgr = UndoManager()
         oid = _fake_op_id("a")
-        mgr.record_op(oid, "user1")
-        group = mgr.pop_undo("user1")
+        mgr.record_op(oid, "user1", "art1")
+        group = mgr.pop_undo("user1", "art1")
         assert group is not None
         assert group.op_ids == (oid,)
         assert group.principal_id == "user1"
@@ -69,48 +69,48 @@ class TestUndoManager:
         mgr = UndoManager()
         oid1 = _fake_op_id("a")
         oid2 = _fake_op_id("b")
-        mgr.begin_group("user1")
+        mgr.begin_group("user1", "art1")
         mgr.record_op(oid1, "user1")
         mgr.record_op(oid2, "user1")
         mgr.end_group()
-        group = mgr.pop_undo("user1")
+        group = mgr.pop_undo("user1", "art1")
         assert group is not None
         assert group.op_ids == (oid1, oid2)
 
     def test_context_manager_group(self) -> None:
         mgr = UndoManager()
         oid = _fake_op_id("c")
-        with mgr.group("user1") as gid:
+        with mgr.group("user1", "art1") as gid:
             assert isinstance(gid, str)
             mgr.record_op(oid, "user1")
-        group = mgr.pop_undo("user1")
+        group = mgr.pop_undo("user1", "art1")
         assert group is not None
         assert group.op_ids == (oid,)
 
     def test_pop_undo_empty(self) -> None:
         mgr = UndoManager()
-        assert mgr.pop_undo("user1") is None
+        assert mgr.pop_undo("user1", "art1") is None
 
     def test_pop_redo_empty(self) -> None:
         mgr = UndoManager()
-        assert mgr.pop_redo("user1") is None
+        assert mgr.pop_redo("user1", "art1") is None
 
     def test_undo_moves_to_redo(self) -> None:
         mgr = UndoManager()
         oid = _fake_op_id("a")
-        mgr.record_op(oid, "user1")
-        mgr.pop_undo("user1")
-        group = mgr.pop_redo("user1")
+        mgr.record_op(oid, "user1", "art1")
+        mgr.pop_undo("user1", "art1")
+        group = mgr.pop_redo("user1", "art1")
         assert group is not None
         assert group.op_ids == (oid,)
 
     def test_redo_moves_to_undo(self) -> None:
         mgr = UndoManager()
         oid = _fake_op_id("a")
-        mgr.record_op(oid, "user1")
-        mgr.pop_undo("user1")
-        mgr.pop_redo("user1")
-        group = mgr.pop_undo("user1")
+        mgr.record_op(oid, "user1", "art1")
+        mgr.pop_undo("user1", "art1")
+        mgr.pop_redo("user1", "art1")
+        group = mgr.pop_undo("user1", "art1")
         assert group is not None
         assert group.op_ids == (oid,)
 
@@ -118,29 +118,36 @@ class TestUndoManager:
         mgr = UndoManager()
         oid1 = _fake_op_id("a")
         oid2 = _fake_op_id("b")
-        mgr.record_op(oid1, "user1")
-        mgr.pop_undo("user1")
+        mgr.record_op(oid1, "user1", "art1")
+        mgr.pop_undo("user1", "art1")
         # redo stack has oid1
-        mgr.record_op(oid2, "user1")
+        mgr.record_op(oid2, "user1", "art1")
         # redo stack should be cleared
-        assert mgr.pop_redo("user1") is None
+        assert mgr.pop_redo("user1", "art1") is None
 
     def test_per_principal_stacks(self) -> None:
         mgr = UndoManager()
         oid1 = _fake_op_id("a")
         oid2 = _fake_op_id("b")
-        mgr.record_op(oid1, "user1")
-        mgr.record_op(oid2, "user2")
-        g1 = mgr.pop_undo("user1")
-        g2 = mgr.pop_undo("user2")
+        mgr.record_op(oid1, "user1", "art1")
+        mgr.record_op(oid2, "user2", "art1")
+        g1 = mgr.pop_undo("user1", "art1")
+        g2 = mgr.pop_undo("user2", "art1")
         assert g1 is not None and g1.op_ids == (oid1,)
         assert g2 is not None and g2.op_ids == (oid2,)
 
     def test_empty_group_not_pushed(self) -> None:
         mgr = UndoManager()
-        mgr.begin_group("user1")
+        mgr.begin_group("user1", "art1")
         mgr.end_group()
-        assert mgr.pop_undo("user1") is None
+        assert mgr.pop_undo("user1", "art1") is None
+
+    def test_record_op_without_artifact_id_no_group(self) -> None:
+        """record_op without artifact_id outside a group is a no-op."""
+        mgr = UndoManager()
+        oid = _fake_op_id("a")
+        mgr.record_op(oid, "user1")
+        assert mgr.pop_undo("user1", "art1") is None
 
 
 # ---------------------------------------------------------------------------
@@ -292,44 +299,48 @@ class TestGraphDBUndoRedo:
     def test_undo_create_node(self) -> None:
         db = GraphDB()
         node = _make_paragraph("hello")
-        op = CreateNode(
-            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        )
-        db.apply(op)
+        with db.action_group("u", "art1"):
+            op = CreateNode(
+                node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            )
+            db.apply(op)
         assert db.get_node(node.meta.id) is not None
 
-        db.undo("u")
+        db.undo("u", "art1")
         assert db.get_node(node.meta.id) is None
 
     def test_redo_after_undo(self) -> None:
         db = GraphDB()
         node = _make_paragraph("hello")
-        op = CreateNode(
-            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        )
-        db.apply(op)
-        db.undo("u")
+        with db.action_group("u", "art1"):
+            op = CreateNode(
+                node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            )
+            db.apply(op)
+        db.undo("u", "art1")
         assert db.get_node(node.meta.id) is None
 
-        db.redo("u")
+        db.redo("u", "art1")
         # Redo re-applies the original CreateNode, restoring the node.
         assert db.get_node(node.meta.id) is not None
 
     def test_undo_update_node(self) -> None:
         db = GraphDB()
         node = _make_paragraph("v1")
-        db.apply(CreateNode(
-            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        ))
+        with db.action_group("u", "art1"):
+            db.apply(CreateNode(
+                node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
         updated = Paragraph(meta=node.meta, text="v2")
-        db.apply(UpdateNode(
-            node=updated, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        ))
+        with db.action_group("u", "art1"):
+            db.apply(UpdateNode(
+                node=updated, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
         result = db.get_node(node.meta.id)
         assert result is not None
         assert result.text == "v2"
 
-        db.undo("u")
+        db.undo("u", "art1")
         result = db.get_node(node.meta.id)
         assert result is not None
         assert result.text == "v1"
@@ -337,35 +348,37 @@ class TestGraphDBUndoRedo:
     def test_undo_delete_node(self) -> None:
         db = GraphDB()
         node = _make_paragraph("hello")
-        db.apply(CreateNode(
-            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        ))
-        db.apply(DeleteNode(
-            node_id=node.meta.id,
-            parent_ops=(),
-            timestamp=utc_now(),
-            principal_id="u",
-        ))
+        with db.action_group("u", "art1"):
+            db.apply(CreateNode(
+                node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+        with db.action_group("u", "art1"):
+            db.apply(DeleteNode(
+                node_id=node.meta.id,
+                parent_ops=(),
+                timestamp=utc_now(),
+                principal_id="u",
+            ))
         assert db.get_node(node.meta.id) is None
 
-        db.undo("u")
+        db.undo("u", "art1")
         assert db.get_node(node.meta.id) is not None
 
     def test_undo_with_no_history(self) -> None:
         db = GraphDB()
-        result = db.undo("u")
+        result = db.undo("u", "art1")
         assert result == []
 
     def test_redo_with_no_history(self) -> None:
         db = GraphDB()
-        result = db.redo("u")
+        result = db.redo("u", "art1")
         assert result == []
 
     def test_action_group(self) -> None:
         db = GraphDB()
         n1 = _make_paragraph("a")
         n2 = _make_paragraph("b")
-        with db.action_group("u"):
+        with db.action_group("u", "art1"):
             db.apply(CreateNode(
                 node=n1, parent_ops=(), timestamp=utc_now(), principal_id="u",
             ))
@@ -377,7 +390,7 @@ class TestGraphDBUndoRedo:
         assert db.get_node(n2.meta.id) is not None
 
         # Single undo should revert both
-        db.undo("u")
+        db.undo("u", "art1")
         assert db.get_node(n1.meta.id) is None
         assert db.get_node(n2.meta.id) is None
 
@@ -385,13 +398,14 @@ class TestGraphDBUndoRedo:
         """Compensating ops from undo should not create new undo groups."""
         db = GraphDB()
         node = _make_paragraph("test")
-        db.apply(CreateNode(
-            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        ))
+        with db.action_group("u", "art1"):
+            db.apply(CreateNode(
+                node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
         # Undo stack has 1 group
-        db.undo("u")
+        db.undo("u", "art1")
         # After undo, undo stack should be empty (group moved to redo)
-        result = db.undo("u")
+        result = db.undo("u", "art1")
         assert result == []
 
 
@@ -452,25 +466,27 @@ class TestRedoBug:
         """Create a node, update it, undo, verify old value, redo, verify new."""
         db = GraphDB()
         node = _make_paragraph("v1")
-        db.apply(CreateNode(
-            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        ))
+        with db.action_group("u", "art1"):
+            db.apply(CreateNode(
+                node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
         updated = Paragraph(meta=node.meta, text="v2")
-        db.apply(UpdateNode(
-            node=updated, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        ))
+        with db.action_group("u", "art1"):
+            db.apply(UpdateNode(
+                node=updated, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
         result = db.get_node(node.meta.id)
         assert result is not None
         assert result.text == "v2"
 
         # Undo should revert to v1
-        db.undo("u")
+        db.undo("u", "art1")
         result = db.get_node(node.meta.id)
         assert result is not None
         assert result.text == "v1"
 
         # Redo should restore v2
-        db.redo("u")
+        db.redo("u", "art1")
         result = db.get_node(node.meta.id)
         assert result is not None
         assert result.text == "v2"
@@ -479,15 +495,16 @@ class TestRedoBug:
         """Create a node, undo (deletes it), redo, verify it exists again."""
         db = GraphDB()
         node = _make_paragraph("restored")
-        db.apply(CreateNode(
-            node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
-        ))
+        with db.action_group("u", "art1"):
+            db.apply(CreateNode(
+                node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
         assert db.get_node(node.meta.id) is not None
 
-        db.undo("u")
+        db.undo("u", "art1")
         assert db.get_node(node.meta.id) is None
 
-        db.redo("u")
+        db.redo("u", "art1")
         result = db.get_node(node.meta.id)
         assert result is not None
         assert result.text == "restored"
@@ -506,13 +523,130 @@ class TestNestedActionGroups:
         oid1 = _fake_op_id("a")
         oid2 = _fake_op_id("b")
         oid3 = _fake_op_id("c")
-        with mgr.group("user1"):
+        with mgr.group("user1", "art1"):
             mgr.record_op(oid1, "user1")
-            with mgr.group("user1"):
+            with mgr.group("user1", "art1"):
                 mgr.record_op(oid2, "user1")
                 mgr.record_op(oid3, "user1")
-        group = mgr.pop_undo("user1")
+        group = mgr.pop_undo("user1", "art1")
         assert group is not None
         assert group.op_ids == (oid1, oid2, oid3)
         # Only one group should have been created
-        assert mgr.pop_undo("user1") is None
+        assert mgr.pop_undo("user1", "art1") is None
+
+
+# ---------------------------------------------------------------------------
+# Per-artifact undo/redo tests
+# ---------------------------------------------------------------------------
+
+
+class TestPerArtifactUndo:
+    """Verify undo/redo is scoped per-artifact."""
+
+    def test_undo_scoped_to_artifact(self) -> None:
+        """Ops in artifact A and B; undo on A only affects A."""
+        db = GraphDB()
+        node_a = _make_paragraph("artA")
+        node_b = _make_paragraph("artB")
+        with db.action_group("u", "art_a"):
+            db.apply(CreateNode(
+                node=node_a, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+        with db.action_group("u", "art_b"):
+            db.apply(CreateNode(
+                node=node_b, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+
+        assert db.get_node(node_a.meta.id) is not None
+        assert db.get_node(node_b.meta.id) is not None
+
+        # Undo only artifact A
+        db.undo("u", "art_a")
+        assert db.get_node(node_a.meta.id) is None
+        assert db.get_node(node_b.meta.id) is not None  # B untouched
+
+    def test_undo_empty_returns_none(self) -> None:
+        """pop_undo for artifact with no ops returns None."""
+        mgr = UndoManager()
+        assert mgr.pop_undo("user1", "nonexistent") is None
+
+    def test_redo_scoped_to_artifact(self) -> None:
+        """Undo in artifact A creates redo for A; redo on B returns nothing."""
+        db = GraphDB()
+        node_a = _make_paragraph("artA")
+        with db.action_group("u", "art_a"):
+            db.apply(CreateNode(
+                node=node_a, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+
+        db.undo("u", "art_a")
+        assert db.get_node(node_a.meta.id) is None
+
+        # Redo on art_b should do nothing
+        result = db.redo("u", "art_b")
+        assert result == []
+        assert db.get_node(node_a.meta.id) is None
+
+        # Redo on art_a should restore
+        db.redo("u", "art_a")
+        assert db.get_node(node_a.meta.id) is not None
+
+    def test_redo_cleared_per_artifact(self) -> None:
+        """New op in A clears A's redo stack; B's redo stack untouched."""
+        mgr = UndoManager()
+        oid1 = _fake_op_id("a")
+        oid2 = _fake_op_id("b")
+        oid3 = _fake_op_id("c")
+
+        mgr.record_op(oid1, "u", "art_a")
+        mgr.record_op(oid2, "u", "art_b")
+
+        # Create redo stacks by undoing
+        mgr.pop_undo("u", "art_a")
+        mgr.pop_undo("u", "art_b")
+
+        # New op on art_a clears art_a redo only
+        mgr.record_op(oid3, "u", "art_a")
+        assert mgr.pop_redo("u", "art_a") is None  # cleared
+        assert mgr.pop_redo("u", "art_b") is not None  # still there
+
+    def test_cross_artifact_undo_redo_roundtrip(self) -> None:
+        """Edit A, edit B, undo A, redo A -- B stays intact throughout."""
+        db = GraphDB()
+        node_a = _make_paragraph("A-text")
+        node_b = _make_paragraph("B-text")
+
+        with db.action_group("u", "art_a"):
+            db.apply(CreateNode(
+                node=node_a, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+        with db.action_group("u", "art_b"):
+            db.apply(CreateNode(
+                node=node_b, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+
+        # Undo A
+        db.undo("u", "art_a")
+        assert db.get_node(node_a.meta.id) is None
+        assert db.get_node(node_b.meta.id) is not None
+
+        # Redo A
+        db.redo("u", "art_a")
+        assert db.get_node(node_a.meta.id) is not None
+        assert db.get_node(node_b.meta.id) is not None
+
+    def test_undo_exhausted_returns_empty(self) -> None:
+        """Undo all ops in artifact, next undo returns empty (no-op)."""
+        db = GraphDB()
+        node = _make_paragraph("only")
+        with db.action_group("u", "art_a"):
+            db.apply(CreateNode(
+                node=node, parent_ops=(), timestamp=utc_now(), principal_id="u",
+            ))
+
+        db.undo("u", "art_a")
+        assert db.get_node(node.meta.id) is None
+
+        # Second undo should return empty
+        result = db.undo("u", "art_a")
+        assert result == []

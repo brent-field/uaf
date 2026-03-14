@@ -101,6 +101,19 @@ class GridLens:
         action: LensAction,
     ) -> None:
         """Translate a LensAction into graph operations."""
+        aid_str = str(artifact_id.value)
+        principal_id = session.principal.id.value
+        with db._db.action_group(principal_id, aid_str):
+            self._apply_action_inner(db, session, artifact_id, action)
+
+    def _apply_action_inner(
+        self,
+        db: SecureGraphDB,
+        session: Session,
+        artifact_id: NodeId,
+        action: LensAction,
+    ) -> None:
+        """Inner dispatch for apply_action (already inside action_group)."""
         match action:
             case SetCellValue(cell_id=cell_id, value=value):
                 self._set_cell_value(db, session, cell_id, value)

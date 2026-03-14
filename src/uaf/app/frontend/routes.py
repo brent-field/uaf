@@ -657,17 +657,20 @@ def edit_block(
     aid = NodeId(value=uuid.UUID(artifact_id))
     nid = NodeId(value=uuid.UUID(node_id))
 
-    existing = db.get_node(session, nid)
-    if existing is not None:
-        match existing:
-            case Heading(meta=meta, level=level):
-                db.update_node(session, Heading(meta=meta, text=text, level=level))
-            case Paragraph(meta=meta, style=style):
-                db.update_node(session, Paragraph(meta=meta, text=text, style=style))
-            case CodeBlock(meta=meta, language=lang):
-                db.update_node(session, CodeBlock(meta=meta, source=text, language=lang))
-            case TextBlock(meta=meta):
-                db.update_node(session, TextBlock(meta=meta, text=text))
+    with db.action_group(session, artifact_id):
+        existing = db.get_node(session, nid)
+        if existing is not None:
+            match existing:
+                case Heading(meta=meta, level=level):
+                    db.update_node(session, Heading(meta=meta, text=text, level=level))
+                case Paragraph(meta=meta, style=style):
+                    db.update_node(session, Paragraph(meta=meta, text=text, style=style))
+                case CodeBlock(meta=meta, language=lang):
+                    db.update_node(
+                        session, CodeBlock(meta=meta, source=text, language=lang),
+                    )
+                case TextBlock(meta=meta):
+                    db.update_node(session, TextBlock(meta=meta, text=text))
 
     blocks = _parse_doc_blocks("", db, session, aid)
     ctx: dict[str, Any] = {
@@ -771,21 +774,27 @@ def update_block_text(
 
     clean_text = sanitize_html(text) if content_format == "html" else text
 
-    match existing:
-        case Heading(meta=meta, level=level):
-            db.update_node(session, Heading(meta=meta, text=clean_text, level=level))
-        case Paragraph(meta=meta, style=style):
-            db.update_node(
-                session,
-                Paragraph(
-                    meta=meta, text=clean_text, style=style,
-                    content_format=content_format,
-                ),
-            )
-        case CodeBlock(meta=meta, language=lang):
-            db.update_node(session, CodeBlock(meta=meta, source=clean_text, language=lang))
-        case TextBlock(meta=meta):
-            db.update_node(session, TextBlock(meta=meta, text=clean_text))
+    with db.action_group(session, artifact_id):
+        match existing:
+            case Heading(meta=meta, level=level):
+                db.update_node(
+                    session, Heading(meta=meta, text=clean_text, level=level),
+                )
+            case Paragraph(meta=meta, style=style):
+                db.update_node(
+                    session,
+                    Paragraph(
+                        meta=meta, text=clean_text, style=style,
+                        content_format=content_format,
+                    ),
+                )
+            case CodeBlock(meta=meta, language=lang):
+                db.update_node(
+                    session,
+                    CodeBlock(meta=meta, source=clean_text, language=lang),
+                )
+            case TextBlock(meta=meta):
+                db.update_node(session, TextBlock(meta=meta, text=clean_text))
     return Response(status_code=204)
 
 
@@ -894,7 +903,7 @@ def split_block(
     aid = NodeId(value=uuid.UUID(artifact_id))
     nid = NodeId(value=uuid.UUID(node_id))
 
-    with db._db.action_group(session.principal.id.value):
+    with db._db.action_group(session.principal.id.value, artifact_id):
         # Update existing block with text before cursor
         existing = db.get_node(session, nid)
         if existing is not None:
@@ -963,7 +972,7 @@ def artifact_undo(
 ) -> HTMLResponse:
     """Undo the most recent action group and re-render the current view."""
     session = _require_session(request, db)
-    db.undo(session)
+    db.undo(session, artifact_id)
     aid = NodeId(value=uuid.UUID(artifact_id))
     return _render_artifact_content(request, db, session, aid, artifact_id, registry)
 
@@ -977,7 +986,7 @@ def artifact_redo(
 ) -> HTMLResponse:
     """Redo the most recently undone action group and re-render."""
     session = _require_session(request, db)
-    db.redo(session)
+    db.redo(session, artifact_id)
     aid = NodeId(value=uuid.UUID(artifact_id))
     return _render_artifact_content(request, db, session, aid, artifact_id, registry)
 
@@ -1003,7 +1012,7 @@ def artifact_revert(
         ts, inner_db._log, inner_db._materializer.state,
         session.principal.id.value,
     )
-    with db.action_group(session):
+    with db.action_group(session, artifact_id):
         for op in ops:
             with contextlib.suppress(Exception):
                 inner_db.apply(op)

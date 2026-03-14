@@ -44,6 +44,7 @@ class GraphDB:
         self._blobs: dict[BlobId, bytes] = {}
         self._undo = UndoManager()
         self._applying_undo: bool = False
+        self._current_artifact_id: str | None = None
 
     # ------------------------------------------------------------------
     # Mutation
@@ -60,7 +61,7 @@ class GraphDB:
 
         # Record in undo manager (skip during undo/redo to avoid loops)
         if not self._applying_undo and op.principal_id is not None:
-            self._undo.record_op(op_id, op.principal_id)
+            self._undo.record_op(op_id, op.principal_id, self._current_artifact_id)
 
         # Index old datoms for retraction on update
         match op:
@@ -130,17 +131,22 @@ class GraphDB:
     # ------------------------------------------------------------------
 
     @contextmanager
-    def action_group(self, principal_id: str) -> Iterator[str]:
+    def action_group(self, principal_id: str, artifact_id: str) -> Iterator[str]:
         """Context manager grouping operations into a single undo step."""
-        with self._undo.group(principal_id) as group_id:
-            yield group_id
+        old = self._current_artifact_id
+        self._current_artifact_id = artifact_id
+        try:
+            with self._undo.group(principal_id, artifact_id) as group_id:
+                yield group_id
+        finally:
+            self._current_artifact_id = old
 
-    def undo(self, principal_id: str) -> list[OperationId]:
-        """Undo the most recent action group for the given principal.
+    def undo(self, principal_id: str, artifact_id: str) -> list[OperationId]:
+        """Undo the most recent action group for the given principal and artifact.
 
         Returns the OperationIds of the compensating operations applied.
         """
-        group = self._undo.pop_undo(principal_id)
+        group = self._undo.pop_undo(principal_id, artifact_id)
         if group is None:
             return []
 
@@ -162,7 +168,7 @@ class GraphDB:
         finally:
             self._applying_undo = False
 
-    def redo(self, principal_id: str) -> list[OperationId]:
+    def redo(self, principal_id: str, artifact_id: str) -> list[OperationId]:
         """Redo the most recently undone action group.
 
         Re-applies the original operations in forward order with fresh
@@ -171,7 +177,7 @@ class GraphDB:
         """
         from uaf.core.node_id import utc_now
 
-        group = self._undo.pop_redo(principal_id)
+        group = self._undo.pop_redo(principal_id, artifact_id)
         if group is None:
             return []
 

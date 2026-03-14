@@ -33,7 +33,7 @@ def undo(
     session: Session = Depends(get_session),
 ) -> UndoRedoResponse:
     """Undo the most recent action group."""
-    op_ids = db.undo(session)
+    op_ids = db.undo(session, artifact_id)
     return UndoRedoResponse(operation_ids=[str(oid) for oid in op_ids])
 
 
@@ -44,7 +44,7 @@ def redo(
     session: Session = Depends(get_session),
 ) -> UndoRedoResponse:
     """Redo the most recently undone action group."""
-    op_ids = db.redo(session)
+    op_ids = db.redo(session, artifact_id)
     return UndoRedoResponse(operation_ids=[str(oid) for oid in op_ids])
 
 
@@ -68,7 +68,7 @@ def revert(
         return UndoRedoResponse(operation_ids=[])
 
     result_ids: list[str] = []
-    with db.action_group(session):
+    with db.action_group(session, artifact_id):
         for op in ops:
             try:
                 op_id = inner_db.apply(op)

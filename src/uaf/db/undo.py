@@ -39,6 +39,7 @@ class UndoGroup:
     group_id: str
     op_ids: tuple[OperationId, ...]
     principal_id: str
+    artifact_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -47,17 +48,18 @@ class UndoGroup:
 
 
 class UndoManager:
-    """Per-principal undo/redo stack manager."""
+    """Per-principal, per-artifact undo/redo stack manager."""
 
     def __init__(self) -> None:
-        self._undo_stacks: dict[str, list[UndoGroup]] = {}
-        self._redo_stacks: dict[str, list[UndoGroup]] = {}
+        self._undo_stacks: dict[tuple[str, str], list[UndoGroup]] = {}
+        self._redo_stacks: dict[tuple[str, str], list[UndoGroup]] = {}
         self._current_group: str | None = None
         self._current_group_ops: list[OperationId] = []
         self._current_group_principal: str | None = None
+        self._current_group_artifact: str | None = None
         self._group_depth: int = 0
 
-    def begin_group(self, principal_id: str) -> str:
+    def begin_group(self, principal_id: str, artifact_id: str) -> str:
         """Start a new undo group. Returns the group_id.
 
         Supports nesting: if a group is already open, the depth counter
@@ -71,6 +73,7 @@ class UndoManager:
         self._current_group = group_id
         self._current_group_ops = []
         self._current_group_principal = principal_id
+        self._current_group_artifact = artifact_id
         self._group_depth = 1
         return group_id
 
@@ -84,61 +87,80 @@ class UndoManager:
         self._group_depth -= 1
         if self._group_depth > 0:
             return
-        if self._current_group_ops and self._current_group_principal is not None:
+        if (
+            self._current_group_ops
+            and self._current_group_principal is not None
+            and self._current_group_artifact is not None
+        ):
             group = UndoGroup(
                 group_id=self._current_group,
                 op_ids=tuple(self._current_group_ops),
                 principal_id=self._current_group_principal,
+                artifact_id=self._current_group_artifact,
             )
-            stack = self._undo_stacks.setdefault(
-                self._current_group_principal, [],
-            )
+            key = (self._current_group_principal, self._current_group_artifact)
+            stack = self._undo_stacks.setdefault(key, [])
             stack.append(group)
         self._current_group = None
         self._current_group_ops = []
         self._current_group_principal = None
+        self._current_group_artifact = None
 
-    def record_op(self, op_id: OperationId, principal_id: str) -> None:
+    def record_op(
+        self, op_id: OperationId, principal_id: str, artifact_id: str | None = None,
+    ) -> None:
         """Record an operation. Auto-groups if no explicit group is open."""
         if self._current_group is not None:
             self._current_group_ops.append(op_id)
         else:
+            if artifact_id is None:
+                return
             # Auto-create a single-op group
             group = UndoGroup(
                 group_id=uuid.uuid4().hex[:16],
                 op_ids=(op_id,),
                 principal_id=principal_id,
+                artifact_id=artifact_id,
             )
-            stack = self._undo_stacks.setdefault(principal_id, [])
+            key = (principal_id, artifact_id)
+            stack = self._undo_stacks.setdefault(key, [])
             stack.append(group)
 
-        # Clear redo stack on new action
-        self._redo_stacks.pop(principal_id, None)
+        # Clear redo stack on new action — only for the specific artifact
+        redo_key: tuple[str, str] | None = None
+        if self._current_group is not None and self._current_group_artifact is not None:
+            redo_key = (principal_id, self._current_group_artifact)
+        elif artifact_id is not None:
+            redo_key = (principal_id, artifact_id)
+        if redo_key is not None:
+            self._redo_stacks.pop(redo_key, None)
 
-    def pop_undo(self, principal_id: str) -> UndoGroup | None:
+    def pop_undo(self, principal_id: str, artifact_id: str) -> UndoGroup | None:
         """Pop the most recent undo group, move it to the redo stack."""
-        stack = self._undo_stacks.get(principal_id)
+        key = (principal_id, artifact_id)
+        stack = self._undo_stacks.get(key)
         if not stack:
             return None
         group = stack.pop()
-        redo_stack = self._redo_stacks.setdefault(principal_id, [])
+        redo_stack = self._redo_stacks.setdefault(key, [])
         redo_stack.append(group)
         return group
 
-    def pop_redo(self, principal_id: str) -> UndoGroup | None:
+    def pop_redo(self, principal_id: str, artifact_id: str) -> UndoGroup | None:
         """Pop the most recent redo group, move it to the undo stack."""
-        stack = self._redo_stacks.get(principal_id)
+        key = (principal_id, artifact_id)
+        stack = self._redo_stacks.get(key)
         if not stack:
             return None
         group = stack.pop()
-        undo_stack = self._undo_stacks.setdefault(principal_id, [])
+        undo_stack = self._undo_stacks.setdefault(key, [])
         undo_stack.append(group)
         return group
 
     @contextmanager
-    def group(self, principal_id: str) -> Iterator[str]:
+    def group(self, principal_id: str, artifact_id: str) -> Iterator[str]:
         """Context manager for undo groups."""
-        group_id = self.begin_group(principal_id)
+        group_id = self.begin_group(principal_id, artifact_id)
         try:
             yield group_id
         finally:

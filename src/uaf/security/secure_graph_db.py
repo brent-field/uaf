@@ -292,15 +292,15 @@ class SecureGraphDB:
 
     @contextmanager
     def action_group(
-        self, session: Session,
+        self, session: Session, artifact_id: str,
     ) -> Iterator[str]:
         """Context manager grouping operations into a single undo step."""
-        with self._db.action_group(session.principal.id.value) as gid:
+        with self._db.action_group(session.principal.id.value, artifact_id) as gid:
             yield gid
 
-    def undo(self, session: Session) -> list[OperationId]:
-        """Undo the most recent action group for the session principal."""
-        result = self._db.undo(session.principal.id.value)
+    def undo(self, session: Session, artifact_id: str) -> list[OperationId]:
+        """Undo the most recent action group for the session principal and artifact."""
+        result = self._db.undo(session.principal.id.value, artifact_id)
         if result:
             self._record_audit(
                 session,
@@ -311,9 +311,9 @@ class SecureGraphDB:
             )
         return result
 
-    def redo(self, session: Session) -> list[OperationId]:
+    def redo(self, session: Session, artifact_id: str) -> list[OperationId]:
         """Redo the most recently undone action group."""
-        result = self._db.redo(session.principal.id.value)
+        result = self._db.redo(session.principal.id.value, artifact_id)
         if result:
             self._record_audit(
                 session,

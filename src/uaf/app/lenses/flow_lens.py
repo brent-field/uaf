@@ -643,6 +643,19 @@ class FlowLens:
         action: LensAction,
     ) -> None:
         """Translate a FlowLens action into graph operations."""
+        aid_str = str(artifact_id.value)
+        principal_id = session.principal.id.value
+        with db._db.action_group(principal_id, aid_str):
+            self._apply_action_inner(db, session, artifact_id, action)
+
+    def _apply_action_inner(
+        self,
+        db: SecureGraphDB,
+        session: Session,
+        artifact_id: NodeId,
+        action: LensAction,
+    ) -> None:
+        """Inner dispatch for apply_action (already inside action_group)."""
         match action:
             case CreateTask(
                 parent_id=parent_id, title=title, position=pos,

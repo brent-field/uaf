@@ -192,24 +192,34 @@ class DocLens:
         action: LensAction,
     ) -> None:
         """Translate a LensAction into graph operations."""
-        match action:
-            case InsertText(parent_id=parent_id, text=text, position=pos, style=style):
-                self._insert_text(db, session, parent_id, text, pos, style)
-            case DeleteText(node_id=node_id):
-                self._delete_text(db, session, node_id)
-            case FormatText(node_id=node_id, style=style, level=level):
-                self._format_text(db, session, node_id, style, level)
-            case ReorderNodes(parent_id=parent_id, new_order=new_order):
-                self._reorder(db, session, parent_id, new_order)
-            case DeleteNode(node_id=node_id):
-                self._delete_text(db, session, node_id)
-            case RenameArtifact(artifact_id=aid, title=title):
-                self._rename(db, session, aid, title)
-            case MoveNode(node_id=nid, new_parent_id=new_parent):
-                self._move(db, session, nid, new_parent)
-            case _:
-                msg = f"DocLens does not support action: {type(action).__name__}"
-                raise ValueError(msg)
+        aid_str = str(artifact_id.value)
+        principal_id = session.principal.id.value
+        with db._db.action_group(principal_id, aid_str):
+            match action:
+                case InsertText(
+                    parent_id=parent_id, text=text, position=pos, style=style,
+                ):
+                    self._insert_text(
+                        db, session, parent_id, text, pos, style, aid_str,
+                    )
+                case DeleteText(node_id=node_id):
+                    self._delete_text(db, session, node_id, aid_str)
+                case FormatText(node_id=node_id, style=style, level=level):
+                    self._format_text(db, session, node_id, style, level)
+                case ReorderNodes(parent_id=parent_id, new_order=new_order):
+                    self._reorder(db, session, parent_id, new_order)
+                case DeleteNode(node_id=node_id):
+                    self._delete_text(db, session, node_id, aid_str)
+                case RenameArtifact(artifact_id=aid, title=title):
+                    self._rename(db, session, aid, title)
+                case MoveNode(node_id=nid, new_parent_id=new_parent):
+                    self._move(db, session, nid, new_parent)
+                case _:
+                    msg = (
+                        f"DocLens does not support action:"
+                        f" {type(action).__name__}"
+                    )
+                    raise ValueError(msg)
 
     # ------------------------------------------------------------------
     # Layout rendering helpers
@@ -395,9 +405,10 @@ class DocLens:
         text: str,
         position: int,
         style: str,
+        artifact_id: str,
     ) -> None:
         """Insert a text node as a child of parent_id."""
-        with db._db.action_group(session.principal.id.value):
+        with db._db.action_group(session.principal.id.value, artifact_id):
             new_node: Heading | CodeBlock | Paragraph
             if style == "heading":
                 new_node = Heading(
@@ -440,10 +451,11 @@ class DocLens:
             db._db.apply(op)
 
     def _delete_text(
-        self, db: SecureGraphDB, session: Session, node_id: NodeId
+        self, db: SecureGraphDB, session: Session, node_id: NodeId,
+        artifact_id: str,
     ) -> None:
         """Delete a text node and its CONTAINS edge."""
-        with db._db.action_group(session.principal.id.value):
+        with db._db.action_group(session.principal.id.value, artifact_id):
             state = db._db._materializer.state
             for eid, edge in list(state.edges.items()):
                 if edge.target == node_id and edge.edge_type == EdgeType.CONTAINS:
