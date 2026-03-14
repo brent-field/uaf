@@ -305,6 +305,60 @@ class TestContentHash:
         assert isinstance(h, OperationId)
 
 
+class TestNewNodeTypeSerialization:
+    def test_bullet_list_item_round_trip(self) -> None:
+        from uaf.core.nodes import BulletListItem
+
+        node = BulletListItem(
+            meta=make_node_metadata(NodeType.BULLET_LIST_ITEM),
+            text="Buy groceries",
+            indent_level=1,
+            content_format="html",
+        )
+        d = node_to_dict(node)
+        restored = node_from_dict(d)
+        assert isinstance(restored, BulletListItem)
+        assert restored.text == "Buy groceries"
+        assert restored.indent_level == 1
+        assert restored.content_format == "html"
+
+    def test_numbered_list_item_round_trip(self) -> None:
+        from uaf.core.nodes import NumberedListItem
+
+        node = NumberedListItem(
+            meta=make_node_metadata(NodeType.NUMBERED_LIST_ITEM),
+            text="Step one",
+            indent_level=0,
+            content_format="plain",
+        )
+        d = node_to_dict(node)
+        restored = node_from_dict(d)
+        assert isinstance(restored, NumberedListItem)
+        assert restored.text == "Step one"
+        assert restored.indent_level == 0
+
+    def test_blockquote_round_trip(self) -> None:
+        from uaf.core.nodes import Blockquote
+
+        node = Blockquote(
+            meta=make_node_metadata(NodeType.BLOCKQUOTE),
+            text="To be or not to be",
+            content_format="plain",
+        )
+        d = node_to_dict(node)
+        restored = node_from_dict(d)
+        assert isinstance(restored, Blockquote)
+        assert restored.text == "To be or not to be"
+
+    def test_divider_round_trip(self) -> None:
+        from uaf.core.nodes import Divider
+
+        node = Divider(meta=make_node_metadata(NodeType.DIVIDER))
+        d = node_to_dict(node)
+        restored = node_from_dict(d)
+        assert isinstance(restored, Divider)
+
+
 class TestBlobHash:
     def test_deterministic(self) -> None:
         data = b"hello world"

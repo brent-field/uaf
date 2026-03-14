@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import tempfile
 import uuid
 from html import escape
@@ -63,6 +64,26 @@ _EXTENSIONS: dict[str, str] = {
 }
 _EXT_TO_FORMAT: dict[str, str] = {v: k for k, v in _EXTENSIONS.items()}
 _EXT_TO_FORMAT[".gdoc"] = "gdoc"
+
+_LIST_TYPES = {"bullet_list_item", "numbered_list_item"}
+
+_SIDEBAR_TYPE_CONFIG: dict[str, dict[str, str]] = {
+    "doc": {
+        "title": "Documents",
+        "icon": "\U0001f4c4",
+        "url_pattern": "/artifacts/{id}/edit",
+    },
+    "spreadsheet": {
+        "title": "Sheets",
+        "icon": "\U0001f4ca",
+        "url_pattern": "/artifacts/{id}/grid",
+    },
+    "project": {
+        "title": "Projects",
+        "icon": "\U0001f4cb",
+        "url_pattern": "/artifacts/{id}/flow",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +180,29 @@ def _register_imported_artifact(
             resolver.register_parent(gc.meta.id, child.meta.id)
 
 
+def _list_artifacts_with_type(
+    db: SecureGraphDB,
+    session: Session,
+) -> list[dict[str, Any]]:
+    """List all artifacts with their detected types and child counts."""
+    artifacts = db.find_by_type(session, NodeType.ARTIFACT)
+    items: list[dict[str, Any]] = []
+    for art in artifacts:
+        if isinstance(art, Artifact):
+            children = db.get_children(session, art.meta.id)
+            atype = art.artifact_type
+            if atype == "doc":
+                atype = _detect_artifact_type(children)
+            items.append({
+                "id": str(art.meta.id),
+                "title": art.title,
+                "child_count": len(children),
+                "updated_at": art.meta.updated_at,
+                "artifact_type": atype,
+            })
+    return items
+
+
 def _detect_artifact_type(children: list[object]) -> str:
     """Detect artifact type from its children: 'doc', 'spreadsheet', or 'project'."""
     from uaf.core.nodes import Sheet, Task
@@ -178,21 +222,19 @@ def _parse_doc_blocks(
     artifact_id: NodeId,
 ) -> list[dict[str, str]]:
     """Parse DocLens HTML into per-block dicts for the template."""
-    from uaf.core.nodes import Paragraph
-
     children = db.get_children(session, artifact_id)
     blocks: list[dict[str, str]] = []
     type_labels = {
         "heading": "H", "paragraph": "P", "code_block": "Code",
         "math_block": "Math", "text_block": "Text", "image": "Img",
+        "bullet_list_item": "\u2022", "numbered_list_item": "1.",
+        "blockquote": "\u275d", "divider": "\u2014",
     }
     for child in children:
         nid = str(child.meta.id)
         html, text, node_type = _render_single_block(child)
         if html or node_type:
-            fmt = "plain"
-            if isinstance(child, Paragraph):
-                fmt = child.content_format
+            fmt = getattr(child, 'content_format', 'plain')
             blocks.append({
                 "id": nid,
                 "html": html,
@@ -206,7 +248,18 @@ def _parse_doc_blocks(
 
 def _render_single_block(node: object) -> tuple[str, str, str]:
     """Render one node to (html, raw_text, node_type)."""
-    from uaf.core.nodes import CodeBlock, Heading, Image, MathBlock, Paragraph, TextBlock
+    from uaf.core.nodes import (
+        Blockquote,
+        BulletListItem,
+        CodeBlock,
+        Divider,
+        Heading,
+        Image,
+        MathBlock,
+        NumberedListItem,
+        Paragraph,
+        TextBlock,
+    )
 
     match node:
         case Heading(text=text, level=level):
@@ -239,6 +292,17 @@ def _render_single_block(node: object) -> tuple[str, str, str]:
                 alt_text,
                 "image",
             )
+        case BulletListItem(text=text, content_format=fmt):
+            displayed = text if fmt == "html" else escape(text)
+            return displayed, text, "bullet_list_item"
+        case NumberedListItem(text=text, content_format=fmt):
+            displayed = text if fmt == "html" else escape(text)
+            return displayed, text, "numbered_list_item"
+        case Blockquote(text=text, content_format=fmt):
+            displayed = text if fmt == "html" else escape(text)
+            return displayed, text, "blockquote"
+        case Divider():
+            return "<hr>", "", "divider"
         case _:
             return "", "", ""
 
@@ -335,23 +399,7 @@ def dashboard(
     if session is None:
         return RedirectResponse(url="/login", status_code=303)
 
-    artifacts = db.find_by_type(session, NodeType.ARTIFACT)
-    items: list[dict[str, Any]] = []
-    for art in artifacts:
-        if isinstance(art, Artifact):
-            children = db.get_children(session, art.meta.id)
-            atype = art.artifact_type
-            if atype == "doc":
-                atype = _detect_artifact_type(children)
-            items.append(
-                {
-                    "id": str(art.meta.id),
-                    "title": art.title,
-                    "child_count": len(children),
-                    "updated_at": art.meta.updated_at,
-                    "artifact_type": atype,
-                }
-            )
+    items = _list_artifacts_with_type(db, session)
 
     ctx: dict[str, Any] = {
         "request": request,
@@ -370,6 +418,53 @@ def root(request: Request, db: SecureGraphDB = Depends(get_db)) -> RedirectRespo
     return RedirectResponse(url="/dashboard", status_code=303)
 
 
+@router.get("/sidebar", response_class=HTMLResponse)
+def sidebar(
+    request: Request,
+    db: SecureGraphDB = Depends(get_db),
+) -> HTMLResponse:
+    """Render sidebar with artifact list grouped by type."""
+    session = _get_session_or_none(request, db)
+    if session is None:
+        return HTMLResponse("")
+
+    items = _list_artifacts_with_type(db, session)
+
+    # Detect active artifact from Referer header
+    referer = request.headers.get("referer", "")
+    active_id = ""
+    ref_match = re.search(r"/artifacts/([^/]+)", referer)
+    if ref_match:
+        active_id = ref_match.group(1)
+
+    # Group artifacts by type
+    groups: dict[str, list[dict[str, Any]]] = {k: [] for k in _SIDEBAR_TYPE_CONFIG}
+
+    for item in items:
+        atype = item["artifact_type"]
+        art_id = item["id"]
+        config = _SIDEBAR_TYPE_CONFIG.get(atype, _SIDEBAR_TYPE_CONFIG["doc"])
+        groups.setdefault(atype, []).append({
+            "url": config["url_pattern"].replace("{id}", art_id),
+            "label": item["title"],
+            "icon": config["icon"],
+            "active": art_id == active_id,
+        })
+
+    sections = []
+    for type_key, config in _SIDEBAR_TYPE_CONFIG.items():
+        sections.append({
+            "title": config["title"],
+            "entries": groups.get(type_key, []),
+        })
+
+    ctx: dict[str, Any] = {
+        "request": request,
+        "sections": sections,
+    }
+    return templates.TemplateResponse("partials/sidebar.html", ctx)
+
+
 # ---------------------------------------------------------------------------
 # Artifact CRUD (HTML)
 # ---------------------------------------------------------------------------
@@ -380,13 +475,32 @@ def create_artifact(
     request: Request,
     db: SecureGraphDB = Depends(get_db),
 ) -> RedirectResponse:
-    """Create a new empty document artifact."""
+    """Create a new empty document artifact with an initial paragraph."""
     session = _require_session(request, db)
-    from uaf.core.nodes import make_node_metadata
+    from uaf.core.edges import Edge, EdgeType
+    from uaf.core.node_id import EdgeId
+    from uaf.core.nodes import Paragraph, make_node_metadata
 
     art = Artifact(meta=make_node_metadata(NodeType.ARTIFACT), title="Untitled Document")
     art_id = db.create_node(session, art)
-    return RedirectResponse(url=f"/artifacts/{art_id}/edit", status_code=303)
+
+    # Auto-create an empty paragraph so the user can start typing immediately
+    para = Paragraph(meta=make_node_metadata(NodeType.PARAGRAPH), text="")
+    para_id = db.create_node(session, para)
+    db.create_edge(
+        session,
+        Edge(
+            id=EdgeId.generate(),
+            source=art_id,
+            target=para_id,
+            edge_type=EdgeType.CONTAINS,
+            created_at=utc_now(),
+        ),
+    )
+
+    response = RedirectResponse(url=f"/artifacts/{art_id}/edit", status_code=303)
+    response.headers["HX-Trigger"] = "sidebar-refresh"
+    return response
 
 
 @router.delete("/artifacts/{artifact_id}", response_class=HTMLResponse)
@@ -401,25 +515,11 @@ def delete_artifact(
     db.delete_node(session, nid)
 
     # Return updated artifact list as HTML partial
-    artifacts = db.find_by_type(session, NodeType.ARTIFACT)
-    items: list[dict[str, Any]] = []
-    for art in artifacts:
-        if isinstance(art, Artifact):
-            children = db.get_children(session, art.meta.id)
-            atype = art.artifact_type
-            if atype == "doc":
-                atype = _detect_artifact_type(children)
-            items.append(
-                {
-                    "id": str(art.meta.id),
-                    "title": art.title,
-                    "child_count": len(children),
-                    "updated_at": art.meta.updated_at,
-                    "artifact_type": atype,
-                }
-            )
+    items = _list_artifacts_with_type(db, session)
     ctx: dict[str, Any] = {"request": request, "artifacts": items}
-    return templates.TemplateResponse("partials/artifact_list.html", ctx)
+    response = templates.TemplateResponse("partials/artifact_list.html", ctx)
+    response.headers["HX-Trigger"] = "sidebar-refresh"
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -753,6 +853,73 @@ def move_block_down(
     return templates.TemplateResponse("partials/doc_blocks.html", ctx)
 
 
+def _update_node_text(
+    db: SecureGraphDB,
+    session: Session,
+    existing: object,
+    new_text: str,
+    content_format: str = "plain",
+) -> None:
+    """Update a node's text content, preserving its type and other fields."""
+    from uaf.app.frontend.sanitize import sanitize_html
+    from uaf.core.nodes import (
+        Blockquote,
+        BulletListItem,
+        CodeBlock,
+        Heading,
+        NumberedListItem,
+        Paragraph,
+        TextBlock,
+    )
+
+    clean_text = sanitize_html(new_text) if content_format == "html" else new_text
+
+    match existing:
+        case Heading(meta=meta, level=level):
+            db.update_node(
+                session, Heading(meta=meta, text=clean_text, level=level),
+            )
+        case Paragraph(meta=meta, style=style):
+            db.update_node(
+                session,
+                Paragraph(
+                    meta=meta, text=clean_text, style=style,
+                    content_format=content_format,
+                ),
+            )
+        case CodeBlock(meta=meta, language=lang):
+            db.update_node(
+                session,
+                CodeBlock(meta=meta, source=clean_text, language=lang),
+            )
+        case TextBlock(meta=meta):
+            db.update_node(session, TextBlock(meta=meta, text=clean_text))
+        case BulletListItem(meta=meta, indent_level=indent):
+            db.update_node(
+                session,
+                BulletListItem(
+                    meta=meta, text=clean_text, indent_level=indent,
+                    content_format=content_format,
+                ),
+            )
+        case NumberedListItem(meta=meta, indent_level=indent):
+            db.update_node(
+                session,
+                NumberedListItem(
+                    meta=meta, text=clean_text, indent_level=indent,
+                    content_format=content_format,
+                ),
+            )
+        case Blockquote(meta=meta):
+            db.update_node(
+                session,
+                Blockquote(
+                    meta=meta, text=clean_text,
+                    content_format=content_format,
+                ),
+            )
+
+
 @router.post("/artifacts/{artifact_id}/action/update-text")
 def update_block_text(
     request: Request,
@@ -763,38 +930,14 @@ def update_block_text(
     db: SecureGraphDB = Depends(get_db),
 ) -> Response:
     """Save contenteditable text (debounced). Returns 204."""
-    from uaf.app.frontend.sanitize import sanitize_html
-    from uaf.core.nodes import CodeBlock, Heading, Paragraph, TextBlock
-
     session = _require_session(request, db)
     nid = NodeId(value=uuid.UUID(node_id))
     existing = db.get_node(session, nid)
     if existing is None:
         raise HTTPException(status_code=404, detail="Node not found")
 
-    clean_text = sanitize_html(text) if content_format == "html" else text
-
     with db.action_group(session, artifact_id):
-        match existing:
-            case Heading(meta=meta, level=level):
-                db.update_node(
-                    session, Heading(meta=meta, text=clean_text, level=level),
-                )
-            case Paragraph(meta=meta, style=style):
-                db.update_node(
-                    session,
-                    Paragraph(
-                        meta=meta, text=clean_text, style=style,
-                        content_format=content_format,
-                    ),
-                )
-            case CodeBlock(meta=meta, language=lang):
-                db.update_node(
-                    session,
-                    CodeBlock(meta=meta, source=clean_text, language=lang),
-                )
-            case TextBlock(meta=meta):
-                db.update_node(session, TextBlock(meta=meta, text=clean_text))
+        _update_node_text(db, session, existing, text, content_format)
     return Response(status_code=204)
 
 
@@ -893,61 +1036,61 @@ def split_block(
     node_id: str = Form(...),
     before_text: str = Form(""),
     after_text: str = Form(""),
+    inherit_type: str = Form("paragraph"),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
     """Split block at cursor (Enter key). Returns updated doc blocks."""
-    from uaf.core.nodes import CodeBlock, Heading, Paragraph, TextBlock
-
     session = _require_session(request, db)
     aid = NodeId(value=uuid.UUID(artifact_id))
     nid = NodeId(value=uuid.UUID(node_id))
 
     with db._db.action_group(session.principal.id.value, artifact_id):
-        # Update existing block with text before cursor
-        existing = db.get_node(session, nid)
-        if existing is not None:
-            match existing:
-                case Heading(meta=meta, level=level):
-                    db.update_node(
-                        session,
-                        Heading(meta=meta, text=before_text, level=level),
-                    )
-                case Paragraph(meta=meta, style=style):
-                    db.update_node(
-                        session,
-                        Paragraph(meta=meta, text=before_text, style=style),
-                    )
-                case CodeBlock(meta=meta, language=lang):
-                    db.update_node(
-                        session,
-                        CodeBlock(
-                            meta=meta, source=before_text, language=lang,
-                        ),
-                    )
-                case TextBlock(meta=meta):
-                    db.update_node(
-                        session, TextBlock(meta=meta, text=before_text),
-                    )
+        # Empty list item + Enter -> convert to paragraph (exit list)
+        if (
+            inherit_type in _LIST_TYPES
+            and not after_text.strip()
+            and not before_text.strip()
+        ):
+            from uaf.app.lenses.actions import FormatText
+            lens = registry.get("doc")
+            if lens is not None:
+                lens.apply_action(
+                    db, session, aid,
+                    FormatText(node_id=nid, style="paragraph", level=1),
+                )
+        else:
+            # Update existing block with text before cursor
+            existing = db.get_node(session, nid)
+            if existing is not None:
+                _update_node_text(db, session, existing, before_text)
 
-        # Find position of current block and insert new one after it
-        children = db.get_children(session, aid)
-        child_ids = [c.meta.id for c in children]
-        pos = (
-            child_ids.index(nid) + 1
-            if nid in child_ids
-            else len(child_ids)
-        )
+            # Determine style for new block
+            new_style = "paragraph"
+            if inherit_type in _LIST_TYPES:
+                new_style = (
+                    "bulleted_list" if inherit_type == "bullet_list_item"
+                    else "numbered_list"
+                )
 
-        lens = registry.get("doc")
-        if lens is not None:
-            lens.apply_action(
-                db, session, aid,
-                InsertText(
-                    parent_id=aid, text=after_text,
-                    position=pos, style="paragraph",
-                ),
+            # Find position of current block and insert new one after it
+            children = db.get_children(session, aid)
+            child_ids = [c.meta.id for c in children]
+            pos = (
+                child_ids.index(nid) + 1
+                if nid in child_ids
+                else len(child_ids)
             )
+
+            lens = registry.get("doc")
+            if lens is not None:
+                lens.apply_action(
+                    db, session, aid,
+                    InsertText(
+                        parent_id=aid, text=after_text,
+                        position=pos, style=new_style,
+                    ),
+                )
 
     blocks = _parse_doc_blocks("", db, session, aid)
     ctx: dict[str, Any] = {
@@ -1531,10 +1674,12 @@ def create_project(
         artifact_type="project",
     )
     art_id = db.create_node(session, art)
-    return RedirectResponse(
+    response = RedirectResponse(
         url=f"/artifacts/{art_id}/flow",
         status_code=303,
     )
+    response.headers["HX-Trigger"] = "sidebar-refresh"
+    return response
 
 
 @router.post("/artifacts/create-spreadsheet")
@@ -1593,10 +1738,12 @@ def create_spreadsheet(
                 ),
             )
 
-    return RedirectResponse(
+    response = RedirectResponse(
         url=f"/artifacts/{art_id}/grid",
         status_code=303,
     )
+    response.headers["HX-Trigger"] = "sidebar-refresh"
+    return response
 
 
 @router.get("/artifacts/{artifact_id}/flow", response_model=None)

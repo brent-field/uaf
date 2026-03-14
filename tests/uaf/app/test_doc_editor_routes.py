@@ -161,3 +161,85 @@ class TestSplitBlock:
         assert resp.status_code == 200
         children_after = sdb.get_children(session, art_id)
         assert len(children_after) == 3
+
+
+class TestRenderNewBlockTypes:
+    def test_bullet_list_item(self) -> None:
+        from uaf.app.frontend.routes import _render_single_block
+        from uaf.core.nodes import BulletListItem, NodeType, make_node_metadata
+
+        node = BulletListItem(
+            meta=make_node_metadata(NodeType.BULLET_LIST_ITEM),
+            text="hello",
+        )
+        html, text, node_type = _render_single_block(node)
+        assert node_type == "bullet_list_item"
+        assert text == "hello"
+        assert "hello" in html
+
+    def test_numbered_list_item(self) -> None:
+        from uaf.app.frontend.routes import _render_single_block
+        from uaf.core.nodes import NodeType, NumberedListItem, make_node_metadata
+
+        node = NumberedListItem(
+            meta=make_node_metadata(NodeType.NUMBERED_LIST_ITEM),
+            text="step",
+        )
+        _html, text, node_type = _render_single_block(node)
+        assert node_type == "numbered_list_item"
+        assert text == "step"
+
+    def test_blockquote(self) -> None:
+        from uaf.app.frontend.routes import _render_single_block
+        from uaf.core.nodes import Blockquote, NodeType, make_node_metadata
+
+        node = Blockquote(
+            meta=make_node_metadata(NodeType.BLOCKQUOTE),
+            text="wise words",
+        )
+        _html, text, node_type = _render_single_block(node)
+        assert node_type == "blockquote"
+        assert text == "wise words"
+
+    def test_divider(self) -> None:
+        from uaf.app.frontend.routes import _render_single_block
+        from uaf.core.nodes import Divider, NodeType, make_node_metadata
+
+        node = Divider(meta=make_node_metadata(NodeType.DIVIDER))
+        html, _text, node_type = _render_single_block(node)
+        assert node_type == "divider"
+        assert "<hr>" in html
+
+    def test_bullet_list_html_format(self) -> None:
+        from uaf.app.frontend.routes import _render_single_block
+        from uaf.core.nodes import BulletListItem, NodeType, make_node_metadata
+
+        node = BulletListItem(
+            meta=make_node_metadata(NodeType.BULLET_LIST_ITEM),
+            text="<b>bold</b>",
+            content_format="html",
+        )
+        html, _text, _node_type = _render_single_block(node)
+        assert "<b>bold</b>" in html  # HTML passed through
+
+
+class TestSidebar:
+    def test_sidebar_returns_grouped_html(self) -> None:
+        """GET /sidebar returns HTML with artifact sections."""
+        client, _sdb, _session, _art_id = _setup_app()
+        resp = client.get("/sidebar")
+        assert resp.status_code == 200
+        assert "Documents" in resp.text
+
+    def test_sidebar_unauthenticated_returns_empty(self) -> None:
+        """GET /sidebar without auth returns empty HTML."""
+        db = GraphDB()
+        auth = LocalAuthProvider()
+        sdb = SecureGraphDB(db, auth)
+        registry = LensRegistry()
+        registry.register(DocLens())
+        app = create_app(sdb, registry)
+        client = TestClient(app)
+        resp = client.get("/sidebar")
+        assert resp.status_code == 200
+        assert resp.text == ""

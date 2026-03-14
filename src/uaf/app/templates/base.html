@@ -9,17 +9,31 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
     <script src="/static/editor-core.js"></script>
 </head>
-<body>
+<body{% if not user %} class="no-sidebar"{% endif %}>
+    {# Layout: authenticated users get sidebar + main; guests get simple container.
+       Block 'content' is defined once, between the conditional openers/closers. #}
     {% if user %}
     <nav>
-        <a href="/dashboard" class="brand">UAF</a>
+        <div class="nav-left">
+            <button class="sidebar-toggle" onclick="document.body.classList.toggle('sidebar-collapsed')" title="Toggle sidebar">&#9776;</button>
+            <a href="/dashboard" class="brand">UAF</a>
+        </div>
         <div class="nav-right">
             <span>{{ user.display_name }}</span>
             <a href="/logout">Logout</a>
         </div>
     </nav>
+    <div class="app-layout">
+        <aside class="sidebar" id="sidebar"
+               hx-get="/sidebar"
+               hx-trigger="load, sidebar-refresh from:body"
+               hx-swap="innerHTML">
+        </aside>
+        <main class="main-content">
     {% endif %}
+    {% if not user %}
     <div class="container page">
+    {% endif %}
         {% if error %}
         <div class="flash flash-error">{{ error }}</div>
         {% endif %}
@@ -27,6 +41,11 @@
         <div class="flash flash-success">{{ success }}</div>
         {% endif %}
         {% block content %}{% endblock %}
+    {% if user %}
+        </main>
     </div>
+    {% else %}
+    </div>
+    {% endif %}
 </body>
 </html>

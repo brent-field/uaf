@@ -47,6 +47,10 @@ class TestNodeType:
             "IMAGE",
             "ARTIFACT_ACL",
             "RAW",
+            "BULLET_LIST_ITEM",
+            "NUMBERED_LIST_ITEM",
+            "BLOCKQUOTE",
+            "DIVIDER",
         }
         actual = {t.name for t in NodeType}
         assert actual == expected

@@ -217,6 +217,45 @@ class TestBlobStorage:
         assert bid1 == bid2
 
 
+class TestExtractFieldsNewTypes:
+    def test_bullet_list_item(self) -> None:
+        from uaf.core.nodes import BulletListItem
+
+        node = BulletListItem(
+            meta=make_node_metadata(NodeType.BULLET_LIST_ITEM),
+            text="item text",
+        )
+        fields = GraphDB._extract_fields(node)
+        assert ("text", "item text") in fields
+
+    def test_numbered_list_item(self) -> None:
+        from uaf.core.nodes import NumberedListItem
+
+        node = NumberedListItem(
+            meta=make_node_metadata(NodeType.NUMBERED_LIST_ITEM),
+            text="step text",
+        )
+        fields = GraphDB._extract_fields(node)
+        assert ("text", "step text") in fields
+
+    def test_blockquote(self) -> None:
+        from uaf.core.nodes import Blockquote
+
+        node = Blockquote(
+            meta=make_node_metadata(NodeType.BLOCKQUOTE),
+            text="quote text",
+        )
+        fields = GraphDB._extract_fields(node)
+        assert ("text", "quote text") in fields
+
+    def test_divider(self) -> None:
+        from uaf.core.nodes import Divider
+
+        node = Divider(meta=make_node_metadata(NodeType.DIVIDER))
+        fields = GraphDB._extract_fields(node)
+        assert fields == []
+
+
 class TestCounts:
     def test_counts(self) -> None:
         db = GraphDB()

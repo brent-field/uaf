@@ -19,13 +19,18 @@ from uaf.core.edges import Edge, EdgeType
 from uaf.core.node_id import EdgeId, utc_now
 from uaf.core.nodes import (
     Artifact,
+    Blockquote,
+    BulletListItem,
     CodeBlock,
+    Divider,
     FontAnnotation,
     Heading,
     Image,
     LayoutHint,
     MathBlock,
+    NodeMetadata,
     NodeType,
+    NumberedListItem,
     Paragraph,
     RawNode,
     Shape,
@@ -48,7 +53,56 @@ _SUPPORTED = frozenset({
     NodeType.MATH_BLOCK,
     NodeType.IMAGE,
     NodeType.SHAPE,
+    NodeType.BULLET_LIST_ITEM,
+    NodeType.NUMBERED_LIST_ITEM,
+    NodeType.BLOCKQUOTE,
+    NodeType.DIVIDER,
 })
+
+
+_STYLE_NODE_TYPE: dict[str, NodeType] = {
+    "heading": NodeType.HEADING,
+    "code_block": NodeType.CODE_BLOCK,
+    "paragraph": NodeType.PARAGRAPH,
+    "bulleted_list": NodeType.BULLET_LIST_ITEM,
+    "numbered_list": NodeType.NUMBERED_LIST_ITEM,
+    "quote": NodeType.BLOCKQUOTE,
+    "divider": NodeType.DIVIDER,
+}
+
+
+def _node_from_style(
+    style: str,
+    text: str,
+    level: int = 1,
+    *,
+    meta: NodeMetadata | None = None,
+) -> object | None:
+    """Create a node from a style name.
+
+    If *meta* is provided, uses it directly (for type conversion).
+    Otherwise generates fresh metadata with the appropriate NodeType.
+    """
+    nt = _STYLE_NODE_TYPE.get(style)
+    if nt is None:
+        return None
+    if meta is None:
+        meta = make_node_metadata(nt)
+    match style:
+        case "heading":
+            return Heading(meta=meta, text=text, level=level)
+        case "code_block":
+            return CodeBlock(meta=meta, source=text, language="")
+        case "bulleted_list":
+            return BulletListItem(meta=meta, text=text)
+        case "numbered_list":
+            return NumberedListItem(meta=meta, text=text)
+        case "quote":
+            return Blockquote(meta=meta, text=text)
+        case "divider":
+            return Divider(meta=meta)
+        case _:
+            return Paragraph(meta=meta, text=text)
 
 
 class DocLens:
@@ -384,6 +438,32 @@ class DocLens:
                     f'src="{escape(uri)}" alt="{escape(alt_text)}" />',
                     1,
                 )
+            case BulletListItem(meta=meta, text=text, content_format=fmt):
+                displayed = text if fmt == "html" else escape(text)
+                return (
+                    f'  <li data-node-id="{meta.id}" class="bullet-list-item">'
+                    f"{displayed}</li>",
+                    1,
+                )
+            case NumberedListItem(meta=meta, text=text, content_format=fmt):
+                displayed = text if fmt == "html" else escape(text)
+                return (
+                    f'  <li data-node-id="{meta.id}" class="numbered-list-item">'
+                    f"{displayed}</li>",
+                    1,
+                )
+            case Blockquote(meta=meta, text=text, content_format=fmt):
+                displayed = text if fmt == "html" else escape(text)
+                return (
+                    f'  <blockquote data-node-id="{meta.id}">'
+                    f"{displayed}</blockquote>",
+                    1,
+                )
+            case Divider(meta=meta):
+                return (
+                    f'  <hr data-node-id="{meta.id}" />',
+                    1,
+                )
             case RawNode(meta=meta, original_type=ot):
                 return (
                     f'  <div data-node-id="{meta.id}" class="raw-node">'
@@ -409,17 +489,8 @@ class DocLens:
     ) -> None:
         """Insert a text node as a child of parent_id."""
         with db._db.action_group(session.principal.id.value, artifact_id):
-            new_node: Heading | CodeBlock | Paragraph
-            if style == "heading":
-                new_node = Heading(
-                    meta=make_node_metadata(NodeType.HEADING), text=text, level=1,
-                )
-            elif style == "code_block":
-                new_node = CodeBlock(
-                    meta=make_node_metadata(NodeType.CODE_BLOCK),
-                    source=text, language="",
-                )
-            else:
+            new_node = _node_from_style(style, text)
+            if new_node is None:
                 new_node = Paragraph(
                     meta=make_node_metadata(NodeType.PARAGRAPH), text=text,
                 )
@@ -476,29 +547,16 @@ class DocLens:
             return
 
         # Extract text from existing node
-        text = ""
-        match existing:
-            case Heading(text=t):
-                text = t
-            case Paragraph(text=t):
-                text = t
-            case CodeBlock(source=s):
-                text = s
-            case TextBlock(text=t):
-                text = t
-            case _:
-                return
+        text = _get_text(existing)
+        if text is None:
+            return
 
         meta = existing.meta
 
         # Build replacement node with same ID and metadata
-        if style == "heading":
-            new_node: object = Heading(meta=meta, text=text, level=level)
-        elif style == "code_block":
-            new_node = CodeBlock(meta=meta, source=text, language="")
-        else:
+        new_node = _node_from_style(style, text, level, meta=meta)
+        if new_node is None:
             new_node = Paragraph(meta=meta, text=text)
-
         db.update_node(session, new_node)
 
     def _reorder(
@@ -589,52 +647,30 @@ def _get_text(node: object) -> str | None:
             return t
         case Image(alt_text=alt):
             return alt
+        case BulletListItem(text=t):
+            return t
+        case NumberedListItem(text=t):
+            return t
+        case Blockquote(text=t):
+            return t
+        case Divider():
+            return ""
         case _:
             return None
 
 
 def _get_node_type_name(node: object) -> str:
     """Return a human-readable node type name for inspector data attributes."""
-    match node:
-        case Heading():
-            return "heading"
-        case Paragraph():
-            return "paragraph"
-        case CodeBlock():
-            return "code_block"
-        case MathBlock():
-            return "math_block"
-        case TextBlock():
-            return "text_block"
-        case Image():
-            return "image"
-        case Shape():
-            return "shape"
-        case _:
-            return "unknown"
+    meta = getattr(node, "meta", None)
+    if meta is not None:
+        return meta.node_type.value  # type: ignore[no-any-return]
+    return "unknown"
 
 
 def _get_node_id(node: object) -> object | None:
     """Extract node ID from any node."""
-    match node:
-        case Heading(meta=meta):
-            return meta.id
-        case Paragraph(meta=meta):
-            return meta.id
-        case CodeBlock(meta=meta):
-            return meta.id
-        case MathBlock(meta=meta):
-            return meta.id
-        case TextBlock(meta=meta):
-            return meta.id
-        case Image(meta=meta):
-            return meta.id
-        case Shape(meta=meta):
-            return meta.id
-        case RawNode(meta=meta):
-            return meta.id
-        case _:
-            return None
+    meta = getattr(node, "meta", None)
+    return meta.id if meta is not None else None
 
 
 def _render_layout_shape(node: Shape) -> str:
