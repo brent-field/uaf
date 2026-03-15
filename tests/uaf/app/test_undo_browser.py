@@ -85,9 +85,7 @@ def _create_doc_and_add_block(page, server_url: str) -> None:  # type: ignore[no
 
     # New docs auto-create an empty paragraph; if not present add one
     if page.locator(".block-body").count() == 0:
-        add_btn = page.locator(
-            'button:has-text("Add a block"), button:has-text("+ Block")'
-        )
+        add_btn = page.locator('button:has-text("Add a block")')
         add_btn.first.click()
     # Wait for the block to appear
     page.wait_for_selector(".block-body", timeout=5000)
@@ -180,9 +178,11 @@ class TestUndoBlockInsert:
 
             initial_count = page.locator(".block-body").count()
 
-            # Insert another block
-            add_btn = page.locator('button:has-text("+ Block")')
-            add_btn.first.click()
+            # Insert another block by pressing Enter at the end of the first block
+            block = page.locator(".block-body").first
+            block.click()
+            page.keyboard.press("End")
+            page.keyboard.press("Enter")
             page.wait_for_timeout(1000)
 
             after_insert_count = page.locator(".block-body").count()
