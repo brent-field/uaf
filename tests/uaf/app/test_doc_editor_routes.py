@@ -224,12 +224,19 @@ class TestRenderNewBlockTypes:
 
 
 class TestSidebar:
-    def test_sidebar_returns_grouped_html(self) -> None:
-        """GET /sidebar returns HTML with artifact sections."""
+    def test_sidebar_returns_recent_items(self) -> None:
+        """GET /sidebar returns HTML with recent artifacts."""
         client, _sdb, _session, _art_id = _setup_app()
         resp = client.get("/sidebar")
         assert resp.status_code == 200
-        assert "Documents" in resp.text
+        assert "Recent" in resp.text
+
+    def test_sidebar_search_filters(self) -> None:
+        """GET /sidebar?q=Test filters artifacts by title."""
+        client, _sdb, _session, _art_id = _setup_app()
+        resp = client.get("/sidebar?q=Test")
+        assert resp.status_code == 200
+        assert "Test Doc" in resp.text
 
     def test_sidebar_unauthenticated_returns_empty(self) -> None:
         """GET /sidebar without auth returns empty HTML."""

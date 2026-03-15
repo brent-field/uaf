@@ -421,14 +421,25 @@ def root(request: Request, db: SecureGraphDB = Depends(get_db)) -> RedirectRespo
 @router.get("/sidebar", response_class=HTMLResponse)
 def sidebar(
     request: Request,
+    q: str = "",
     db: SecureGraphDB = Depends(get_db),
 ) -> HTMLResponse:
-    """Render sidebar with artifact list grouped by type."""
+    """Render sidebar with flat recents list and optional search."""
     session = _get_session_or_none(request, db)
     if session is None:
         return HTMLResponse("")
 
     items = _list_artifacts_with_type(db, session)
+
+    # Sort by updated_at descending (most recent first)
+    items.sort(key=lambda x: x["updated_at"], reverse=True)
+
+    # Filter by search query if provided
+    if q.strip():
+        q_lower = q.strip().lower()
+        items = [i for i in items if q_lower in i["title"].lower()]
+    else:
+        items = items[:15]
 
     # Detect active artifact from Referer header
     referer = request.headers.get("referer", "")
@@ -437,30 +448,23 @@ def sidebar(
     if ref_match:
         active_id = ref_match.group(1)
 
-    # Group artifacts by type
-    groups: dict[str, list[dict[str, Any]]] = {k: [] for k in _SIDEBAR_TYPE_CONFIG}
-
+    # Build flat item list with URLs
+    sidebar_items: list[dict[str, Any]] = []
     for item in items:
         atype = item["artifact_type"]
-        art_id = item["id"]
         config = _SIDEBAR_TYPE_CONFIG.get(atype, _SIDEBAR_TYPE_CONFIG["doc"])
-        groups.setdefault(atype, []).append({
+        art_id = item["id"]
+        sidebar_items.append({
             "url": config["url_pattern"].replace("{id}", art_id),
             "label": item["title"],
-            "icon": config["icon"],
+            "artifact_type": atype,
             "active": art_id == active_id,
-        })
-
-    sections = []
-    for type_key, config in _SIDEBAR_TYPE_CONFIG.items():
-        sections.append({
-            "title": config["title"],
-            "entries": groups.get(type_key, []),
         })
 
     ctx: dict[str, Any] = {
         "request": request,
-        "sections": sections,
+        "items": sidebar_items,
+        "q": q,
     }
     return templates.TemplateResponse("partials/sidebar.html", ctx)
 

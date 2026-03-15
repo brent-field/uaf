@@ -1,8 +1,11 @@
 <div class="sidebar-inner">
-    <div class="sidebar-new">
+    <div class="sidebar-search-row">
+        <input type="text" class="sidebar-search" placeholder="Search..."
+               name="q" value="{{ q }}"
+               hx-get="/sidebar" hx-trigger="input changed delay:200ms"
+               hx-target="#sidebar" hx-swap="innerHTML" />
         <div class="sidebar-new-dropdown">
-            <button class="btn btn-primary btn-sm sidebar-new-btn"
-                    onclick="this.nextElementSibling.classList.toggle('show')">+ New</button>
+            <button class="sidebar-new-btn" onclick="this.nextElementSibling.classList.toggle('show')">+</button>
             <div class="dropdown-menu sidebar-dropdown">
                 <form method="post" action="/artifacts/create">
                     <button type="submit" class="dropdown-item">Document</button>
@@ -17,31 +20,16 @@
         </div>
     </div>
 
-    {% for section in sections %}
-    <div class="sidebar-section">
-        <div class="sidebar-section-title">{{ section.title }}</div>
-        {% for item in section.entries %}
-        <a href="{{ item.url }}"
-           class="sidebar-item{% if item.active %} sidebar-item-active{% endif %}">
-            <span class="sidebar-item-icon">{{ item.icon }}</span>
-            <span class="sidebar-item-label">{{ item.label }}</span>
-        </a>
-        {% endfor %}
-        {% if not section.entries %}
-        <div class="sidebar-empty">No {{ section.title | lower }} yet</div>
-        {% endif %}
-    </div>
+    <div class="sidebar-label">Recent</div>
+    {% for item in items %}
+    <a href="{{ item.url }}" class="sidebar-item {% if item.active %}sidebar-item-active{% endif %}">
+        <span class="sidebar-type-dot sidebar-dot-{{ item.artifact_type }}"></span>
+        <span class="sidebar-item-label">{{ item.label }}</span>
+    </a>
     {% endfor %}
+    {% if not items %}
+    <div class="sidebar-empty">No artifacts yet</div>
+    {% endif %}
 
-    <div class="sidebar-footer">
-        <form method="post" action="/artifacts/import" enctype="multipart/form-data" class="sidebar-import">
-            <label class="btn btn-sm sidebar-import-btn">
-                Import file
-                <input type="file" name="file"
-                       accept=".md,.csv,.txt,.docx,.pdf,.json,.tex,.uaf"
-                       style="display:none;"
-                       onchange="this.form.submit();" />
-            </label>
-        </form>
-    </div>
+    <a href="/dashboard" class="sidebar-all-link">All artifacts</a>
 </div>
