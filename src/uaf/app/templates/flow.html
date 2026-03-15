@@ -564,12 +564,12 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 
 <style>
 .flow-content { padding: 0.25rem 0; overflow-y: auto; max-height: calc(100vh - 10rem); transform-origin: top left; transition: transform 0.1s ease; }
-.add-task-form { padding: 0.35rem 0.5rem; background: var(--bg-secondary, #f5f5f5); border-radius: 4px; margin-bottom: 0.5rem; }
+.add-task-form { padding: 0.35rem 0.5rem; background: var(--bg-alt); border-radius: 4px; margin-bottom: 0.5rem; }
 
 /* Empty state */
-.flow-empty { padding: 2rem; text-align: center; color: #888; }
+.flow-empty { padding: 2rem; text-align: center; color: var(--text-muted); }
 .flow-empty p { margin: 0.25rem 0; }
-.flow-empty-hint { font-size: 0.9rem; color: #aaa; }
+.flow-empty-hint { font-size: 0.9rem; color: var(--text-faint); }
 
 /* Drag feedback banner */
 .drag-feedback {
@@ -589,7 +589,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
     padding: 0.1rem 0.2rem; font-size: 0.75rem; opacity: 0.4;
     user-select: none; border-radius: 3px;
 }
-.drag-handle:hover { opacity: 1; background: #e0e7ff; }
+.drag-handle:hover { opacity: 1; background: var(--primary-subtle); }
 [data-node-id].drag-source { background: #dbeafe !important; outline: 2px solid #3b82f6; }
 [data-node-id].drop-target { background: #d1fae5 !important; outline: 2px dashed #22c55e; }
 
@@ -601,28 +601,28 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 
 /* Dependency info in Gantt */
 .task-dep-info {
-    display: block; font-size: 0.65rem; color: #888;
+    display: block; font-size: 0.65rem; color: var(--text-muted);
     font-weight: normal; font-style: italic;
 }
 
 /* Dependency chips in deps view */
 .dep-chip {
     display: inline-flex; align-items: center; gap: 0.25rem;
-    background: #f0f4ff; border: 1px solid #c7d2fe; border-radius: 4px;
+    background: var(--primary-subtle); border: 1px solid var(--primary-ring); border-radius: 4px;
     padding: 0.05rem 0.3rem; font-size: 0.7rem; margin-right: 0.25rem;
 }
 .dep-remove {
-    background: none; border: none; cursor: pointer; color: #999;
+    background: none; border: none; cursor: pointer; color: var(--text-muted);
     font-size: 0.9rem; padding: 0 0.15rem; line-height: 1;
 }
 .dep-remove:hover { color: #e11d48; }
 
 /* Gantt */
 .flow-gantt { width: 100%; border-collapse: collapse; }
-.flow-gantt th, .flow-gantt td { padding: 0.1rem 0.25rem; border-bottom: 1px solid #eee; text-align: left; }
-.flow-gantt th { font-weight: 600; font-size: 0.65rem; color: #666; }
+.flow-gantt th, .flow-gantt td { padding: 0.1rem 0.25rem; border-bottom: 1px solid var(--border-subtle); text-align: left; }
+.flow-gantt th { font-weight: 600; font-size: 0.65rem; color: var(--text-secondary); }
 .task-name { white-space: nowrap; }
-.task-name.status-done { text-decoration: line-through; color: #999; }
+.task-name.status-done { text-decoration: line-through; color: var(--text-muted); }
 .task-name.status-in_progress { color: #2563eb; font-weight: 500; }
 .gantt-cell { min-width: 200px; position: relative; height: 1rem; }
 .gantt-bar { position: absolute; top: 50%; transform: translateY(-50%); height: 8px; background: #3b82f6; border-radius: 3px; min-width: 4px; }
@@ -631,17 +631,17 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 .gantt-milestone { position: absolute; top: 50%; width: 8px; height: 8px; background: #e11d48; border: 1px solid #be123c; transform: translate(-50%, -50%) rotate(45deg); }
 .gantt-timeline-header { position: relative; min-width: 200px; }
 .gantt-date-labels { position: relative; height: 0.75rem; }
-.gantt-date-label { position: absolute; transform: translateX(-50%); font-size: 0.6rem; color: #999; white-space: nowrap; }
+.gantt-date-label { position: absolute; transform: translateX(-50%); font-size: 0.6rem; color: var(--text-muted); white-space: nowrap; }
 
 /* List-view data grid */
 .flow-list-grid { width: 100%; border-collapse: collapse; }
 .flow-list-grid thead th {
-    font-weight: 600; font-size: 0.7rem; color: #999;
+    font-weight: 600; font-size: 0.7rem; color: var(--text-muted);
     text-transform: uppercase; letter-spacing: 0.03em;
-    padding: 0.15rem 0.25rem; border-bottom: 2px solid #eee; text-align: left;
+    padding: 0.15rem 0.25rem; border-bottom: 2px solid var(--border-subtle); text-align: left;
 }
-.flow-list-grid td { padding: 0.05rem 0.15rem; border-bottom: 1px solid #f0f0f0; }
-.flow-list-grid tbody tr:hover { background: #f8f9fa; }
+.flow-list-grid td { padding: 0.05rem 0.15rem; border-bottom: 1px solid var(--border-subtle); }
+.flow-list-grid tbody tr:hover { background: var(--bg-alt); }
 .col-status { width: 2rem; }
 .col-date { width: 7.5rem; }
 .col-actions { width: 2rem; }
@@ -655,7 +655,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
     background: none; border: none; cursor: pointer; font-size: 0.95rem;
     padding: 0.1rem 0.25rem; border-radius: 3px; line-height: 1;
 }
-.flow-list-grid .list-check:hover { background: #e0e7ff; }
+.flow-list-grid .list-check:hover { background: var(--primary-subtle); }
 
 /* Cell inputs — scoped under .flow-list-grid to beat the global
    input[type="text"] rule in style.css (specificity 0-1-1). */
@@ -665,18 +665,18 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
     width: 100%; box-sizing: border-box;
     margin: 0; box-shadow: none;
 }
-.flow-list-grid .list-cell-input:hover { border-color: #ddd; }
+.flow-list-grid .list-cell-input:hover { border-color: var(--border); }
 .flow-list-grid .list-cell-input:focus { border-color: transparent; background: white; outline: 2px solid #3b82f6; outline-offset: -1px; }
-.flow-list-grid .list-cell-input.status-done { text-decoration: line-through; color: #999; }
+.flow-list-grid .list-cell-input.status-done { text-decoration: line-through; color: var(--text-muted); }
 .flow-list-grid .list-cell-input.status-in_progress { color: #2563eb; }
 
 .flow-list-grid .list-cell-date {
     border: 1px solid transparent; background: transparent;
     padding: 0.15rem 0.25rem; border-radius: 3px; font: inherit;
-    color: #888; font-size: 0.75rem; width: 100%; box-sizing: border-box;
+    color: var(--text-muted); font-size: 0.75rem; width: 100%; box-sizing: border-box;
     margin: 0; box-shadow: none;
 }
-.flow-list-grid .list-cell-date:hover { border-color: #ddd; }
+.flow-list-grid .list-cell-date:hover { border-color: var(--border); }
 .flow-list-grid .list-cell-date:focus { border-color: transparent; background: white; outline: 2px solid #3b82f6; outline-offset: -1px; }
 
 /* Delete button — visible on hover */
@@ -689,7 +689,7 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 
 /* New-row placeholder */
 .list-row-new td { border-bottom: none; }
-.list-row-new .list-cell-input { color: #888; }
+.list-row-new .list-cell-input { color: var(--text-muted); }
 .list-row-new .list-cell-input:focus { color: inherit; }
 
 /* Status badges */
@@ -700,40 +700,40 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 
 /* Dependencies */
 .flow-deps { width: 100%; border-collapse: collapse; }
-.flow-deps th, .flow-deps td { padding: 0.15rem 0.35rem; border-bottom: 1px solid #eee; text-align: left; }
-.flow-deps th { font-weight: 600; font-size: 0.75rem; color: #666; }
+.flow-deps th, .flow-deps td { padding: 0.15rem 0.35rem; border-bottom: 1px solid var(--border-subtle); text-align: left; }
+.flow-deps th { font-weight: 600; font-size: 0.75rem; color: var(--text-secondary); }
 
 /* DAG */
 .dag-container { position: relative; }
 .flow-dag-table { width: 100%; border-collapse: collapse; }
-.flow-dag-table th, .flow-dag-table td { padding: 0.05rem 0.25rem; border-bottom: 1px solid #eee; text-align: left; }
-.flow-dag-table th { font-weight: 600; font-size: 0.75rem; color: #666; }
+.flow-dag-table th, .flow-dag-table td { padding: 0.05rem 0.25rem; border-bottom: 1px solid var(--border-subtle); text-align: left; }
+.flow-dag-table th { font-weight: 600; font-size: 0.75rem; color: var(--text-secondary); }
 .dag-task-name { width: 30%; font-weight: 500; white-space: nowrap; }
 .dag-cell { position: relative; height: 1.25rem; }
-.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.05rem 0.25rem; background: #f0f0f0; border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; cursor: grab; }
+.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.05rem 0.25rem; background: var(--bg-alt); border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; cursor: grab; }
 .dag-node:active { cursor: grabbing; }
 .dag-label { font-weight: 500; font-size: 0.65rem; }
 .dag-edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .dag-edge-group { pointer-events: auto; }
 .dag-edge-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: pointer; }
-.dag-edge-path { fill: none; stroke: #999; stroke-width: 2; pointer-events: none; }
-.dag-edge-arrow { fill: #999; pointer-events: none; }
+.dag-edge-path { fill: none; stroke: var(--text-muted); stroke-width: 2; pointer-events: none; }
+.dag-edge-arrow { fill: var(--text-muted); pointer-events: none; }
 .dag-edge-group:hover .dag-edge-path { stroke: #e11d48; }
 .dag-edge-group:hover .dag-edge-arrow { fill: #e11d48; }
 
 /* Kanban */
 .flow-kanban { display: flex; gap: 1rem; min-height: 200px; }
-.kanban-column { flex: 1; background: #f8f8f8; border-radius: 8px; padding: 0.35rem; }
-.kanban-column h3 { margin: 0 0 0.5rem 0; font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
+.kanban-column { flex: 1; background: var(--bg-alt); border-radius: 8px; padding: 0.35rem; }
+.kanban-column h3 { margin: 0 0 0.5rem 0; font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; }
 .kanban-card { background: white; border: 1px solid #e0e0e0; border-radius: 6px; padding: 0.35rem; margin-bottom: 0.35rem; }
 .kanban-card:hover { border-color: #3b82f6; }
 .card-title { font-weight: 500; }
-.due-date { display: block; font-size: 0.8rem; color: #888; margin-top: 0.25rem; }
+.due-date { display: block; font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
 .kanban-toggle { float: right; padding: 0 0.3rem; font-size: 0.75rem; }
-.kanban-empty { color: #aaa; font-size: 0.75rem; text-align: center; padding: 0.5rem; }
+.kanban-empty { color: var(--text-faint); font-size: 0.75rem; text-align: center; padding: 0.5rem; }
 
 /* Task actions row */
-.flow-gantt tr:hover, .flow-deps tr:hover { background: #f8f8f8; }
+.flow-gantt tr:hover, .flow-deps tr:hover { background: var(--bg-alt); }
 .task-actions { white-space: nowrap; }
 .task-actions .btn { padding: 0.1rem 0.3rem; font-size: 0.7rem; }
 </style>
