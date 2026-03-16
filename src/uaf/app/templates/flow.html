@@ -436,6 +436,35 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 </script>
 
 <script>
+// DAG node double-click — focus the task name input in the same row.
+(function() {
+    function initDagEdit() {
+        var container = document.querySelector('.dag-container');
+        if (!container) return;
+        container.addEventListener('dblclick', function(e) {
+            var node = e.target.closest('.dag-node');
+            if (!node) return;
+            var row = node.closest('tr');
+            if (!row) return;
+            var input = row.querySelector('.dag-task-input');
+            if (input) { input.focus(); input.select(); }
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initDagEdit);
+    } else {
+        requestAnimationFrame(initDagEdit);
+    }
+    var content = document.getElementById('flow-content');
+    if (content) {
+        content.addEventListener('htmx:after-swap', function() {
+            requestAnimationFrame(initDagEdit);
+        });
+    }
+})();
+</script>
+
+<script>
 // Gantt bar positioning — compute left/width from date attributes.
 (function() {
     function positionGanttBars() {
@@ -710,9 +739,10 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 .flow-dag-table th { font-weight: 600; font-size: 0.75rem; color: var(--text-secondary); }
 .dag-task-name { width: 30%; font-weight: 500; white-space: nowrap; }
 .dag-cell { position: relative; height: 1.25rem; }
-.dag-node { position: absolute; top: 50%; transform: translateY(-50%); padding: 0.05rem 0.25rem; background: var(--bg-alt); border: 2px solid #ccc; border-radius: 8px; white-space: nowrap; z-index: 1; cursor: grab; }
+.dag-node { position: absolute; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; background: var(--bg-alt); border: 2px solid #ccc; border-radius: 50%; z-index: 1; cursor: grab; }
 .dag-node:active { cursor: grabbing; }
-.dag-label { font-weight: 500; font-size: 0.65rem; }
+.dag-task-input { border: none; background: transparent; font: inherit; font-weight: 500; width: 100%; padding: 0; outline: none; }
+.dag-task-input:focus { border-bottom: 1.5px solid var(--primary); }
 .dag-edges { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .dag-edge-group { pointer-events: auto; }
 .dag-edge-hit { fill: none; stroke: transparent; stroke-width: 12px; pointer-events: stroke; cursor: pointer; }
