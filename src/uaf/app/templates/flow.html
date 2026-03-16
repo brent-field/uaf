@@ -697,6 +697,13 @@ UAF.initUndoShortcuts('{{ artifact_id }}', 'flow-content');
 .list-status-badge.status-todo { background: #f3f4f6; color: #6b7280; }
 .list-status-badge.status-in_progress { background: #dbeafe; color: #2563eb; }
 .list-status-badge.status-done { background: #d1fae5; color: #059669; }
+.list-status-select { font-size: 0.6rem; padding: 0.05rem 0.15rem; border-radius: 3px; border: 1px solid transparent; cursor: pointer; background: transparent; text-transform: uppercase; letter-spacing: 0.02em; }
+.list-status-select:hover { border-color: #d1d5db; }
+.list-status-select.status-todo { background: #f3f4f6; color: #6b7280; }
+.list-status-select.status-in_progress { background: #dbeafe; color: #2563eb; }
+.list-status-select.status-done { background: #d1fae5; color: #059669; }
+.list-status-badge.status-blocked, .list-status-select.status-blocked { background: #fef3c7; color: #d97706; }
+.list-status-badge.status-dropped, .list-status-select.status-dropped { background: #fce7f3; color: #be185d; }
 
 /* Dependencies */
 .flow-deps { width: 100%; border-collapse: collapse; }
