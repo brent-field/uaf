@@ -39,14 +39,24 @@ if TYPE_CHECKING:
 
 _SUPPORTED = frozenset({NodeType.ARTIFACT, NodeType.TASK})
 
+VALID_STATUSES = frozenset({"todo", "in_progress", "blocked", "done", "dropped"})
+
 # Status cycle for ToggleTask
 _STATUS_CYCLE = {"todo": "in_progress", "in_progress": "done", "done": "todo"}
-_STATUS_ICONS = {"todo": "&#9744;", "in_progress": "&#9634;", "done": "&#9745;"}
-_STATUS_LABELS = {"todo": "To Do", "in_progress": "In Progress", "done": "Done"}
+_STATUS_ICONS = {
+    "todo": "&#9744;", "in_progress": "&#9634;", "done": "&#9745;",
+    "blocked": "&#9888;", "dropped": "&#10005;",
+}
+_STATUS_LABELS = {
+    "todo": "To Do", "in_progress": "In Progress", "done": "Done",
+    "blocked": "Blocked", "dropped": "Dropped",
+}
 _TOGGLE_LABELS = {
     "todo": "Start &#x25B6;",
     "in_progress": "Done &#x2713;",
     "done": "Reopen &#x21A9;",
+    "blocked": "Reopen &#x21A9;",
+    "dropped": "Reopen &#x21A9;",
 }
 
 
@@ -309,11 +319,22 @@ class FlowLens:
                 f"{_status_icon(task.status)}</button></td>"
             )
 
-            # Col 1: status badge
-            status_label = _STATUS_LABELS.get(task.status, task.status)
+            # Col 1: status dropdown
+            options = "".join(
+                f'<option value="{s}"'
+                f'{" selected" if s == task.status else ""}>'
+                f"{_STATUS_LABELS[s]}</option>"
+                for s in ("todo", "in_progress", "blocked", "done", "dropped")
+            )
             c1 = (
-                f'<td><span class="list-status-badge {status_cls}">'
-                f"{status_label}</span></td>"
+                f'<td><select data-row="{ri}" data-col="1"'
+                f' class="gc list-status-select {status_cls}"'
+                f' name="status"'
+                f' hx-post="/artifacts/{aid}/flow/set-status"'
+                f" hx-vals='{vals}'"
+                f' hx-trigger="change"'
+                f"{hx}>"
+                f"{options}</select></td>"
             )
 
             # Col 2: title
@@ -568,14 +589,17 @@ class FlowLens:
     ) -> str:
         """Render Kanban view — columns by status."""
         columns: dict[str, list[Task]] = {
-            "todo": [], "in_progress": [], "done": [],
+            "todo": [], "in_progress": [], "blocked": [], "done": [], "dropped": [],
         }
         for task in tasks:
             col = task.status if task.status in columns else "todo"
             columns[col].append(task)
 
         col_html: list[str] = []
-        labels = {"todo": "To Do", "in_progress": "In Progress", "done": "Done"}
+        labels = {
+            "todo": "To Do", "in_progress": "In Progress", "blocked": "Blocked",
+            "done": "Done", "dropped": "Dropped",
+        }
         for status, label in labels.items():
             cards = columns[status]
             if not cards:
@@ -730,6 +754,9 @@ class FlowLens:
     def _set_task_status(
         self, db: SecureGraphDB, session: Session, task_id: NodeId, status: str,
     ) -> None:
+        if status not in VALID_STATUSES:
+            msg = f"Invalid task status: {status!r}"
+            raise ValueError(msg)
         task = db.get_node(session, task_id)
         if task is None or not isinstance(task, Task):
             msg = f"Task not found: {task_id}"

@@ -230,7 +230,7 @@ class Task:
     due_date: datetime | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
-    status: str = "todo"  # "todo" | "in_progress" | "done"
+    status: str = "todo"  # "todo" | "in_progress" | "blocked" | "done" | "dropped"
 
 
 @dataclass(frozen=True, slots=True)

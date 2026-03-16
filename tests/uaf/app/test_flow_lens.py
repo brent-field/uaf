@@ -16,6 +16,7 @@ from uaf.app.lenses.actions import (
     SetDateRange,
     SetDependency,
     SetDueDate,
+    SetTaskStatus,
     ToggleTask,
     UpdateTask,
 )
@@ -555,6 +556,176 @@ class TestFlowLensActions:
         assert len(children) == 1
         assert isinstance(children[0], Task)
         assert children[0].title == "Phase 1"
+
+
+# ---------------------------------------------------------------------------
+# TestSetTaskStatus
+# ---------------------------------------------------------------------------
+
+
+class TestSetTaskStatus:
+    def test_set_task_status_to_blocked(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Block Me")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="blocked"),
+        )
+        task = sdb.get_node(session, task_id)  # type: ignore[arg-type]
+        assert task.status == "blocked"
+        assert task.completed is False
+
+    def test_set_task_status_to_dropped(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Drop Me")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="dropped"),
+        )
+        task = sdb.get_node(session, task_id)  # type: ignore[arg-type]
+        assert task.status == "dropped"
+        assert task.completed is False
+
+    def test_set_task_status_rejects_invalid(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Invalid")
+        lens = FlowLens()
+        with pytest.raises(ValueError, match="Invalid task status"):
+            lens.apply_action(
+                sdb, session, art_id,  # type: ignore[arg-type]
+                SetTaskStatus(task_id=task_id, status="bogus"),
+            )
+
+    def test_set_task_status_done_sets_completed(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Finish Me")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="done"),
+        )
+        task = sdb.get_node(session, task_id)  # type: ignore[arg-type]
+        assert task.status == "done"
+        assert task.completed is True
+
+    def test_set_task_status_from_done_clears_completed(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Reopen Me")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="done"),
+        )
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="todo"),
+        )
+        task = sdb.get_node(session, task_id)  # type: ignore[arg-type]
+        assert task.status == "todo"
+        assert task.completed is False
+
+    def test_toggle_from_blocked_returns_to_todo(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Blocked Task")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="blocked"),
+        )
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            ToggleTask(task_id=task_id),
+        )
+        task = sdb.get_node(session, task_id)  # type: ignore[arg-type]
+        assert task.status == "todo"
+
+    def test_toggle_from_dropped_returns_to_todo(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Dropped Task")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="dropped"),
+        )
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            ToggleTask(task_id=task_id),
+        )
+        task = sdb.get_node(session, task_id)  # type: ignore[arg-type]
+        assert task.status == "todo"
+
+
+# ---------------------------------------------------------------------------
+# TestListStatusDropdown
+# ---------------------------------------------------------------------------
+
+
+class TestListStatusDropdown:
+    def test_list_status_renders_select(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert "<select" in view.content
+        assert "list-status-badge" not in view.content
+
+    def test_list_status_select_has_all_options(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        for s in ("todo", "in_progress", "blocked", "done", "dropped"):
+            assert f'value="{s}"' in view.content
+
+    def test_list_status_select_marks_current(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Progress Task")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="in_progress"),
+        )
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert 'value="in_progress" selected' in view.content
+
+    def test_list_status_select_uses_htmx(self) -> None:
+        sdb, session, art_id = _setup()
+        _add_task(sdb, session, art_id, "T")
+        lens = FlowLens()
+        view = lens.render(sdb, session, art_id, mode="list")  # type: ignore[arg-type]
+        assert "/flow/set-status" in view.content
+        assert 'hx-trigger="change"' in view.content
+
+
+# ---------------------------------------------------------------------------
+# TestKanbanBlockedDropped
+# ---------------------------------------------------------------------------
+
+
+class TestKanbanBlockedDropped:
+    def test_kanban_has_blocked_column(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Blocked Task")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="blocked"),
+        )
+        view = lens.render(sdb, session, art_id, mode="kanban")  # type: ignore[arg-type]
+        assert 'data-status="blocked"' in view.content
+
+    def test_kanban_has_dropped_column(self) -> None:
+        sdb, session, art_id = _setup()
+        task_id = _add_task(sdb, session, art_id, "Dropped Task")
+        lens = FlowLens()
+        lens.apply_action(
+            sdb, session, art_id,  # type: ignore[arg-type]
+            SetTaskStatus(task_id=task_id, status="dropped"),
+        )
+        view = lens.render(sdb, session, art_id, mode="kanban")  # type: ignore[arg-type]
+        assert 'data-status="dropped"' in view.content
 
 
 # ---------------------------------------------------------------------------
