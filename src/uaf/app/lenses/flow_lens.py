@@ -39,7 +39,10 @@ if TYPE_CHECKING:
 
 _SUPPORTED = frozenset({NodeType.ARTIFACT, NodeType.TASK})
 
-VALID_STATUSES = frozenset({"todo", "in_progress", "blocked", "done", "dropped"})
+_STATUS_ORDER: tuple[str, ...] = (
+    "todo", "in_progress", "blocked", "done", "dropped",
+)
+VALID_STATUSES = frozenset(_STATUS_ORDER)
 
 # Status cycle for ToggleTask
 _STATUS_CYCLE = {"todo": "in_progress", "in_progress": "done", "done": "todo"}
@@ -47,9 +50,9 @@ _STATUS_ICONS = {
     "todo": "&#9744;", "in_progress": "&#9634;", "done": "&#9745;",
     "blocked": "&#9888;", "dropped": "&#10005;",
 }
-_STATUS_LABELS = {
-    "todo": "To Do", "in_progress": "In Progress", "done": "Done",
-    "blocked": "Blocked", "dropped": "Dropped",
+_STATUS_LABELS: dict[str, str] = {
+    "todo": "To Do", "in_progress": "In Progress", "blocked": "Blocked",
+    "done": "Done", "dropped": "Dropped",
 }
 _TOGGLE_LABELS = {
     "todo": "Start &#x25B6;",
@@ -324,7 +327,7 @@ class FlowLens:
                 f'<option value="{s}"'
                 f'{" selected" if s == task.status else ""}>'
                 f"{_STATUS_LABELS[s]}</option>"
-                for s in ("todo", "in_progress", "blocked", "done", "dropped")
+                for s in _STATUS_LABELS
             )
             c1 = (
                 f'<td><select data-row="{ri}" data-col="1"'
@@ -588,19 +591,13 @@ class FlowLens:
         self, tasks: list[Task], artifact_id: NodeId | None = None,
     ) -> str:
         """Render Kanban view — columns by status."""
-        columns: dict[str, list[Task]] = {
-            "todo": [], "in_progress": [], "blocked": [], "done": [], "dropped": [],
-        }
+        columns: dict[str, list[Task]] = {s: [] for s in _STATUS_LABELS}
         for task in tasks:
             col = task.status if task.status in columns else "todo"
             columns[col].append(task)
 
         col_html: list[str] = []
-        labels = {
-            "todo": "To Do", "in_progress": "In Progress", "blocked": "Blocked",
-            "done": "Done", "dropped": "Dropped",
-        }
-        for status, label in labels.items():
+        for status, label in _STATUS_LABELS.items():
             cards = columns[status]
             if not cards:
                 card_html = '<div class="kanban-empty">No tasks</div>'
