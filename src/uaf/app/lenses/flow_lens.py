@@ -554,6 +554,8 @@ class FlowLens:
         max_layer = max(layer.values(), default=0)
         num_cols = max_layer + 1
 
+        aid = artifact_id
+        hx = ' hx-target="#flow-content" hx-swap="innerHTML"'
         rows: list[str] = []
         for i, task in enumerate(sorted_tasks):
             name = escape(task.title)
@@ -564,14 +566,24 @@ class FlowLens:
             pct = (col * 100 // num_cols) if num_cols > 1 else 0
             left_style = f"left:{pct}%" if num_cols > 1 else "left:0"
 
-            left_td = f'<td class="dag-task-name">{name}</td>'
+            left_td = (
+                f'<td class="dag-task-name">'
+                f'<input class="dag-task-input" type="text"'
+                f' value="{name}" name="title"'
+                f' hx-post="/artifacts/{aid}/flow/update-task"'
+                f' hx-include="closest tr"'
+                f' hx-trigger="change"{hx} />'
+                f'<input type="hidden" name="node_id" value="{nid}" />'
+                f'<input type="hidden" name="mode" value="dag" />'
+                f'</td>'
+            )
             right_td = (
                 f'<td class="dag-cell">'
                 f'<div class="dag-node" style="{left_style}"'
                 f' data-node-id="{nid}"'
                 f' data-row="{i}"'
-                f' data-deps="{deps_attr}">'
-                f'<span class="dag-label">{name}</span>'
+                f' data-deps="{deps_attr}"'
+                f' title="{name}">'
                 f'</div>'
                 f'</td>'
             )

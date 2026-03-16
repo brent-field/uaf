@@ -1947,6 +1947,7 @@ def flow_update_task(
     artifact_id: str,
     node_id: str = Form(...),
     title: str = Form(...),
+    mode: str = Form("list"),
     db: SecureGraphDB = Depends(get_db),
     registry: LensRegistry = Depends(get_registry),
 ) -> HTMLResponse:
@@ -1961,7 +1962,7 @@ def flow_update_task(
     lens = registry.get("flow")
     if lens is not None and isinstance(lens, FlowLens):
         lens.apply_action(db, session, aid, UpdateTask(task_id=nid, title=title))
-        view = lens.render(db, session, aid, mode="list")
+        view = lens.render(db, session, aid, mode=mode)
         return HTMLResponse(view.content)
     return HTMLResponse("")
 
